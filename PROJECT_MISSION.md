@@ -1,89 +1,88 @@
-# Project Mission — Claudfather
+# Project Mission — Claudron
 
 ## What this project is
 
-Claudfather is an open-source ecosystem of four interlocking repositories for building, distributing, and evolving Claude Code agent infrastructure. It exists because running a serious multi-bot fleet today requires gluing together a dozen ad-hoc decisions — how skills are distributed, how bots store and retrieve knowledge, how skill quality is evaluated, how bots coordinate. Claudfather provides opinionated answers to all four questions, designed to work independently or together.
+Claudron is a markdown-based knowledge graph designed for agent fleets. Each deployment owns a vault — a directory of markdown files with YAML frontmatter and wikilinks — and bots read and write to it via an MCP server. The vault is the source of truth; an indexer maintains a SQLite mirror for fast queries and optional vector similarity.
 
-The four repositories:
+The metaphor: a cauldron. Raw observations from bots go in (findings, decisions, gotchas). They mix with prior content via wikilinks, get cross-referenced, get curated. Refined patterns come out — both as queryable context for future bots and as candidates for promotion into skills.
 
-- **clauDNA** — the canonical champion skills, hooks, and agents, distributed as a Claude Code marketplace plugin
-- **Claudosseum** — the promotion engine: an arena where skills are evaluated and evolved, deciding what belongs in clauDNA
-- **Claudlobby** — the always-on multi-bot fleet framework, the reference runtime for operating Claude Code bots in production
-- **Claudron** — the markdown-based knowledge graph that bots query for context and write to as they accumulate experience
-
-Each repo is independently useful. Used together they form a closed loop where bots run on canonical skills, capture knowledge from operation, feed real-world signal back into the arena, and the arena promotes evolved skills into the next canonical release.
+It's deliberately not "Obsidian for bots." Obsidian is one possible editor a human can use to browse the vault. The substrate is plain markdown files in a git repo, which means humans can use any editor, the data is portable, and everything is version-controlled.
 
 ## What it's becoming
 
-A self-improving agent platform. The current state is four repos that work but don't yet talk to each other in the loops described below. The trajectory:
-
-- clauDNA matures from a skill repo into a published marketplace plugin with versioned releases
-- Claudosseum refocuses from "centralized distribution platform" to "promotion engine for clauDNA," with public arena leaderboards and community submission flows
-- Claudlobby integrates clauDNA as its skill source and emits telemetry back to Claudosseum
-- Claudron ships v1 with markdown vault, MCP server, and pack subscription model
-- The loops close: Claudron context grounds Claudosseum battles in real scenarios, Claudosseum promotions ship via clauDNA, Claudlobby bots get smarter on each release
-
-The ambition is that anyone running an agent fleet — solo dev or company — can adopt the entire stack or any subset, with no hosted dependencies required for basic use, and with a clear contribution path back into the canonical skills if their work is broadly useful.
+The default knowledge substrate for Claudfather bots, and a standalone OSS project for any agent fleet. Vaults are git repos owned by the tenant. Hybrid retrieval combines graph traversal (for "what's related to what I know") with vector search (for "I don't know where to start"). Public packs let deployments share curated subsets without giving up local control. Federation across instances may come in v2 or never.
 
 ## North star
 
-The place where Claude Code agents are raised, equipped, and continuously improved.
+A hive mind any agent fleet can run locally and optionally federate.
 
 ## Guiding principles
 
-- **Local-first by default.** Anyone can run the entire ecosystem on their own hardware with no hosted dependencies. The one exception is Claudosseum's hosted arena, which is opt-in and does not gate any other repo.
-- **Tight, defensible repo boundaries.** Each repo has one job. clauDNA distributes, Claudosseum evaluates, Claudlobby runs, Claudron stores. When a feature could plausibly live in two repos, it lives in the one whose mission it best serves.
-- **Bots are distinct entities.** Each bot in a Claudlobby fleet has its own GitHub App identity, Telegram bot, persona, and isolated state. The system never collapses bots back into a single shared identity.
-- **Procedural vs. referential is a real distinction.** Skills (procedural, how-to) live in clauDNA. Knowledge (referential, what-we-know) lives in Claudron. They never blur.
-- **Promotion to canonical is high-bar.** Anything that ships as part of clauDNA has earned it through arena evaluation and real-world telemetry. The bar is high precisely because users trust the canonical set.
-- **Multi-tenant by design.** Claudron vaults are owned by their tenant. Claudosseum supports private arenas. Public packs and public arenas are opt-in. Nothing leaks across tenants without explicit publication.
-- **Open source with a sustainable hosted layer.** Everything is OSS. The hosted infrastructure (Claudosseum's arena and registry) is provided as a public service but is replaceable — anyone can self-host.
+- **Markdown + frontmatter + wikilinks as source of truth.** No proprietary format. The vault is plain files in a git repo. If Claudron disappears, the data still works.
+- **Local-first vault.** Tenants own their vaults. No data leaves the tenant unless they explicitly publish a public pack.
+- **Graph traversal over vector similarity.** Vector search is a useful escape valve for "I don't know what I'm looking for." Explicit links are the primary structure. Wikilinks are written by bots as part of recording findings, not inferred post-hoc.
+- **Provenance and lifecycle.** Every note tracks who wrote it, when, with what confidence, in what status. Old or deprecated content stays queryable but flagged.
+- **Procedural vs. referential is enforced.** Claudron stores reference content. Procedural knowledge (skills) belongs in clauDNA. The schema makes the distinction enforceable.
+- **Curation is part of the model.** Bot-written content gets noisy fast without a lifecycle. Draft → verified → canonical with explicit promotion is built in from day one.
+- **Pack publishing as opt-in federation.** Federation happens through git, not through a centralized service. A public pack is just a public git repo.
 
-## The ecosystem
+## Position in the ecosystem
 
-```
-┌───────────────────────────────────────────────────────────────┐
-│                         Claudfather                           │
-│                                                               │
-│   ┌───────────┐    promotes    ┌──────────────┐               │
-│   │  clauDNA  │ ◄────────────  │ Claudosseum  │               │
-│   │ (plugin)  │                │   (arena)    │               │
-│   └─────┬─────┘                └──────▲───────┘               │
-│         │ installed                   │ telemetry,            │
-│         │ on bots                     │ scenarios             │
-│         ▼                             │                       │
-│   ┌─────────────┐    queries    ┌─────┴─────────┐             │
-│   │ Claudlobby  │ ────────────► │   Claudron    │             │
-│   │   (fleet)   │ ◄──────────── │  (knowledge)  │             │
-│   └─────────────┘    writes     └───────────────┘             │
-│                                                               │
-└───────────────────────────────────────────────────────────────┘
-```
+**Consumes:** findings written by Claudlobby bots during operation; subscribed public packs from other Claudron deployments; manual curation by humans editing the vault directly.
 
-**The promotion loop:** Skills are submitted to or evolved within Claudosseum. They battle in the arena, with telemetry from real Claudlobby deployments contributing to their score alongside ELO. Champions get promoted into clauDNA on a release cadence. Users install the next clauDNA version and their bots get smarter.
+**Produces:** queryable context that bots fetch before tasks; public packs that other deployments can subscribe to; real-world scenarios that Claudosseum can pull as battle inputs (local for private arena, public packs for public arena); pattern detections that may seed new skill candidates for Claudosseum.
 
-**The knowledge loop:** Claudlobby bots write findings, decisions, and patterns to Claudron during operation. Future bots query Claudron before acting, gaining context that shapes their judgment. Mature reference content stays in Claudron and may be published as public packs. Recurring patterns become candidates for new skills, which enter Claudosseum for evaluation.
+**Sibling boundaries:**
+- Claudron does not store skills. clauDNA does.
+- Claudron does not evaluate or promote anything to skills. Claudosseum does.
+- Claudron does not run bots. Claudlobby does.
+- Claudron does not require a hosted service. It runs entirely on a tenant's own infrastructure.
 
-**The grounding loop:** Claudosseum battles draw scenarios from Claudron content (local for personal evaluation, public packs for community evaluation). Skills are evaluated against problems bots have actually encountered, not synthetic test cases.
+## In bounds for autonomous work
+
+**Standing permissions:**
+- Bug fixes in MCP server, indexer, CLI
+- Documentation including the reference vault
+- Test additions and coverage improvements
+- Performance improvements to indexer (incremental rebuild, query latency)
+- New CLI helper commands (read-only diagnostics, vault validation)
+- Improvements to graph traversal and search ranking that don't change the API
+- Additional example notes in the reference vault
+
+**Current sprint focus:**
+1. Note schema spec: types, required frontmatter, link conventions, `pack.yaml` format. Highest-leverage decision and blocks everything else.
+2. MCP server v0.1: read, write, traverse, search tools that bots can call
+3. Indexer: file watcher → SQLite mirror with frontmatter index and wikilink edges table
+4. CLI: `claudron init`, vault path config, pack subscription config
+5. Pack publisher: command that exports a curated subset of a vault as a properly-structured pack repo
+6. Reference vault as documentation: a small example vault demonstrating the format, hosted in the Claudron repo
+
+## Requires approval
+
+- Note schema changes after v0.1 ships (highest-leverage and breaks downstream consumers)
+- `pack.yaml` format changes
+- New required frontmatter fields on existing note types
+- Adding any hosted dependency to the default install path
+- Changes to MCP tool surface (additions, signature changes)
+- Federation work or any cross-tenant query capability (deliberately out of scope for v1)
+- Adopting a non-SQLite storage backend for the index
+
+## Success metrics
+
+- Vault adoption: deployments using Claudron beyond just the maintainer
+- Notes per vault growing over time (knowledge accumulation actually working)
+- Query volume per vault (bots actually using it before tasks)
+- Public packs published and subscribed (federation-by-git getting traction)
+- Note lifecycle progression: % of drafts reaching verified or canonical status
+- Pack subscription depth (vaults pulling from multiple packs)
+- Indexer rebuild time staying flat as vault size grows
 
 ## What we choose not to build
 
-- **Hosted bot orchestration.** Claudlobby is a framework users run themselves. We will not become a SaaS that runs bots on people's behalf.
-- **A single monolithic repo.** The four-repo split is intentional. Combining them would make each piece harder to adopt independently.
-- **Forced telemetry.** Telemetry from Claudlobby to Claudosseum is opt-in, scrubbed, and never required for any other capability.
-- **A central knowledge hub for everyone.** Claudron is local-first. There is no plan for a hosted shared brain that all deployments query. Federation via public packs is the substitute.
-- **Skill marketplace transactions.** clauDNA is distributed free. We are not building monetization, paid skills, or skill licensing.
-
-## Open questions
-
-These are deliberately unresolved as of this writing — recorded so future development can either close them or note their continued openness.
-
-- The exact promotion criteria from Claudosseum into clauDNA: pure ELO, ELO + telemetry threshold, ELO + maintainer review, or some weighted combination?
-- Claudron's pack discovery model in v1: GitHub topics + word of mouth, or a lightweight central registry?
-- Whether evolved skills in Claudosseum get a staging tier before becoming eligible for promotion, and what the promotion gate looks like.
-- The right cadence for clauDNA releases (weekly, monthly, on-demand when champions change).
-- The federation story for Claudron — whether opt-in instance-to-instance queries are a v2 feature or never built.
-
-## Where this lives
-
-This umbrella mission lives at the org level (in `Claudfather/.github` or a dedicated `Claudfather/claudfather` repo). Each sibling repo carries its own `PROJECT_MISSION.md` that derives from this one and scopes to that repo's specific role.
+- **Hosted vault storage.** Vaults are git repos owned by tenants. We are not running storage for anyone's knowledge base.
+- **A central registry of public packs.** Discovery is informal at first — GitHub topics, README links, word of mouth. A central registry can come later if needed; building it now is premature.
+- **A graph database backend.** SQLite + an edges table is plenty for the scale Claudron targets. Real graph DBs (Neo4j etc.) add operational burden without proportional value at this scale.
+- **LLM-driven entity extraction at indexing time.** GraphRAG-style pipelines that use LLMs to build the graph are interesting but cost money, add latency, and aren't necessary when bots are writing wikilinks themselves.
+- **A human-facing browse UI.** Obsidian, VS Code, and any other markdown editor work fine for human browsing. We won't build a custom UI for a problem already solved.
+- **Real-time multi-writer collaboration.** Git's last-write-wins handles the multi-writer case for our scale. Conflict resolution UIs and operational transforms are overkill for the agent-fleet use case.
+- **Cross-tenant queries by default.** Federation, if it happens at all, is opt-in instance-to-instance with explicit consent. There's no Claudron-wide query surface.
