@@ -9,8 +9,8 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .vault import Vault, VaultError, detect, init, status
-from .knowledge import lookup
+from .vault import SKIP_DIRS, Vault, VaultError, detect, init, status
+from .knowledge import build_index, load_index, lookup
 
 
 # ── vault resolution ──────────────────────────────────────────────────
@@ -50,6 +50,20 @@ def _detect_claudlobby_root(hint: Path | None = None) -> Path | None:
         if (candidate / "library").is_dir() and (candidate / "lib").is_dir():
             return candidate
     return None
+
+
+def _require_claudlobby_root(args, command: str) -> Path:
+    """Resolve claudlobby root or exit with a clear error."""
+    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
+    if cl_root is None:
+        print(
+            f"could not find claudlobby root\n"
+            f"  {command} requires a claudlobby installation\n"
+            f"  specify with: claudron {command} --claudlobby <path>",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return cl_root
 
 
 def _read_claudron_config(path: Path) -> dict[str, str]:
@@ -169,16 +183,15 @@ def cmd_lookup(args) -> int:
 
 def cmd_index(args) -> int:
     vault = _resolve_vault(args)
-    from .knowledge import _build_index, _load_index
 
     if not args.full:
-        existing = _load_index(vault)
+        existing = load_index(vault)
         if existing is not None:
             count = len(existing.get("entries", []))
             print(f"index up to date ({count} entries)")
             return 0
 
-    index = _build_index(vault)
+    index = build_index(vault)
     count = len(index.get("entries", []))
     print(f"indexed {count} docs")
     return 0
@@ -201,16 +214,7 @@ def cmd_plug(args) -> int:
         )
         return 2
 
-    hint = Path(args.claudlobby).resolve() if args.claudlobby else None
-    cl_root = _detect_claudlobby_root(hint)
-    if cl_root is None:
-        print(
-            "could not find claudlobby root\n"
-            "  plug requires a claudlobby installation\n"
-            "  specify with: claudron plug <vault> --claudlobby <path>",
-            file=sys.stderr,
-        )
-        return 2
+    cl_root = _require_claudlobby_root(args, "plug")
 
     config_path = cl_root / ".claudron"
     old_config = _read_claudron_config(config_path)
@@ -224,18 +228,7 @@ def cmd_plug(args) -> int:
 
 
 def cmd_unplug(args) -> int:
-    hint = (
-        Path(args.claudlobby).resolve() if getattr(args, "claudlobby", None) else None
-    )
-    cl_root = _detect_claudlobby_root(hint)
-    if cl_root is None:
-        print(
-            "could not find claudlobby root\n"
-            "  unplug requires a claudlobby installation\n"
-            "  specify with: claudron unplug --claudlobby <path>",
-            file=sys.stderr,
-        )
-        return 2
+    cl_root = _require_claudlobby_root(args, "unplug")
 
     config_path = cl_root / ".claudron"
     if not config_path.is_file():
@@ -247,11 +240,14 @@ def cmd_unplug(args) -> int:
     return 0
 
 
+def _claudlobby_hint(args) -> Path | None:
+    """Extract --claudlobby hint from args."""
+    raw = getattr(args, "claudlobby", None)
+    return Path(raw).resolve() if raw else None
+
+
 def cmd_config(args) -> int:
-    hint = (
-        Path(args.claudlobby).resolve() if getattr(args, "claudlobby", None) else None
-    )
-    cl_root = _detect_claudlobby_root(hint)
+    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
 
     info: dict = {"claudlobby_root": str(cl_root) if cl_root else None}
 
@@ -289,9 +285,7 @@ fleet:
 """
 
 
-_RESERVED_FLEET_NAMES = frozenset(
-    {"_shared", "projects", ".git", ".github", ".claudron"}
-)
+_RESERVED_FLEET_NAMES = SKIP_DIRS
 
 
 def cmd_fleet_add(args) -> int:
@@ -346,18 +340,7 @@ def cmd_migrate(args) -> int:
     force = getattr(args, "force", False)
 
     # Find claudlobby root to locate local/<fleet>/
-    hint = (
-        Path(args.claudlobby).resolve() if getattr(args, "claudlobby", None) else None
-    )
-    cl_root = _detect_claudlobby_root(hint)
-    if cl_root is None:
-        print(
-            "could not find claudlobby root\n"
-            "  migrate requires a claudlobby installation\n"
-            "  specify with: claudron migrate --claudlobby <path>",
-            file=sys.stderr,
-        )
-        return 2
+    cl_root = _require_claudlobby_root(args, "migrate")
 
     source = cl_root / "local" / fleet_name
     if not source.is_dir():
@@ -407,10 +390,7 @@ def cmd_migrate(args) -> int:
             overwrites = target.is_file()
             if overwrites:
                 has_overwrites = True
-            if is_memory:
-                verb = "preserve" if not apply else "preserve"
-            else:
-                verb = "copy" if not apply else "copy"
+            verb = "preserve" if is_memory else "copy"
             if not apply:
                 verb = "would " + verb
             tag = " (overwrite)" if overwrites else " (new)"

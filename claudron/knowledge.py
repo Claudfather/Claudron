@@ -17,7 +17,16 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .vault import SCHEMA_VERSION, Vault, _index_is_stale, _parse_frontmatter
+from .vault import (
+    SCHEMA_VERSION,
+    SHARED_SUBDIRS,
+    SKIP_DIRS,
+    TERMINAL_STATUSES,
+    Vault,
+    index_is_stale,
+    iter_markdown_files,
+    parse_frontmatter,
+)
 
 # ── data models ───────────────────────────────────────────────────────
 
@@ -77,11 +86,7 @@ def _derive_title(stem: str) -> str:
 def _walk_knowledge_tier(base: Path, tier: str) -> list[KnowledgeDoc]:
     """Recursively collect knowledge docs under *base*."""
     docs: list[KnowledgeDoc] = []
-    if not base.is_dir():
-        return docs
-    for md_path in sorted(base.rglob("*.md")):
-        if md_path.name in ("INDEX.md", "README.md"):
-            continue
+    for md_path in iter_markdown_files(base):
         doc = _parse_doc(md_path, tier)
         if doc is not None:
             docs.append(doc)
@@ -93,7 +98,7 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
         text = path.read_text()
     except OSError:
         return None
-    fm, body = _parse_frontmatter(text)
+    fm, body = parse_frontmatter(text)
     title = fm.get("title") or _derive_title(path.stem)
     tags = fm.get("tags") or []
     if isinstance(tags, str):
@@ -112,21 +117,17 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
 # ── index (Tier A) ───────────────────────────────────────────────────
 
 
-def _build_index(vault: "Vault") -> dict:
+def build_index(vault: "Vault") -> dict:
     """Build frontmatter-only index, write to ``.claudron/index.json``."""
     entries: list[dict] = []
 
     def _index_tier(base: Path, tier: str) -> None:
-        if not base.is_dir():
-            return
-        for md in sorted(base.rglob("*.md")):
-            if md.name in ("INDEX.md", "README.md"):
-                continue
+        for md in iter_markdown_files(base):
             try:
                 text = md.read_text()
             except OSError:
                 continue
-            fm, _ = _parse_frontmatter(text)
+            fm, _ = parse_frontmatter(text)
             title = fm.get("title") or _derive_title(md.stem)
             entries.append(
                 {
@@ -143,7 +144,7 @@ def _build_index(vault: "Vault") -> dict:
             )
 
     # Walk all tiers
-    for subdir in ("knowledge", "decisions", "runbooks"):
+    for subdir in SHARED_SUBDIRS:
         _index_tier(vault.shared / subdir, "shared")
     for name, proj_path in vault.projects.items():
         _index_tier(proj_path, f"project:{name}")
@@ -153,19 +154,10 @@ def _build_index(vault: "Vault") -> dict:
             _index_tier(fleet_shared, f"fleet:{name}")
 
     # Also index unrecognized root dirs
-    _SKIP = {
-        "_shared",
-        "shared",
-        "projects",
-        ".git",
-        ".github",
-        ".claudron",
-        "__pycache__",
-    }
     fleet_names = set(vault.fleets.keys())
     for d in sorted(vault.root.iterdir()):
-        if d.is_dir() and d.name not in _SKIP and not d.name.startswith("."):
-            if d.name not in fleet_names and d.name != "projects":
+        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
+            if d.name not in fleet_names:
                 _index_tier(d, f"other:{d.name}")
 
     index = {"schema_version": SCHEMA_VERSION, "entries": entries}
@@ -184,12 +176,12 @@ def _build_index(vault: "Vault") -> dict:
     return index
 
 
-def _load_index(vault: Vault) -> dict | None:
+def load_index(vault: Vault) -> dict | None:
     """Load index if it exists and is fresh. Returns None if stale or missing."""
     index_path = vault.root / ".claudron" / "index.json"
     if not index_path.is_file():
         return None
-    if _index_is_stale(vault, index_path):
+    if index_is_stale(vault, index_path):
         return None
     try:
         data = json.loads(index_path.read_text())
@@ -314,8 +306,7 @@ def _is_excluded(
     entry: dict, include_archived: bool = False, include_expired: bool = False
 ) -> bool:
     """True if this entry should be excluded from results."""
-    status = entry.get("status", "active")
-    if not include_archived and status in ("completed", "superseded", "archived"):
+    if not include_archived and entry.get("status", "active") in TERMINAL_STATUSES:
         return True
     if not include_expired:
         expires = entry.get("expires", "")
@@ -355,9 +346,9 @@ def lookup(
 ) -> list[KnowledgeResult]:
     """Search vault knowledge. Returns ranked results."""
     # Ensure index is fresh
-    index = _load_index(vault)
+    index = load_index(vault)
     if index is None:
-        index = _build_index(vault)
+        index = build_index(vault)
 
     # ── Tier A: index-based scoring ──
     results: list[KnowledgeResult] = []
@@ -429,22 +420,13 @@ def _collect_all_docs(
         docs.extend(_walk_knowledge_tier(fleet_shared, f"fleet:{fleet}"))
 
     # Vault shared (always)
-    for subdir in ("knowledge", "decisions", "runbooks"):
+    for subdir in SHARED_SUBDIRS:
         docs.extend(_walk_knowledge_tier(vault.shared / subdir, "shared"))
 
     # Unrecognized root dirs
-    _SKIP = {
-        "_shared",
-        "shared",
-        "projects",
-        ".git",
-        ".github",
-        ".claudron",
-        "__pycache__",
-    }
     fleet_names = set(vault.fleets.keys())
     for d in sorted(vault.root.iterdir()):
-        if d.is_dir() and d.name not in _SKIP and not d.name.startswith("."):
+        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
             if d.name not in fleet_names:
                 docs.extend(_walk_knowledge_tier(d, f"other:{d.name}"))
 

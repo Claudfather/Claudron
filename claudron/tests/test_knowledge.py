@@ -8,12 +8,8 @@ from pathlib import Path
 from textwrap import dedent
 
 
-from claudron.vault import SCHEMA_VERSION, _clear_stale_cache, detect
-from claudron.knowledge import (
-    _build_index,
-    _load_index,
-    lookup,
-)
+from claudron.vault import SCHEMA_VERSION, clear_stale_cache, detect
+from claudron.knowledge import build_index, load_index, lookup
 
 
 class TestScoring:
@@ -260,11 +256,11 @@ class TestProjectVisibility:
 class TestIndex:
     def test_index_build_and_load(self, vault_dir: Path):
         vault = detect(vault_dir)
-        index = _build_index(vault)
+        index = build_index(vault)
         assert "entries" in index
         assert len(index["entries"]) == 2  # auth-patterns + deploy-checklist
 
-        loaded = _load_index(vault)
+        loaded = load_index(vault)
         assert loaded is not None
         assert len(loaded["entries"]) == 2
 
@@ -272,8 +268,8 @@ class TestIndex:
         import time
 
         vault = detect(vault_dir)
-        _build_index(vault)
-        loaded = _load_index(vault)
+        build_index(vault)
+        loaded = load_index(vault)
         assert loaded is not None
 
         # Touch a file to make index stale
@@ -282,8 +278,8 @@ class TestIndex:
             (vault_dir / "_shared" / "knowledge" / "auth-patterns.md").read_text()
             + "\nupdate"
         )
-        _clear_stale_cache()
-        loaded = _load_index(vault)
+        clear_stale_cache()
+        loaded = load_index(vault)
         assert loaded is None  # stale
 
     def test_index_build_warns_on_unwritable_dir(self, vault_dir: Path):
@@ -297,7 +293,7 @@ class TestIndex:
         try:
             with warnings.catch_warnings(record=True) as w:
                 warnings.simplefilter("always")
-                index = _build_index(vault)
+                index = build_index(vault)
             # Should warn but still return the index
             assert len(w) == 1
             assert "could not write index" in str(w[0].message)
@@ -309,19 +305,19 @@ class TestIndex:
 class TestSchemaVersion:
     def test_index_has_schema_version(self, vault_dir: Path):
         vault = detect(vault_dir)
-        index = _build_index(vault)
+        index = build_index(vault)
         assert "schema_version" in index
         assert index["schema_version"] == SCHEMA_VERSION
 
     def test_stale_schema_triggers_rebuild(self, vault_dir: Path):
         vault = detect(vault_dir)
-        _build_index(vault)
+        build_index(vault)
         # Tamper with version
         index_path = vault_dir / ".claudron" / "index.json"
         data = json.loads(index_path.read_text())
         data["schema_version"] = 0
         index_path.write_text(json.dumps(data))
-        loaded = _load_index(vault)
+        loaded = load_index(vault)
         assert loaded is None
 
 
