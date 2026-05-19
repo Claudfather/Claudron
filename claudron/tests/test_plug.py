@@ -82,15 +82,16 @@ class TestPlug:
     ):
         nowhere = tmp_path / "nowhere"
         nowhere.mkdir()
-        rc = main(
-            [
-                "plug",
-                str(vault_for_plug),
-                "--claudlobby",
-                str(nowhere),
-            ]
-        )
-        assert rc == 2
+        with pytest.raises(SystemExit) as exc_info:
+            main(
+                [
+                    "plug",
+                    str(vault_for_plug),
+                    "--claudlobby",
+                    str(nowhere),
+                ]
+            )
+        assert exc_info.value.code == 2
         err = capsys.readouterr().err
         assert "could not find claudlobby root" in err
         assert "plug requires a claudlobby installation" in err

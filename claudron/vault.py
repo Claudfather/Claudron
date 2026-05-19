@@ -14,15 +14,31 @@ from pathlib import Path
 import yaml
 
 
-# ── reserved directory names ──────────────────────────────────────────
+# ── shared constants ─────────────────────────────────────────────────
 
-_RESERVED = frozenset(
-    {"_shared", "shared", "projects", ".git", ".github", "__pycache__"}
+SKIP_DIRS = frozenset(
+    {"_shared", "shared", "projects", ".git", ".github", ".claudron", "__pycache__"}
 )
 
-_SHARED_MARKERS = ("_shared", "shared")
+SHARED_MARKERS = ("_shared", "shared")
+
+SHARED_SUBDIRS = ("knowledge", "decisions", "runbooks")
+
+TERMINAL_STATUSES = frozenset({"completed", "superseded", "archived"})
 
 SCHEMA_VERSION = 1  # bump when index.json structure changes
+
+_SKIP_NAMES = frozenset({"INDEX.md", "README.md"})
+
+
+def iter_markdown_files(base: Path):
+    """Yield .md file paths under *base*, skipping INDEX.md and README.md."""
+    if not base.is_dir():
+        return
+    for md in sorted(base.rglob("*.md")):
+        if md.name not in _SKIP_NAMES:
+            yield md
+
 
 _GITIGNORE_CONTENT = """\
 # claudron vault — gitignored runtime & secrets
@@ -80,7 +96,7 @@ def _scan_vault(root: Path) -> Vault:
     # Discover fleet overlays (dirs containing fleet.yaml)
     fleets: dict[str, Path] = {}
     for d in sorted(root.iterdir()):
-        if d.is_dir() and d.name not in _RESERVED and not d.name.startswith("."):
+        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
             if (d / "fleet.yaml").is_file():
                 fleets[d.name] = d
 
@@ -104,7 +120,7 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
     """
     root = Path(path).resolve()
 
-    for marker in _SHARED_MARKERS:
+    for marker in SHARED_MARKERS:
         if root.is_dir() and (root / marker).is_dir():
             raise VaultError(
                 f"vault already exists at {root}\n"
@@ -117,13 +133,9 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
             f"  use --adopt to turn an existing directory into a vault"
         )
 
-    for subdir in (
-        root / "_shared" / "knowledge",
-        root / "_shared" / "decisions",
-        root / "_shared" / "runbooks",
-        root / "projects",
-    ):
-        subdir.mkdir(parents=True, exist_ok=True)
+    for name in SHARED_SUBDIRS:
+        (root / "_shared" / name).mkdir(parents=True, exist_ok=True)
+    (root / "projects").mkdir(parents=True, exist_ok=True)
 
     gitignore = root / ".gitignore"
     if not gitignore.exists():
@@ -150,18 +162,15 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
         if not base.is_dir():
             tiers[name] = {"docs": 0, "stale": 0, "path": str(base)}
             return
-        for md in base.rglob("*.md"):
-            if md.name in ("INDEX.md", "README.md"):
-                continue
+        for md in iter_markdown_files(base):
             docs += 1
             if _is_stale(md, today, stale_days):
                 stale += 1
         tiers[name] = {"docs": docs, "stale": stale, "path": str(base)}
 
     # Shared tiers
-    _count_tier("shared/knowledge", vault.shared / "knowledge")
-    _count_tier("shared/decisions", vault.shared / "decisions")
-    _count_tier("shared/runbooks", vault.shared / "runbooks")
+    for subdir in SHARED_SUBDIRS:
+        _count_tier(f"shared/{subdir}", vault.shared / subdir)
 
     # Projects
     for name, proj_path in vault.projects.items():
@@ -183,7 +192,7 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     index_path = vault.root / ".claudron" / "index.json"
     index_fresh = False
     if index_path.is_file():
-        index_fresh = not _index_is_stale(vault, index_path)
+        index_fresh = not index_is_stale(vault, index_path)
 
     return {
         "root": str(vault.root),
@@ -205,7 +214,7 @@ def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:
     except OSError:
         return False
 
-    fm = _quick_frontmatter(text)
+    fm = _quick_fm(text)
     if not fm:
         # No frontmatter — use mtime
         mtime = datetime.fromtimestamp(path.stat().st_mtime).date()
@@ -222,8 +231,7 @@ def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:
             pass
 
     # Status-based: terminal statuses aren't "stale", they're done
-    st = fm.get("status", "")
-    if st in ("completed", "superseded", "archived"):
+    if fm.get("status", "") in TERMINAL_STATUSES:
         return False
 
     # Fall back to updated/created date + TTL
@@ -239,7 +247,7 @@ def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:
     return False
 
 
-def _parse_frontmatter(text: str) -> tuple[dict, str]:
+def parse_frontmatter(text: str) -> tuple[dict, str]:
     """Split markdown into (frontmatter dict, body str).
 
     Returns ``({}, text)`` if no frontmatter present.
@@ -264,21 +272,21 @@ def _parse_frontmatter(text: str) -> tuple[dict, str]:
     return fm, body
 
 
-def _quick_frontmatter(text: str) -> dict | None:
+def _quick_fm(text: str) -> dict | None:
     """Fast frontmatter extraction (no body return)."""
-    fm, _ = _parse_frontmatter(text)
+    fm, _ = parse_frontmatter(text)
     return fm or None
 
 
 _stale_cache: dict[tuple[str, float], bool] = {}
 
 
-def _clear_stale_cache() -> None:
+def clear_stale_cache() -> None:
     """Clear the stale-check cache (used by tests)."""
     _stale_cache.clear()
 
 
-def _index_is_stale(vault: Vault, index_path: Path) -> bool:
+def index_is_stale(vault: Vault, index_path: Path) -> bool:
     """True if any .md under vault root is newer than the index.
 
     Caches the result per (path, index_mtime) so repeated lookups in the

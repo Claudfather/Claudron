@@ -93,7 +93,7 @@ class TestIndex:
         """Default index detects staleness and rebuilds without --full."""
         import time
 
-        from claudron.vault import _clear_stale_cache
+        from claudron.vault import clear_stale_cache
 
         # Build initial index
         main(["--vault", str(vault_dir), "index"])
@@ -105,7 +105,7 @@ class TestIndex:
             "owner: test\ntags: [new]\ncreated: 2026-01-01\n"
             "updated: 2026-01-01\n---\n\n# New Doc\n"
         )
-        _clear_stale_cache()
+        clear_stale_cache()
         # Default index should detect staleness and rebuild
         rc = main(["--vault", str(vault_dir), "index"])
         assert rc == 0
