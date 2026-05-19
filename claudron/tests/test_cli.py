@@ -89,6 +89,38 @@ class TestIndex:
         out = capsys.readouterr().out
         assert "indexed" in out
 
+    def test_index_rebuilds_when_stale(self, vault_dir: Path, capsys):
+        """Default index detects staleness and rebuilds without --full."""
+        import time
+
+        from claudron.vault import _clear_stale_cache
+
+        # Build initial index
+        main(["--vault", str(vault_dir), "index"])
+        capsys.readouterr()
+        # Add a new doc after a brief delay to ensure mtime differs
+        time.sleep(0.05)
+        (vault_dir / "_shared" / "knowledge" / "new-doc.md").write_text(
+            "---\ntitle: New Doc\ntype: knowledge\nstatus: active\n"
+            "owner: test\ntags: [new]\ncreated: 2026-01-01\n"
+            "updated: 2026-01-01\n---\n\n# New Doc\n"
+        )
+        _clear_stale_cache()
+        # Default index should detect staleness and rebuild
+        rc = main(["--vault", str(vault_dir), "index"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "indexed" in out
+        assert "3" in out
+
+    def test_index_shared_vault(self, shared_vault: Path, capsys):
+        """Index builds correctly on vaults using shared/ instead of _shared/."""
+        rc = main(["--vault", str(shared_vault), "index"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "indexed" in out
+        assert "1" in out
+
 
 class TestVersion:
     def test_version_prints_semver(self, capsys):

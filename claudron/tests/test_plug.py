@@ -91,7 +91,17 @@ class TestPlug:
             ]
         )
         assert rc == 2
-        assert "could not find claudlobby root" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "could not find claudlobby root" in err
+        assert "plug requires a claudlobby installation" in err
+
+    def test_plug_shared_vault(self, claudlobby_root: Path, tmp_path: Path, capsys):
+        """plug accepts vaults using shared/ (no underscore)."""
+        vault = tmp_path / "shared-vault"
+        (vault / "shared" / "knowledge").mkdir(parents=True)
+        rc = main(["plug", str(vault), "--claudlobby", str(claudlobby_root)])
+        assert rc == 0
+        assert "plugged" in capsys.readouterr().out
 
 
 class TestUnplug:

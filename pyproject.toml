@@ -11,7 +11,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
-    "PyYAML>=6.0",
+    "PyYAML>=6.0,<7",
 ]
 
 [project.optional-dependencies]
@@ -20,5 +20,5 @@ dev = ["pytest>=7.0"]
 [project.scripts]
 claudron = "claudron.cli:main"
 
-[tool.setuptools]
-packages = ["claudron"]
+[tool.setuptools.packages.find]
+exclude = ["claudron.tests*"]

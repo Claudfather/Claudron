@@ -11,7 +11,12 @@ Public API::
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("claudron")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 from .vault import Vault, detect
 from .knowledge import KnowledgeDoc, KnowledgeResult, lookup

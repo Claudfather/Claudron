@@ -8,6 +8,14 @@ The substrate is plain markdown files in a git repo -- humans can browse with an
 
 ## Install
 
+From a local clone:
+
+```bash
+pip install .
+```
+
+For development (includes pytest):
+
 ```bash
 pip install -e '.[dev]'
 ```
@@ -26,13 +34,15 @@ claudron status
 claudron lookup "auth patterns" --tags jwt
 
 # Rebuild the search index
-claudron index --rebuild
+claudron index --full
 
 # Register vault with a claudlobby fleet
-claudron plug --fleet my-fleet --root /path/to/claudlobby
+claudron plug ./my-vault --claudlobby /path/to/claudlobby
 ```
 
 ## CLI commands
+
+Claudron works standalone as a knowledge engine. Commands marked with **(claudlobby)** require a claudlobby installation and will print a clear error if one isn't found.
 
 | Command | Purpose |
 |---------|---------|
@@ -40,13 +50,13 @@ claudron plug --fleet my-fleet --root /path/to/claudlobby
 | `status` | Vault contents and health summary |
 | `lookup` | Search vault knowledge by title, tags, or content |
 | `index` | Build or rebuild the Tier A frontmatter index |
-| `config` | Show resolved vault configuration |
-| `plug` | Register vault with a claudlobby installation |
-| `unplug` | Disconnect vault from claudlobby |
+| `version` | Print version |
 | `fleet add` | Scaffold a fleet overlay inside the vault |
 | `fleet list` | List fleet overlays in the vault |
-| `migrate` | Migrate shared docs from a claudlobby fleet into the vault |
-| `version` | Print version |
+| `plug` | Register vault with a claudlobby installation **(claudlobby)** |
+| `unplug` | Disconnect vault from claudlobby **(claudlobby)** |
+| `config` | Show resolved vault configuration **(claudlobby)** |
+| `migrate` | Migrate shared docs from a claudlobby fleet into the vault **(claudlobby)** |
 
 ## Vault structure
 

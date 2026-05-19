@@ -194,8 +194,11 @@ def cmd_version(_args) -> int:
 
 def cmd_plug(args) -> int:
     vault_path = Path(args.vault_path).expanduser().resolve()
-    if not (vault_path / "_shared").is_dir():
-        print(f"not a vault: {vault_path} (no _shared/ directory)", file=sys.stderr)
+    if not any((vault_path / m).is_dir() for m in ("_shared", "shared")):
+        print(
+            f"not a vault: {vault_path} (no _shared/ or shared/ directory)",
+            file=sys.stderr,
+        )
         return 2
 
     hint = Path(args.claudlobby).resolve() if args.claudlobby else None
@@ -203,6 +206,7 @@ def cmd_plug(args) -> int:
     if cl_root is None:
         print(
             "could not find claudlobby root\n"
+            "  plug requires a claudlobby installation\n"
             "  specify with: claudron plug <vault> --claudlobby <path>",
             file=sys.stderr,
         )
@@ -225,7 +229,12 @@ def cmd_unplug(args) -> int:
     )
     cl_root = _detect_claudlobby_root(hint)
     if cl_root is None:
-        print("could not find claudlobby root", file=sys.stderr)
+        print(
+            "could not find claudlobby root\n"
+            "  unplug requires a claudlobby installation\n"
+            "  specify with: claudron unplug --claudlobby <path>",
+            file=sys.stderr,
+        )
         return 2
 
     config_path = cl_root / ".claudron"
@@ -342,7 +351,12 @@ def cmd_migrate(args) -> int:
     )
     cl_root = _detect_claudlobby_root(hint)
     if cl_root is None:
-        print("could not find claudlobby root", file=sys.stderr)
+        print(
+            "could not find claudlobby root\n"
+            "  migrate requires a claudlobby installation\n"
+            "  specify with: claudron migrate --claudlobby <path>",
+            file=sys.stderr,
+        )
         return 2
 
     source = cl_root / "local" / fleet_name
