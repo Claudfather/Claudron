@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claudron"
+version = "0.1.0"
+description = "Markdown-based knowledge engine for Claude Code agent fleets"
+authors = [{ name = "Chris Rogers" }]
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+claudron = "claudron.cli:main"
+
+[tool.setuptools.packages.find]
+exclude = ["claudron.tests*"]
