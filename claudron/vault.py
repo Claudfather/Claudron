@@ -22,7 +22,20 @@ SKIP_DIRS = frozenset(
 
 SHARED_MARKERS = ("_shared", "shared")
 
-SHARED_SUBDIRS = ("knowledge", "decisions", "runbooks")
+# Walked by status/index/search. `planning` was added in E1 (SCHEMA.md),
+# deliberately reversing issue #4 — vault-level planning docs are content.
+SHARED_SUBDIRS = ("knowledge", "decisions", "runbooks", "planning")
+
+# Created by scaffolding (init, fleet add). Nested where SHARED_SUBDIRS is
+# flat: planning/ splits into active/completed on disk; the walk constant
+# sees them as one tier.
+SCAFFOLD_TREE = (
+    "knowledge",
+    "decisions",
+    "runbooks",
+    "planning/active",
+    "planning/completed",
+)
 
 TERMINAL_STATUSES = frozenset({"completed", "superseded", "archived"})
 
@@ -133,7 +146,7 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
             f"  use --adopt to turn an existing directory into a vault"
         )
 
-    for name in SHARED_SUBDIRS:
+    for name in SCAFFOLD_TREE:
         (root / "_shared" / name).mkdir(parents=True, exist_ok=True)
     (root / "projects").mkdir(parents=True, exist_ok=True)
 

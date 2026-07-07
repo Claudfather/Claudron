@@ -122,6 +122,12 @@ class TestInit:
         assert (root / "_shared" / "knowledge").is_dir()
         assert (root / "existing.md").is_file()  # preserved
 
+    def test_init_creates_nested_planning(self, tmp_path: Path):
+        """SCHEMA.md taxonomy: planning/ scaffolds nested, not flat (E1)."""
+        root = init(tmp_path / "planned-vault")
+        assert (root / "_shared" / "planning" / "active").is_dir()
+        assert (root / "_shared" / "planning" / "completed").is_dir()
+
 
 class TestStatus:
     def test_status_counts_docs(self, vault_dir: Path):
@@ -129,6 +135,19 @@ class TestStatus:
         info = status(vault)
         assert info["total_docs"] == 2
         assert info["tiers"]["shared/knowledge"]["docs"] == 2
+
+    def test_status_walks_shared_planning(self, vault_dir: Path):
+        """Docs under _shared/planning/active count in the shared/planning tier (E1, reverses #4)."""
+        active = vault_dir / "_shared" / "planning" / "active"
+        active.mkdir(parents=True)
+        (active / "q3-roadmap.md").write_text(
+            "---\ntitle: Q3 Roadmap\ntype: plan\nstatus: active\n"
+            "owner: chris\ntags: [roadmap]\ncreated: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Q3 Roadmap\n"
+        )
+        vault = detect(vault_dir)
+        info = status(vault)
+        assert info["tiers"]["shared/planning"]["docs"] == 1
+        assert info["total_docs"] == 3
 
     def test_status_empty_vault_warns(self, empty_vault: Path):
         vault = detect(empty_vault)

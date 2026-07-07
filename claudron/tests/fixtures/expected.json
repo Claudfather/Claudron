@@ -1,0 +1,61 @@
+{
+  "_comment": "Fixture manifest — PR2's validator tests consume this. Keys are paths relative to this directory. 'lenient'/'strict' list the exact finding codes each tier must produce for that file (order-insensitive, exact set). 'full_finding' pins the complete serialized Finding element for one fixture (devex blocker: codes-as-API needs the machine carrier asserted, not just the code).",
+  "known-bad/missing-title.md": {
+    "lenient": ["E001"],
+    "strict": ["E001"]
+  },
+  "known-bad/unknown-type.md": {
+    "lenient": ["E002"],
+    "strict": ["E002"]
+  },
+  "known-bad/bad-status.md": {
+    "lenient": ["W106"],
+    "strict": ["E003"],
+    "full_finding": {
+      "tier": "strict",
+      "finding": {
+        "code": "E003",
+        "severity": "error",
+        "path": "known-bad/bad-status.md",
+        "field": "status",
+        "line": 4,
+        "message": "status 'bananas' is not valid for type 'knowledge' (canonical: current, stale, superseded, archived; accepted legacy: active, draft)"
+      }
+    }
+  },
+  "known-bad/broken-yaml.md": {
+    "lenient": ["E004"],
+    "strict": ["E004"]
+  },
+  "known-bad/bad-date.md": {
+    "lenient": ["W107"],
+    "strict": ["E005"]
+  },
+  "known-bad/trust-draft-knowledge.md": {
+    "lenient": ["W102"],
+    "strict": ["E006"]
+  },
+  "known-bad/no-owner.md": {
+    "lenient": [],
+    "strict": ["E007"]
+  },
+  "known-bad/skill-shaped.md": {
+    "lenient": ["W103"],
+    "strict": ["W103"]
+  },
+  "known-bad/dup-titles/": {
+    "_scope": "directory",
+    "lenient": ["W104"],
+    "strict": ["W104"]
+  },
+  "known-bad/conventions-over-budget/CONVENTIONS.md": {
+    "_context": "validated as _shared/CONVENTIONS.md",
+    "lenient": ["W105"],
+    "strict": ["W105"]
+  },
+  "legacy/claudlobby-style.md": {
+    "lenient": ["W101", "W102"],
+    "strict": ["W101", "W102"],
+    "_comment": "The adoption case: a real claudlobby fleet doc warns, never errors, in lenient mode (W102 legacy status active->current; W101 missing updated). In strict, the same two codes are emitted with severity 'error' — codes keep their identity across tiers; severity changes."
+  }
+}
