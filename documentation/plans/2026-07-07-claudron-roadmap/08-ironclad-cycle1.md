@@ -114,6 +114,16 @@ noted inline). Convergence after fold: **zero open blockers, D1–D11 locked.**
   Risks` table added to 00-overview; the `[plan]` children are
   separately-authored issue bodies (docs are in-repo companions), so the
   publish-contract concern is moot — noted in 00.
+- **M13 — Procedural-vs-referential enforcement missing from the schema epic**
+  *(align-to-mission)*. The mission assigns the schema this exact job
+  ("the schema makes the distinction enforceable", PROJECT_MISSION.md:25);
+  the draft E1 never mentioned it, and E3's write path + `/claudron-write`
+  is where skill-shaped content would leak into the vault. *Fold note: this
+  major was initially missed in the cycle-1 fold and applied in a follow-up
+  commit on the same PR.* → **Fold:** E1 gains an explicit referential-only
+  boundary section — `skill` excluded from the type enum by design, a
+  `validate` warning heuristic for skill-shaped notes (runbook-safe), and
+  the clauDNA boundary cross-linked in the sibling-alignment PRs.
 
 ## Selected minors folded
 

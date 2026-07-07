@@ -51,6 +51,19 @@ just point at SCHEMA.md.
    - **Note types:** `knowledge | decision | runbook | plan | audit | review`
      (superset of all three current sets), with per-type required/optional
      frontmatter tables
+   - **Referential-only boundary (mission :25 — "the schema makes the
+     distinction enforceable"):** SCHEMA.md states explicitly that procedural
+     content — skills, slash commands, agent-executable how-tos — belongs in
+     clauDNA and is out of scope for the vault; the type enum excludes `skill`
+     *by design, not accident*. `validate` gains a warning heuristic for
+     skill-shaped notes (SKILL.md-style frontmatter like `allowed-tools`/
+     `argument-hint`, or imperative step-list bodies typed `knowledge`) —
+     tuned to not false-positive on runbooks, which are referential
+     operational knowledge. The sibling-alignment PRs (deliverable 7)
+     cross-link the clauDNA boundary. E3's `claudron_write` + the
+     `/claudron-write` handoff is exactly where skill-shaped content would
+     leak in; the boundary lands in v1 because post-0.2.0 schema changes are
+     approval-gated
    - **Universal required fields:** `title, type, status, created` — a
      deliberately *minimal* required set (panel finding M2: the least-reversible
      artifact ships before multi-bot writes can stress it, so requiring less is
