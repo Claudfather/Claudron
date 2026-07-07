@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -96,6 +97,9 @@ class TestInit:
         assert (root / "_shared" / "knowledge").is_dir()
         assert (root / "_shared" / "decisions").is_dir()
         assert (root / "_shared" / "runbooks").is_dir()
+        # planning/ scaffolds nested (SCHEMA.md taxonomy, E1 — reverses #4)
+        assert (root / "_shared" / "planning" / "active").is_dir()
+        assert (root / "_shared" / "planning" / "completed").is_dir()
         assert (root / "projects").is_dir()
         assert (root / ".gitignore").is_file()
 
@@ -122,12 +126,6 @@ class TestInit:
         assert (root / "_shared" / "knowledge").is_dir()
         assert (root / "existing.md").is_file()  # preserved
 
-    def test_init_creates_nested_planning(self, tmp_path: Path):
-        """SCHEMA.md taxonomy: planning/ scaffolds nested, not flat (E1)."""
-        root = init(tmp_path / "planned-vault")
-        assert (root / "_shared" / "planning" / "active").is_dir()
-        assert (root / "_shared" / "planning" / "completed").is_dir()
-
 
 class TestStatus:
     def test_status_counts_docs(self, vault_dir: Path):
@@ -141,8 +139,19 @@ class TestStatus:
         active = vault_dir / "_shared" / "planning" / "active"
         active.mkdir(parents=True)
         (active / "q3-roadmap.md").write_text(
-            "---\ntitle: Q3 Roadmap\ntype: plan\nstatus: active\n"
-            "owner: chris\ntags: [roadmap]\ncreated: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Q3 Roadmap\n"
+            dedent("""\
+                ---
+                title: Q3 Roadmap
+                type: plan
+                status: active
+                owner: chris
+                tags: [roadmap]
+                created: 2026-07-01
+                updated: 2026-07-01
+                ---
+
+                # Q3 Roadmap
+            """)
         )
         vault = detect(vault_dir)
         info = status(vault)

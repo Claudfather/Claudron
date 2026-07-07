@@ -9,7 +9,16 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .vault import SCAFFOLD_TREE, SKIP_DIRS, Vault, VaultError, detect, init, status
+from .vault import (
+    SCAFFOLD_TREE,
+    SKIP_DIRS,
+    Vault,
+    VaultError,
+    detect,
+    init,
+    scaffold_shared_tree,
+    status,
+)
 from .knowledge import build_index, load_index, lookup
 
 
@@ -305,8 +314,7 @@ def cmd_fleet_add(args) -> int:
 
     fleet_dir.mkdir()
     (fleet_dir / "fleet.yaml").write_text(_FLEET_YAML_TEMPLATE.format(name=name))
-    for subdir in SCAFFOLD_TREE:
-        (fleet_dir / "shared" / subdir).mkdir(parents=True)
+    scaffold_shared_tree(fleet_dir / "shared")
     (fleet_dir / ".env").write_text("# Fleet secrets — never commit\n")
     (fleet_dir / ".gitignore").write_text("runtime/\n.env\n")
 

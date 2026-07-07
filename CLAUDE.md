@@ -32,7 +32,7 @@ claudron/
 
 ## Conventions
 
-- CLI commands follow the pattern: resolve vault via `_resolve_vault(args)`, then operate.
-- All notes require YAML frontmatter with at least `title`, `type`, `status`, `owner`, `tags`, `created`, `updated`.
+- CLI commands follow the pattern: resolve vault via `_resolve_vault(args)`, then operate; the CLI surface contract (exit codes, `--json` envelope, stdout/stderr) is `docs/CLI_CONTRACT.md`.
+- Note frontmatter is governed by `SCHEMA.md` (the ratified SSOT — types, per-type status vocabularies, required/optional fields). Don't enumerate fields here; point there.
 - Tests use `tmp_path` fixtures from conftest.py. No real filesystem or network access.
 - Single dependency: PyYAML. Keep it minimal.
