@@ -71,13 +71,17 @@ full ladder reads: bot `memory/` → fleet `<fleet>/shared/` → vault `_shared/
 INDEX.md ADR, not its ladder doc — descriptor corrected.)
 
 - `claudron promote <note> --to-tier shared|_shared` — moves the file,
-  preserves history (`git mv` when in a repo), stamps provenance. **No
-  inbound-link rewriting** (panel: cost-benefit + engineering): wikilink
-  resolution is title→alias→slug, *path-independent by design*, so a tier
-  move breaks zero inbound links; the machinery the draft planned was the
-  epic's own top corruption risk spent on a non-problem. Instead: a post-move
-  edges-table assertion (all inbound links still resolve) and a duplicate-
-  title check across tiers (already a `validate` warning from E1)
+  preserves history (`git mv` when in a repo), stamps provenance, and **takes
+  the same vault write-lock as every other mutator** (E3 lock spec; cycle-2
+  single-reviewer finding, adopted). **No inbound-link rewriting** (panel:
+  cost-benefit + engineering): wikilink resolution is title→alias→slug,
+  *path-independent by design*, so a tier move breaks zero inbound links; the
+  machinery the draft planned was the epic's own top corruption risk spent on
+  a non-problem. Instead: a post-move edges-table assertion (all inbound
+  links still resolve) and a duplicate-title check across tiers (already a
+  `validate` warning from E1). **Assertion failure ⇒ revert the move** — git
+  makes it one command; a half-promoted note never survives the operation
+  (cycle-2 single-reviewer finding, adopted)
 - **Issue #11 superseded, not closed:** #11's hard requirement is *direct*
   cross-fleet reads with no copying — this design rejects that in favor of
   auditable promotion (tenant boundary stays simple; the escape hatch is
@@ -88,9 +92,12 @@ INDEX.md ADR, not its ladder doc — descriptor corrected.)
 
 - `claudron review` — surfaces: expired (`expires` past), TTL-stale
   (`updated` + 90d default), drafts idle >N days, unresolved-link hotspots,
-  near-duplicate clusters (title/alias similarity from E4), and
-  **contradiction candidates** (same-topic notes with conflicting status or
-  divergent recent updates — the category Karpathy's lint pass leads with, F5)
+  near-duplicate clusters (title/alias similarity from E4), **contradiction
+  candidates** (same-topic notes with conflicting status or divergent recent
+  updates — the category Karpathy's lint pass leads with, F5), and
+  **quarantined/schema-invalid notes** (unparseable frontmatter, sync
+  conflict markers — fed by E2's sync scan and E4's per-file isolation;
+  cycle-2 must-fix #9)
 - `--json` output shaped for a Claudlobby librarian bot to work through on
   cron — the fleet's first standing curation job; the mission's "librarian"
   cron in claudlobby's INDEX convention finally gets its tool

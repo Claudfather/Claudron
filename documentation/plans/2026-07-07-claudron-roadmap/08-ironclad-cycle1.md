@@ -160,5 +160,58 @@ validator cross-check, clauDNA six types, archived-doc caveat on the
   during dogfood before committing PR4 scope.
 - Claudosseum-side scenario importer — their roadmap, filed as a dependency.
 
+## Cycle 2 — external multi-lens review (PR #13 comment, 2026-07-07)
+
+An independent 4-lens review (general / structural / adversarial /
+spec-compliance via `/theclauu:review-work multi`, run by the maintainer on
+a different model) served as cycle 2. Verdict: 3 of 4 lenses "needs revision
+before merge," zero blockers — the six-epic shape and D1–D11 held; the
+findings targeted mechanisms the plan leans on for its own rigor. All were
+folded in the same PR:
+
+- **C2-1 (must-fix 1):** G1/D10 couldn't distinguish wedge-validated from
+  wedge-failed-pivoted-shipped → G1 now emits a written `G1-verdict.md`
+  (PASS/PIVOT, evidence attached, cross-posted to EPIC #14) and D10's floor
+  requires the verdict on record.
+- **C2-2 (consensus 1):** write-lock under-specified three ways → full lock
+  spec in E3: atomic write-temp-rename protects lockless readers from torn
+  reads; flock's kernel-held release answers crash recovery; bounded 5s wait
+  → structured `retry_later`; scope stated as one-filesystem with the
+  cross-machine story at the git layer and multi-machine fleet writes
+  explicitly out of v0.1 scope.
+- **C2-3 (consensus 2):** adopt-vs-build spike bundled with build code → now
+  PR 0, a gate artifact that merges before any E3/E4 implementation PR opens.
+- **C2-4 (consensus 3):** E6's soft "benefits from E5" let the demand probe
+  fire against an all-draft vault → E5 PR1 is now a hard prerequisite for E6
+  PR3.
+- **C2-5 (must-fix 4):** cross-doc dependency contradictions → overview DAG
+  legend declared the authoritative dependency statement; E2's header now
+  says "Blocks: E3."
+- **C2-6 (must-fix 5):** fixed release numbers vs G1 reordering → release
+  numbers declared ordinal; version follows ship order.
+- **C2-7 (must-fix 6):** `status` and `maturity` both defaulting to literal
+  `draft` re-fused D11's axes → axes never share live vocabulary in newly
+  authored notes; `status: draft` is a warned legacy value on migrated docs
+  only.
+- **C2-8 (must-fix 7):** SQLite concurrency unspecified → WAL +
+  `busy_timeout` 5000ms; index writes under the vault write-lock.
+- **C2-9 (must-fix 8):** `sync` outside the lock → the lock covers all vault
+  mutators (write, capture, sync, promote).
+- **C2-10 (must-fix 9):** no per-file error isolation / conflict markers in
+  frontmatter / no schema-invalid queue category → E4 quarantines
+  parse-failures without aborting; E2's sync scans and quarantines
+  marker-bearing notes; E5's review queue gains the quarantined category.
+- **C2-11 (must-fix 10):** caveat parity → 07 states the small-n/short-
+  duration caveats apply to all confirmed findings, not only F8.
+- **C2-12 (must-fix 11):** PR body said "12 majors," record shows 13 → PR
+  body corrected.
+- **C2-13 (single-reviewer, adopted):** note-level `schema_version` reserved
+  in E1; tier-move assertion failure ⇒ revert; `promote --to-tier` takes the
+  lock; "Gated by: G1" headers backlink to the definition; full 22-source
+  bibliography added to 07.
+- **Declined as style-only:** stale meta-commentary/dense-cell/heading nits —
+  noted, not restructured; the docs are working plans, not publications.
+
 ---
 *Reviewed by /ironclad — cycle 1 · 2026-07-07 · converged after fold*
+*Cycle 2 (external 4-lens) folded same day — zero open blockers*

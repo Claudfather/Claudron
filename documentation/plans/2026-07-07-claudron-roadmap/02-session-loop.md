@@ -10,7 +10,9 @@ updated: 2026-07-07
 
 # E2 — Session loop v0: the SD card
 
-**Release:** 0.2.0 (with E1) · **Depends on:** E1 · **Blocks:** nothing (E3/E4 improve it)
+**Release:** 0.2.0 (with E1) · **Depends on:** E1 · **Blocks:** E3 (which
+imports this epic's `engine.py`) — the overview DAG legend is the
+authoritative dependency statement (cycle-2 must-fix #4)
 
 ## Goal
 
@@ -76,10 +78,16 @@ personal-vault-first.
    fires at SessionEnd, pull at SessionStart (above). Conflict policy stated
    and enforced by convention: one-file-per-topic + single-writer-per-note
    makes conflicts rare; on conflict, report and leave markers for the human —
-   never auto-resolve content. **Assumption documented in non-goals: one
+   never auto-resolve content. **Conflict-marker containment (cycle-2
+   must-fix #9):** after any conflicted pull, sync scans affected notes for
+   marker lines; a note carrying markers (including inside its YAML
+   frontmatter, which makes it unparseable) is **quarantined** — excluded
+   from recall briefs and indexing, listed by `status` and E5's review queue
+   until a human resolves it. **Assumption documented in non-goals: one
    writer per machine** — two concurrent sessions on one machine can contend
-   on `git index.lock`; concurrency is designed once, in E3, not discovered
-   here.
+   on `git index.lock`; concurrency is designed once, in E3 (whose vault
+   write-lock explicitly covers `sync`'s git operations — cycle-2 must-fix
+   #8), not discovered here.
 5. **`claudron init --personal` quickstart** — the panel's time-to-hello-world
    fix (field benchmark is 2 commands; the draft's docs-only path was 6+
    steps): scaffolds the private vault repo (with E1's CONVENTIONS.md),

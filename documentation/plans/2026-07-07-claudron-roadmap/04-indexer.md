@@ -10,9 +10,11 @@ updated: 2026-07-07
 
 # E4 — Indexer v2: SQLite mirror, wikilink graph, real search
 
-**Release:** 0.4.0 · **Depends on:** E1 (+ E2's dogfood queries for the eval
-set) · **Parallel with:** E3, E6 · **Blocks:** E5 PR2–4 (E5 PR1 may pull
-forward) · **Gated by:** G1 (incl. the adopt-vs-build spike)
+**Release:** 0.4.0 by default order (ordinal — see overview DAG legend) ·
+**Depends on:** E1 (+ E2's dogfood queries for the eval set) · **Parallel
+with:** E3, E6 · **Blocks:** E5 PR2–4 (E5 PR1 may pull forward) · **Gated
+by:** G1 (defined in `00-overview.md` §Gate G1), incl. the adopt-vs-build
+spike (E3 PR 0, shared)
 
 ## Goal
 
@@ -42,7 +44,16 @@ and incremental-reindex halves; the issue stays open, annotated — not closed.
   - `meta` — schema_version, built_at
 - **Incremental reindex:** diff by mtime+hash per file; add/update/remove
   changed rows only. Replaces today's any-file-newer → full JSON rebuild.
-  `claudron index --full` remains the nuke-and-rebuild.
+  `claudron index --full` remains the nuke-and-rebuild. **Per-file error
+  isolation (cycle-2 must-fix #9):** a note that fails to parse (bad YAML,
+  conflict markers) is skipped and recorded in a quarantine list — the pass
+  never aborts; quarantined notes surface in `status`, `validate`, and E5's
+  review queue.
+- **SQLite concurrency (cycle-2 must-fix #7):** `index.db` opens in **WAL
+  mode with `busy_timeout` (default 5000ms)** — N per-session processes read
+  concurrently under WAL; index *writes* (reindex) run under the same vault
+  write-lock as all other mutators (E3 lock spec), so there is exactly one
+  index writer at a time by construction.
 - **No daemon, no watcher** in this epic: reindex runs on-demand at
   lookup/serve time when staleness is detected (cheap stat-walk already
   exists). A `watchdog`-based `[watch]` extra is explicitly deferred until

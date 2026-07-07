@@ -90,7 +90,7 @@ SCOPE TO PLAN (decide, size, sequence — push back where you disagree):
    metrics) — decide in-scope or defer
 
 SEQUENCING CONSTRAINTS: schema alignment can land alongside Claudron 0.2.0;
-everything MCP-consuming is blocked on Claudron 0.3.0 (E3) and sits behind
+everything MCP-consuming is blocked on Claudron shipping E3 (version numbers are ordinal — G1 may reorder E3/E4) and sits behind
 Claudron's Gate G1. Stage the epic so nothing here dangles if G1 re-orders
 E3/E4.
 
@@ -155,7 +155,7 @@ RECON FIRST (verify anchors; repo ships daily):
 - documentation/archive/2026-05-15-session-handoff-resume-redesign-design.md
   :199-205 — the deferred "/claudron-write (or equivalent)" bridge, listed
   there as out-of-scope-until-Claudron-ships; that condition fires at
-  Claudron 0.3.0
+  Claudron shipping E3
 - plugin-hooks/precompact-reflect.sh — your PreCompact block-and-instruct
   hook; Claudron's capture hook will stack on the same event
 - Open issues to dedup INTO (not duplicate): #110 (post-lifecycle knowledge
@@ -199,7 +199,7 @@ approval artifact.
 
 SEQUENCING: item 4 and parts of 5 are filesystem-convention work that can
 proceed against Claudron 0.2.0 (schema only); items 1–3 are blocked on
-Claudron 0.3.0 (E3) and sit behind Claudron's Gate G1. Contract gaps you
+Claudron shipping E3 (0.3.x — ordinal, G1 may reorder E3/E4) and sit behind Claudron's Gate G1. Contract gaps you
 find → comment on Claudfather/Claudron#17, don't fork the contract.
 
 PROCESS: recon → /forge the plan → /ironclad panel → fold → file EPIC +

@@ -10,9 +10,11 @@ updated: 2026-07-07
 
 # E3 — MCP server v0.1 + the Claudlobby socket
 
-**Release:** 0.3.0 · **Depends on:** E1, E2 (imports E2's `engine.py` for
-write/dedup) · **Parallel with:** E4, E6 · **Gated by:** G1 (incl. the
-adopt-vs-build spike)
+**Release:** 0.3.0 by default order (ordinal — see overview DAG legend) ·
+**Depends on:** E1, E2 (imports E2's `engine.py`; the overview DAG legend is
+the authoritative dependency statement) · **Parallel with:** E4, E6 ·
+**Gated by:** G1 (defined in `00-overview.md` §Gate G1), incl. the
+adopt-vs-build spike (PR 0)
 
 ## Goal
 
@@ -49,7 +51,31 @@ daemon. Ships as `pip install 'claudron[mcp]'`; the only new dependency (the
    |---|---|
    | `claudron_lookup` | query, optional project/fleet scope, limit → ranked results (title, path, tier, score, snippet) |
    | `claudron_read` | path or exact title → frontmatter + body |
-   | `claudron_write` | type, title, body, tags, project? → validate (E1) + dedup (E2 `engine.py`) + write; returns `{action: created\|updated\|suggest_update\|suggest_supersede, path, reason}`. **Scoped honestly (panel M1):** *malformed never lands* is a pure per-note check and holds for any N; *duplicates never land* requires cross-process serialization — the write path takes a **vault-level advisory lock** (`flock` on `.claudron/write.lock`) around the dedup→write→commit critical section, with `git` commit retry-on-`index.lock`. Dedup **routes, never hard-rejects**: a near-duplicate becomes an update/supersede suggestion returned to the caller (a silent-drop gate would also drop the contradicting updates curation exists to catch — unverified 2606.24535 caution, adopted because rejection-by-default is riskier anyway) |
+   | `claudron_write` | type, title, body, tags, project? → validate (E1) + dedup (E2 `engine.py`) + write; returns `{action: created\|updated\|suggest_update\|suggest_supersede, path, reason}`. **Scoped honestly (panel M1):** *malformed never lands* is a pure per-note check and holds for any N; *duplicates never land* requires cross-process serialization — see the lock spec below. Dedup **routes, never hard-rejects**: a near-duplicate becomes an update/supersede suggestion returned to the caller (a silent-drop gate would also drop the contradicting updates curation exists to catch — unverified 2606.24535 caution, adopted because rejection-by-default is riskier anyway) |
+
+   **Vault write-lock spec** (cycle-2 consensus #1 — the three
+   under-specifications, answered):
+   - **Mechanism:** `flock` on `.claudron/write.lock` around the
+     dedup→write→commit critical section, held by **every vault mutator** —
+     MCP `write`, CLI `capture`, `sync`'s git operations, E5's
+     `promote`/`promote --to-tier` (cycle-2 must-fix #8). Kernel-held, so a
+     crashed process releases it automatically — no stale-lock cleanup path
+     exists to get wrong (this is why flock over lockfiles)
+   - **Contention:** bounded wait (default 5s) with backoff; on timeout the
+     caller gets a structured `{action: retry_later, reason: lock_contention}`
+     — never a hang, never a silent drop. Contention events land in
+     `events.jsonl`
+   - **Readers are lockless by design, protected by atomic writes:** every
+     note write is write-temp-then-`rename()` (atomic on POSIX), so a
+     concurrent reader sees the old note or the new note, never a torn one.
+     Readers may see last-durable state during a write burst — acceptable for
+     a read-mostly, git-versioned corpus
+   - **Scope stated plainly:** the lock serializes **one filesystem**. The
+     cross-machine topology (D4's clones) is serialized at the git layer —
+     `sync`'s pull-rebase-push plus one-writer-per-note convention — and
+     simultaneous multi-machine fleet writes to the same logical vault are
+     **out of scope for v0.1** (named fleet-milestone work, with the
+     multi-writer validation it depends on)
    | `claudron_related` | title/path → wikilink neighbors, in/out. v0: on-demand `[[link]]` parse of the target note; E4 upgrades to the edges table transparently |
    | `claudron_status` | vault health summary (wraps `status --json`) |
 3. **Shared engine, three doors:** `recall`/`capture` (CLI) and
@@ -93,8 +119,9 @@ daemon. Ships as `pip install 'claudron[mcp]'`; the only new dependency (the
 
 | PR | Scope |
 |---|---|
-| 1 | adopt-vs-build spike writeup (G1 exit) + server skeleton + `lookup`/`read`/`status` (read-only first) |
-| 2 | `write` (vault lock + events.jsonl) + `related` — imports E2 `engine.py`, proven by the shared test suite |
+| 0 | **Adopt-vs-build spike writeup — gate artifact, merges before PR 1 opens** (cycle-2 consensus #2: bundled with build code it cannot gate the build). Shared with E4 |
+| 1 | server skeleton + `lookup`/`read`/`status` (read-only first) |
+| 2 | `write` (vault lock per spec + events.jsonl) + `related` — imports E2 `engine.py`, proven by the shared test suite |
 | 3 | Claudlobby `claudron.json` fragment + pattern doc → #251 (cross-repo) + `[vault]` pin rider |
 | 4 | clauDNA handoff comments/issues + `.mcp.json` recipes for personal setup |
 

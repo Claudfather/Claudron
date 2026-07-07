@@ -79,7 +79,17 @@ just point at SCHEMA.md.
      without edits. `maturity` is the **trust axis** — `draft | verified |
      canonical`, optional, defaulting to `draft` for bot-written notes; E5
      promotes on `maturity`, never on `status`. A note can be `canonical` and
-     `superseded` at once; E4 ranks on both axes
+     `superseded` at once; E4 ranks on both axes. **The two axes never share
+     live vocabulary in newly authored notes** (cycle-2 must-fix #6: both
+     axes defaulting to a literal `draft` re-fuses what D11 split): `status:
+     draft` is a *legacy sibling value only* — accepted with a warning on
+     migrated docs (mapped `≈ active, pre-ratification`), rejected by
+     `validate`'s strict tier for `new`/MCP-written notes, which express
+     draftness exclusively on `maturity`
+   - **`schema_version` (reserved, optional):** stamped into frontmatter by
+     `new` and the MCP write path at creation time — the disposable index
+     records it today, but only a note-level stamp survives a future
+     non-additive migration (cycle-2 single-reviewer finding, adopted)
    - **Lifecycle fields (reserved for E5):** `promoted_by`/`promoted_at`
      reserved; **`superseded_by: <wikilink>`** as the terminal pointer — field
      evidence (F5) is unambiguous that explicit supersession, not

@@ -10,7 +10,14 @@ updated: 2026-07-07
 
 # E6 — Packs + Claudosseum grounding: federation by git
 
-**Release:** 0.6.0 · **Depends on:** E1 (pack.yaml v0), benefits from E5 (curation gates exports) · **Parallel with:** E3, E4 · **Gated by:** G1; PR4 additionally by the demand trigger
+**Release:** 0.6.0 by default order (ordinal — see overview DAG legend) ·
+**Depends on:** E1 (pack.yaml v0); **E5 PR1 is a hard prerequisite for PR3
+(the demand probe)** — a pack exported with `min_maturity: verified` from a
+vault where nothing has been promoted past draft is an empty probe, so the
+maturity verbs must exist and have been used before the first pack ships
+(cycle-2 consensus #3 hardened this from "benefits from" to a gate) ·
+**Parallel with:** E3, E4 · **Gated by:** G1 (defined in `00-overview.md`
+§Gate G1); PR4 additionally by the demand trigger
 
 ## Goal
 

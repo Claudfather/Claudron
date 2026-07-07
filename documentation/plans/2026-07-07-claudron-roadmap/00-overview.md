@@ -89,10 +89,15 @@ E2 Session loop v0 (hooks+CLI+git) ─┘ sequential, you feel it immediately
         └─ E6 Packs + Claudosseum grounding
 ```
 
-DAG legend: the parallel branch forks after the **0.2.0 release** (E3 and E4
-additionally consume E2's capture engine and dogfood queries, so "Depends on:
-E1" per-epic headers understate it — G1 is the true fork point). Critical
-path: E1→E2 (personal value); E1→E4→E5 (engine depth).
+DAG legend — **this legend is the authoritative dependency statement;
+per-epic header lines are summaries of it** (cycle-2 finding #4). The
+parallel branch forks after the **0.2.0 release**: E3 depends on E1 + E2
+(imports E2's `engine.py`), E4 on E1 (+ E2's dogfood queries for its eval
+set), E6 on E1. E5 PR1 needs only E1; E5 PR2–4 need E4. Critical path:
+E1→E2 (personal value); E1→E4→E5 (engine depth). **Release numbers are
+ordinal, not bound to epics** (cycle-2 finding #5): the portfolio table shows
+the default order, but if G1 swaps E3/E4, version numbers follow ship order —
+whichever gated epic ships first takes 0.3.0.
 
 | Epic | Release | Effort | One-line goal |
 |---|---|---|---|
@@ -114,22 +119,33 @@ commitments. Entry criteria, measured over ≥2 weeks of E2 dogfood:
   sprint #4 / issue #251, and E4's eval set derives from fleet queries instead
   of personal ones — the wedge failure reshapes the plan rather than being
   ignored
-- **Adopt-vs-build spike (M10):** before E3/E4 code starts, a time-boxed spike
-  evaluates adopting an existing engine vs building — candidates: Basic
-  Memory (AGPL, ships MCP+hybrid over the same substrate) and Graphify
-  (79k-star MIT graph engine; see 07's addendum — expected answer is
-  consume-not-adopt since wikilink edges are trivially derivable and node
-  semantics differ, but the spike decides). Claudron-specific glue (schema
-  SSOT, recall/capture semantics, CONVENTIONS layer, packs, scenario export)
-  is ours either way
+- **The gate emits a written verdict** (cycle-2 must-fix #1): a dated
+  `G1-verdict.md` in this directory recording **PASS** (wedge validated —
+  pulse numbers attached) or **PIVOT** (wedge failed; fleet-first replan,
+  with what changed), cross-posted to EPIC #14. The two branches are
+  deliberately distinguishable: a PIVOT is a recorded strategy change, never
+  silently absorbed into "shipped anyway"
+- **Adopt-vs-build spike (M10):** lands as **its own gate artifact — a spike
+  writeup PR that merges before any E3/E4 implementation PR opens** (cycle-2
+  consensus #2: a spike bundled with build code cannot gate the build).
+  Candidates: Basic Memory (AGPL, ships MCP+hybrid over the same substrate)
+  and Graphify (79k-star MIT graph engine; see 07's addendum — expected
+  answer is consume-not-adopt since wikilink edges are trivially derivable
+  and node semantics differ, but the spike decides). Claudron-specific glue
+  (schema SSOT, recall/capture semantics, CONVENTIONS layer, packs, scenario
+  export) is ours either way
 - **Multi-writer claims stay parked** until a real fleet milestone exists
   (see E3): single-writer dogfood cannot validate them
 
 **Release train:** each epic ends in a tagged release with CHANGELOG discipline.
 0.2.0 goes to PyPI and flips the org README's Claudron status from "Design" to
 "Active". E1+E2 ship together as 0.2.0 — the schema alone isn't a usable
-release; the SD card is. **Floor (D10): 0.2.0 + 0.3.0 = success; E4–E6 are
-upside.** Two acceptance gates are wall-clock (E2's two-week dogfood, E5's
+release; the SD card is. **Floor (D10): 0.2.0 + the first post-gate release
+shipped *with the G1 verdict recorded* = success; E4–E6 are upside.** The
+verdict requirement keeps the floor honest — "wedge validated" and "wedge
+failed, pivoted, shipped anyway" are different outcomes and the record says
+which one happened (cycle-2 must-fix #1). Two acceptance gates are
+wall-clock (E2's two-week dogfood, E5's
 two-week librarian drain) — they, not engineering effort, set the minimum
 cadence for those releases, and that's a conscious buy. Cheap public proof is
 front-loaded: an SD-card demo recording ships with 0.2.0, the E4 eval numbers

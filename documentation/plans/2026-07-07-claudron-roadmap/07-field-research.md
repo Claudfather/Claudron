@@ -118,6 +118,46 @@ adopted, not longitudinally validated. Headline recall numbers are
 single-author, self-measured, one vault. Attested scale envelope ~100–1,200
 notes; Claudron's low-thousands top end sits at its edge.
 
+**These caveats apply to every confirmed finding, not only F8** (cycle-2
+must-fix #10): "supported" throughout this report means *shipped, adopted,
+and verified-as-claimed within a <4-month window* — F3's knee is a hedged
+practitioner rule of thumb, F4/F5's patterns have no longitudinal anti-rot
+evidence (F5 says so inline; the same duration limit applies to F3/F4/F7),
+and F6 is single-source. F8 is called out separately only because its
+evidence is *absent*, not merely young.
+
+## Bibliography (all 22 fetched sources)
+
+Cycle-2 flagged that "22 sources" was asserted but not auditable. The full
+fetch list, by search angle (quality tags from the research harness):
+
+*Markdown-first practitioner setups:* Karpathy llm-wiki gist
+(gist.github.com/karpathy/442a6bf555914893e9891c11519de94f, primary) ·
+rohitg00/agentmemory production notes (gist.github.com/rohitg00/2067ab416f7bbe447c1977edaaa681e2)
+· akitaonrails.com/en/2026/05/18/ai-agent-memory-karpathy-llm-wiki-agentmemory
+· aimaker.substack.com/p/llm-wiki-obsidian-knowledge-base-andrej-karphaty ·
+kunalganglani.com/blog/llm-wiki-karpathy-local-knowledge-base ·
+github.com/eugeniughelbur/obsidian-second-brain (primary).
+*Skeptical/failure postmortems:* dev.to/origin_matrix (single-markdown-file
+memory critique) · medium.com/@milesk_33 (memory-rot fix) ·
+particula.tech/blog/agent-memory-frameworks-tested-mem0-zep-letta-cognee-2026
+· arxiv.org/pdf/2604.27283 (primary; unverified claims only).
+*Retrieval trade-offs:* harrisonsec.com (grep-vs-RAG cost curve) ·
+arxiv.org/pdf/2605.05242 (primary; unverified) ·
+hindsight.vectorize.io/blog/2026/03/04/mcp-agent-memory ·
+dev.to/penfieldlabs (llm-wiki critique) · dev.to/aloknecessary (BM25 vs
+vector).
+*Multi-agent shared memory + curation:* arxiv.org/html/2606.24535 (primary;
+unverified) · arxiv.org/html/2606.00007 (primary; unverified) ·
+codeministry.net/the-librarian.
+*Memory-layer products / MCP contrast class:*
+mcpservers.org/servers/basicmachines-co/basic-memory (primary) ·
+medium.com/@reliabledataengineering (mem0 review) · agentmarketcap.ai
+(vendor landscape) · medium.com/@wasowski.jarek (5-system comparison).
+
+Post-sweep addendum source: github.com/Graphify-Labs/graphify (primary,
+verified via GitHub API 2026-07-07).
+
 ## What this changes in the roadmap
 
 | Claudron bet | Verdict | Action |
