@@ -129,3 +129,60 @@ notes; Claudron's low-thousands top end sits at its edge.
 | Promotion lifecycle | **Supported (F5)** with amendment | E5: expiry becomes a review trigger, never deletion; `superseded_by` link is the terminal primitive; contradiction candidates join the review queue |
 | MCP write-chokepoint | **Silent/indirect (F8)** | Keep (motivated by F1's ACID/RBAC gap); add dogfood validation metrics; re-verify the four papers when limits reset |
 | Schema (new from F4/F6) | — | E1 adds `superseded_by` + `confidence` enum + per-claim provenance conventions + always-loaded `CONVENTIONS.md` |
+
+## Addendum (2026-07-07): Graphify — the data point the sweep missed
+
+**What it is** (verified via GitHub API + repo README): `Graphify-Labs/graphify`
+— **79.4k stars / 7.8k forks, created 2026-04-03, MIT, YC S26**, v0.9.9
+released 2026-07-07. Turns any folder (code via deterministic tree-sitter
+across 36 languages; docs/PDFs/media via *optional* LLM passes; wiki links
+become edges) into a queryable knowledge graph: portable `graph.json` + HTML
+viz + report, consumed via `/graphify` slash command, an MCP server
+(`query_graph`/`get_node`/`shortest_path`), and always-on hook guidance.
+Edges are provenance-tagged `EXTRACTED` vs `INFERRED`; Leiden community
+detection summarizes subsystems. Self-reported benchmarks (not independently
+verified): LOCOMO recall@10 0.497 vs mem0 0.048; LongMemEval-S 76% QA,
+with a published BENCHMARKS.md + judge-validation methodology.
+
+**Why the original sweep missed it:** all five search angles were
+memory-shaped ("AI brains," markdown memory, curation, memory-layer
+products). Graphify is filed by the ecosystem under code-understanding /
+GraphRAG (its topics: `graphrag`, `tree-sitter`, `knowledge-graph`) — it
+**maps existing corpora; it does not accumulate memory**. A map, not a
+brain. Structurally out-of-frame for the research question, but too big and
+too adjacent to leave out of the appendix.
+
+**What it changes for Claudron:**
+
+- **F7 gains a third contrast architecture.** Graph-in-markdown (Basic
+  Memory ≈ Claudron) · graph-in-database (memento-class MCP servers) · now
+  **derived portable graph artifact** (Graphify's rebuildable `graph.json`
+  compiled *from* content). Claudron's bet is unchanged — our content *is*
+  the graph, the index is derived — but the derived-artifact pattern at 79k
+  stars validates "rebuildable, disposable index" as the field consensus.
+- **Convergent evidence for E2/E5's shape, from the space's biggest tool:**
+  Graphify's bolt-on memory layer (`save-result` → `memory/`, `reflect` →
+  `LESSONS.md` with provenance, a learning overlay tagging nodes
+  `preferred|tentative|contested`, recency-weighted) independently converges
+  on capture → reflect → trust-tagged curation — Claudron's loop and
+  maturity axis, arrived at from the opposite direction.
+- **The moat statement sharpens** (ironclad ceo-lens): the *map* layer is
+  now commoditized — a three-month-old tool owns "understand this repo
+  cheaply." The open ground is exactly Claudron's lane: **accumulated,
+  governed, portable fleet memory** (cross-session, cross-machine,
+  multi-writer, curated, federated). Complement, not competitor: the same
+  bot can run Graphify to understand a repo and Claudron to remember what
+  the fleet learned about it. Claudron should not drift toward codebase
+  mapping — that race is over.
+- **Mission principle validated, not contradicted:** Graphify's split —
+  deterministic extraction where possible (tree-sitter), LLM strictly
+  optional and off the default path — is the same posture as "no LLM at
+  index time; authors write the wikilinks."
+- **Concrete borrowables:** `EXTRACTED`/`INFERRED` edge provenance (E4's
+  edges are all author-written = EXTRACTED by construction; tag inferred
+  relations if a `[vector]` tier ever adds them); their MCP tool-surface
+  naming as prior art for E3; their published-benchmark discipline as the
+  model for publishing E4's eval numbers; joins Basic Memory on the **G1
+  adopt-vs-build spike list** (expected frame: consume-not-adopt — wikilink
+  edges are trivially derivable and node semantics differ — but the spike
+  decides).

@@ -115,10 +115,13 @@ commitments. Entry criteria, measured over ≥2 weeks of E2 dogfood:
   of personal ones — the wedge failure reshapes the plan rather than being
   ignored
 - **Adopt-vs-build spike (M10):** before E3/E4 code starts, a time-boxed spike
-  evaluates adopting an existing engine (e.g. Basic Memory — AGPL, ships
-  MCP+hybrid over the same substrate) vs building; Claudron-specific glue
-  (schema SSOT, recall/capture semantics, CONVENTIONS layer, packs, scenario
-  export) is ours either way
+  evaluates adopting an existing engine vs building — candidates: Basic
+  Memory (AGPL, ships MCP+hybrid over the same substrate) and Graphify
+  (79k-star MIT graph engine; see 07's addendum — expected answer is
+  consume-not-adopt since wikilink edges are trivially derivable and node
+  semantics differ, but the spike decides). Claudron-specific glue (schema
+  SSOT, recall/capture semantics, CONVENTIONS layer, packs, scenario export)
+  is ours either way
 - **Multi-writer claims stay parked** until a real fleet milestone exists
   (see E3): single-writer dogfood cannot validate them
 

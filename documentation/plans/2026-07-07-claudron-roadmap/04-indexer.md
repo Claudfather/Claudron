@@ -144,7 +144,12 @@ research bites hardest:
 - **F7 validates the exact architecture** — graph in the markdown, traversal
   from a derived rebuildable SQLite index — as Basic Memory's shipped design,
   with the in-database-graph MCP servers as the contrast class Claudron
-  deliberately isn't.
+  deliberately isn't. Third contrast point (07 addendum): Graphify's derived
+  portable `graph.json` at 79k stars confirms rebuildable-disposable-index as
+  field consensus; its `EXTRACTED`/`INFERRED` edge-provenance tagging is
+  worth adopting in the edges table (all Claudron edges are author-written =
+  EXTRACTED by construction; inferred relations, if a `[vector]` tier ever
+  adds them, get tagged).
 - **Caveat carried forward:** the recall numbers are single-author,
   self-measured, one ~1,150-note vault; attested scale tops out ~1,200 notes.
   Hence the eval harness ships *in this epic* — Claudron measures its own
