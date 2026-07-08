@@ -20,6 +20,13 @@
 - `_shared/planning/{active,completed}` joins the scaffold and the walked
   tiers — vault-level planning docs are now indexed and searchable
   (deliberately reverses #4). (#22)
+- `claudron new <type> "<title>"` — scaffold a schema-valid note (passes
+  `validate --strict` by construction): owner derived from
+  `--owner`/git/`$USER`, per-type directory routing, YAML-safe quoting for
+  titles/tags, slug-collision guard with `--force`, vault-containment and
+  fleet-registration guards on `--project`/`--fleet`. (#24)
+- `claudron init --adopt` backfills missing `updated` from file mtime —
+  line-level insert, formatting preserved. (#24)
 
 ### Changed (breaking)
 - **Exit codes:** environment errors (no vault resolvable, no claudlobby

@@ -66,18 +66,50 @@ class TestNewRoundTrip:
         fm, _, _ = parse_note(Path(env["data"]["path"]).read_text())
         assert fm["owner"] == "env-user"
 
-    def test_yaml_special_title_round_trips(self, vault_dir: Path, capsys):
-        """Titles with YAML-special characters are quoted, not misparsed."""
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Auth: A Deep Dive",  # colon
+            "true",               # YAML bool
+            "no",                 # YAML bool (1.1-adjacent)
+            "0",                  # YAML int, falsy
+            "2026-07-08",         # YAML date
+            "null",               # YAML null
+            "3.14",               # YAML float
+        ],
+    )
+    def test_yaml_special_title_round_trips(self, vault_dir: Path, capsys, title):
+        """Titles YAML would misparse (specials AND implicit typing —
+        review blocker 1) are quoted: they round-trip as the identical
+        string and the note passes its own strict validate."""
         rc = main(
-            ["--vault", str(vault_dir), "new", "knowledge",
-             "Auth: A Deep Dive", "--owner", "t", "--json"]
+            ["--vault", str(vault_dir), "new", "knowledge", title,
+             "--owner", "t", "--json"]
         )
         assert rc == 0
         env = json.loads(capsys.readouterr().out)
         path = Path(env["data"]["path"])
         fm, _, err = parse_note(path.read_text())
         assert err is None
-        assert fm["title"] == "Auth: A Deep Dive"
+        assert fm["title"] == title and isinstance(fm["title"], str)
+        assert main(["validate", str(path), "--strict"]) == 0
+        capsys.readouterr()
+        # And the vault stays searchable (blocker 1's crash was in lookup)
+        assert main(["--vault", str(vault_dir), "lookup", "anything"]) == 0
+
+    @pytest.mark.parametrize("tags", ["todo #urgent", "foo]bar", "a:b,c'd"])
+    def test_yaml_special_tags_round_trip(self, vault_dir: Path, capsys, tags):
+        """Tags are list-encoded, never hand-joined (review blocker 2)."""
+        rc = main(
+            ["--vault", str(vault_dir), "new", "knowledge", "Tagged Note",
+             "--tags", tags, "--owner", "t", "--force", "--json"]
+        )
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        path = Path(env["data"]["path"])
+        fm, _, err = parse_note(path.read_text())
+        assert err is None
+        assert fm["tags"] == [t.strip() for t in tags.split(",")]
         assert main(["validate", str(path), "--strict"]) == 0
 
     def test_tags_and_project_scope(self, vault_with_projects: Path, capsys):
@@ -142,6 +174,55 @@ class TestNewEdges:
         with pytest.raises(SystemExit) as exc_info:
             main(["--vault", str(vault_dir), "new", "memo", "X"])
         assert exc_info.value.code == 2  # argparse choices
+
+    @pytest.mark.parametrize("flag", ["--project", "--fleet"])
+    def test_scope_cannot_escape_vault(self, vault_dir: Path, capsys, flag, tmp_path):
+        """Review blocker 3 (security): ../ scopes must not write outside
+        the vault root — agents derive these flags from untrusted content.
+        For --project the containment guard fires; for --fleet the
+        registration guard fires first (a traversal name can never be a
+        registered overlay) — either way rc=2 and nothing is written."""
+        rc = main(
+            ["--vault", str(vault_dir), "new", "knowledge", "Full Escape",
+             flag, "../../escaped", "--owner", "t"]
+        )
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "escapes the vault root" in err or "fleet not in vault" in err
+        assert not (tmp_path / "escaped").exists()
+        assert not (vault_dir.parent / "escaped").exists()
+
+    def test_unregistered_fleet_refused(self, vault_dir: Path, capsys):
+        """Review major 4: --fleet without a registered overlay would
+        create untracked content and foreclose `fleet add` recovery."""
+        rc = main(
+            ["--vault", str(vault_dir), "new", "knowledge", "Fleet Note",
+             "--fleet", "totally-made-up", "--owner", "t"]
+        )
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "claudron fleet add" in err
+        assert not (vault_dir / "totally-made-up").exists()
+
+    def test_owner_git_timeout_falls_back(self, vault_dir: Path, capsys, monkeypatch):
+        """Review minor 6: TimeoutExpired is not an OSError — the guard
+        must catch it and fall back to $USER instead of crashing."""
+        import subprocess
+
+        monkeypatch.setenv("USER", "timeout-user")
+
+        def _hang(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="git", timeout=5)
+
+        monkeypatch.setattr(subprocess, "run", _hang)
+        rc = main(
+            ["--vault", str(vault_dir), "new", "knowledge", "Slow Git",
+             "--json"]
+        )
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        fm, _, _ = parse_note(Path(env["data"]["path"]).read_text())
+        assert fm["owner"] == "timeout-user"
 
 
 class TestAdoptBackfill:

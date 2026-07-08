@@ -5,9 +5,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
+
+import yaml
 
 from . import __version__
 from .schema import (
@@ -258,26 +259,36 @@ def _derive_owner(args) -> str:
     """--owner → git config user.name → $USER (docs/CLI_CONTRACT.md)."""
     if getattr(args, "owner", None):
         return args.owner
-    try:
-        import subprocess
+    import subprocess
 
+    try:
         name = subprocess.run(
             ["git", "config", "user.name"], capture_output=True, text=True, timeout=5
         ).stdout.strip()
         if name:
             return name
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
+        # TimeoutExpired is a SubprocessError, NOT an OSError — without
+        # naming it, the timeout guard guards nothing (review minor 6).
         pass
     return os.environ.get("USER", "unknown")
 
 
 def _yaml_scalar(value: str) -> str:
-    """Quote a string for hand-assembled frontmatter when YAML would
-    misparse it bare (colons, quotes, leading specials). json.dumps output
-    is valid double-quoted YAML."""
-    if re.search(r"[:#'\"{}\[\]&*!|>%@`]", value) or value != value.strip():
+    """Quote a string for hand-assembled frontmatter unless it round-trips
+    through the real YAML parser as the identical string. Character lists
+    are not enough — implicit typing turns bare `true`/`0`/`2026-07-08`
+    into bool/int/date (review: a bool title crashed lookup vault-wide).
+    json.dumps output is valid double-quoted YAML."""
+    if value != value.strip():
         return json.dumps(value)
-    return value
+    try:
+        parsed = yaml.safe_load(value)
+    except yaml.YAMLError:
+        return json.dumps(value)
+    if isinstance(parsed, str) and parsed == value:
+        return value
+    return json.dumps(value)
 
 
 def cmd_new(args) -> int:
@@ -292,9 +303,26 @@ def cmd_new(args) -> int:
         # tree); TYPE_DIRS applies only inside shared trees.
         base = vault.root / "projects" / args.project
     elif args.fleet:
-        base = vault.root / args.fleet / "shared" / TYPE_DIRS[note_type]
+        if args.fleet not in vault.fleets:
+            # Writing into an unregistered overlay creates untracked
+            # content and forecloses `fleet add` (review major 4).
+            print(
+                f"fleet not in vault: {args.fleet}\n"
+                f"  run: claudron fleet add {args.fleet}",
+                file=sys.stderr,
+            )
+            return 2
+        base = vault.fleets[args.fleet] / "shared" / TYPE_DIRS[note_type]
     else:
         base = vault.shared / TYPE_DIRS[note_type]
+
+    # Containment: scope names are agent-derived input; ../ must never
+    # write outside the vault (review blocker 3 — arbitrary-file-write).
+    base = base.resolve()
+    if not base.is_relative_to(vault.root.resolve()):
+        scope = args.project or args.fleet
+        print(f"scope {scope!r} escapes the vault root", file=sys.stderr)
+        return 2
     base.mkdir(parents=True, exist_ok=True)
 
     target = base / f"{slugify(title)}.md"
@@ -316,7 +344,10 @@ def cmd_new(args) -> int:
         f"owner: {_yaml_scalar(_derive_owner(args))}",
     ]
     if args.tags:
-        fm_lines.append(f"tags: [{', '.join(t.strip() for t in args.tags.split(','))}]")
+        # List-encoded, never hand-joined — "todo #urgent" / "foo]bar"
+        # produced unparseable notes (review blocker 2). json.dumps of a
+        # str list is a valid YAML flow sequence.
+        fm_lines.append(f"tags: {json.dumps([t.strip() for t in args.tags.split(',')])}")
     today = date.today().isoformat()
     fm_lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
     target.write_text("\n".join(fm_lines) + f"\n\n# {title}\n")
