@@ -133,6 +133,48 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
 # ── index (Tier A) ───────────────────────────────────────────────────
 
 
+def index_entry(fm: dict, md: Path, tier: str, vault_root: Path) -> dict:
+    """One index entry from parsed frontmatter — the single home of the
+    entry shape (build_index and the write engine's incremental update
+    both construct entries through this)."""
+    return {
+        "title": fm.get("title") or _derive_title(md.stem),
+        "tags": fm.get("tags") or [],
+        "aliases": fm.get("aliases") or [],
+        "status": fm.get("status", "active"),
+        "updated": _stamp(fm),
+        "expires": str(fm.get("expires", "")),
+        "filename": md.stem,
+        "path": str(md.relative_to(vault_root)),
+        "tier": tier,
+    }
+
+
+def write_index(vault: "Vault", index: dict) -> None:
+    """Persist the index. Write failures warn, never raise — the index is
+    a disposable mirror; the vault stays the source of truth."""
+    index_dir = vault.root / ".claudron"
+    try:
+        index_dir.mkdir(exist_ok=True)
+        (index_dir / "index.json").write_text(
+            json.dumps(index, indent=2, default=str)
+        )
+    except OSError as exc:
+        import warnings
+
+        warnings.warn(
+            f"claudron: could not write index to {index_dir}: {exc}",
+            stacklevel=2,
+        )
+
+
+def ensure_index(vault: "Vault") -> dict:
+    """A fresh index: loaded when current, rebuilt when stale/missing.
+    The one home of the freshness policy (lookup and the write engine
+    both go through it)."""
+    return load_index(vault) or build_index(vault)
+
+
 def build_index(vault: "Vault") -> dict:
     """Build frontmatter-only index, write to ``.claudron/index.json``."""
     entries: list[dict] = []
@@ -144,20 +186,7 @@ def build_index(vault: "Vault") -> dict:
             except OSError:
                 continue
             fm, _ = parse_frontmatter(text)
-            title = fm.get("title") or _derive_title(md.stem)
-            entries.append(
-                {
-                    "title": title,
-                    "tags": fm.get("tags") or [],
-                    "aliases": fm.get("aliases") or [],
-                    "status": fm.get("status", "active"),
-                    "updated": _stamp(fm),
-                    "expires": str(fm.get("expires", "")),
-                    "filename": md.stem,
-                    "path": str(md.relative_to(vault.root)),
-                    "tier": tier,
-                }
-            )
+            entries.append(index_entry(fm, md, tier, vault.root))
 
     # Walk all tiers
     for subdir in SHARED_SUBDIRS:
@@ -177,18 +206,7 @@ def build_index(vault: "Vault") -> dict:
                 _index_tier(d, f"other:{d.name}")
 
     index = {"schema_version": SCHEMA_VERSION, "entries": entries}
-    index_dir = vault.root / ".claudron"
-    try:
-        index_dir.mkdir(exist_ok=True)
-        index_path = index_dir / "index.json"
-        index_path.write_text(json.dumps(index, indent=2, default=str))
-    except OSError as exc:
-        import warnings
-
-        warnings.warn(
-            f"claudron: could not write index to {index_dir}: {exc}",
-            stacklevel=2,
-        )
+    write_index(vault, index)
     return index
 
 
@@ -367,10 +385,7 @@ def lookup(
     body scan. Hot-path callers (recall at every SessionStart) use it for
     implicit queries where an O(vault) scan would mostly be discarded.
     """
-    # Ensure index is fresh
-    index = load_index(vault)
-    if index is None:
-        index = build_index(vault)
+    index = ensure_index(vault)
 
     # ── Tier A: index-based scoring ──
     results: list[KnowledgeResult] = []

@@ -324,12 +324,12 @@ def cmd_capture(args) -> int:
         if not args.body:
             print("--update requires --body", file=sys.stderr)
             return 2
-        result = append_addendum(vault, note_path, args.body)
-        if args.json:
-            _emit_json("capture", result.to_dict())
-        else:
-            print(f"{result.action}: {result.path}")
-        return 0
+        try:
+            result = append_addendum(vault, note_path, args.body)
+        except ScopeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        return _emit_write_result(args, result)
 
     if args.stdin:
         try:
@@ -365,28 +365,30 @@ def cmd_capture(args) -> int:
     except ScopeError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    except KeyError:
-        # TYPE_DIRS miss — unknown type reaches here only via --stdin
-        # (flags are argparse-choices-guarded); report as validation.
-        from .schema import TYPES as _types
 
-        result = [
-            Finding(
-                code="E002", severity="error", path="", field="type", line=None,
-                message=f"unknown type '{note_type}' (valid: {', '.join(_types)})",
-            )
-        ]
+    return _emit_write_result(args, result)
 
-    if isinstance(result, list):  # validation Findings — nothing written
+
+def _emit_write_result(args, result) -> int:
+    """One WriteResult renderer for the write commands (capture --update
+    shares it): rejected → findings + exit 1, else action/path + exit 0."""
+    if result.action == "rejected":
         if args.json:
-            _emit_json("capture", {"action": "rejected"}, result)
+            _emit_json(
+                "capture",
+                {"action": result.action, "path": result.path, "reason": result.reason},
+                result.errors,
+            )
         else:
-            for f in result:
+            for f in result.errors:
                 print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
         return 1
 
     if args.json:
-        _emit_json("capture", result.to_dict())
+        _emit_json(
+            "capture",
+            {"action": result.action, "path": result.path, "reason": result.reason},
+        )
     else:
         print(f"{result.action}: {result.path}")
         if result.action.startswith("suggest_"):

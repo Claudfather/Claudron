@@ -118,6 +118,38 @@ class TestCaptureDedup:
         env = json.loads(capsys.readouterr().out)
         assert rc == 0 and env["data"]["action"] == "suggest_supersede"
 
+    def test_ratified_decision_attracts_dedup(self, vault_dir: Path, capsys):
+        """Gauntlet fix: a ratified decision is authoritative — a same-title
+        capture must suggest updating it, never silently twin it (dedup
+        skips DEDUP_EXEMPT, not the staleness set)."""
+        (vault_dir / "_shared" / "decisions" / "retry-strategy.md").write_text(
+            "---\ntitle: Retry Strategy\ntype: decision\nstatus: ratified\n"
+            "owner: chris\ncreated: 2026-06-01\nupdated: 2026-06-01\n"
+            "---\n\n# Retry Strategy\n\nRatified.\n"
+        )
+        rc = main(["--vault", str(vault_dir), "capture", "--type", "knowledge",
+                   "--title", "Retry Strategy", "--body", "Twin attempt.",
+                   "--owner", "b", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert rc == 0 and env["data"]["action"] == "suggest_update"
+
+    def test_write_path_keeps_index_fresh(self, vault_dir: Path, capsys):
+        """Gauntlet fix (Θ(N²)): capture maintains the index — after a
+        write, the index loads fresh (no rebuild) and already contains the
+        new note's entry."""
+        from claudron.knowledge import load_index
+        from claudron.vault import clear_stale_cache, detect
+
+        rc = main(["--vault", str(vault_dir), "capture", "--type", "knowledge",
+                   "--title", "Fresh Index Proof", "--body", "B.",
+                   "--owner", "b", "--json"])
+        assert rc == 0
+        capsys.readouterr()
+        clear_stale_cache()
+        index = load_index(detect(vault_dir))
+        assert index is not None, "index stale after capture — rebuild-per-write regression"
+        assert any(e["title"] == "Fresh Index Proof" for e in index["entries"])
+
     def test_terminal_match_does_not_attract(self, vault_dir: Path, capsys):
         """A superseded note is done — same title creates fresh."""
         _existing(vault_dir, status="superseded")
@@ -155,6 +187,22 @@ class TestCaptureUpdate:
         assert str(fm["updated"]) != "2026-06-10"  # bumped
         assert "Exponential backoff everywhere." in body  # original intact
         assert main(["validate", str(existing)]) == 0
+
+    def test_update_keeps_index_fresh(self, vault_dir: Path, capsys):
+        from claudron.knowledge import load_index
+        from claudron.vault import clear_stale_cache, detect
+
+        _existing(vault_dir)
+        main(["--vault", str(vault_dir), "capture",
+              "--update", "_shared/knowledge/retry-strategy.md",
+              "--body", "Addendum body."])
+        capsys.readouterr()
+        clear_stale_cache()
+        index = load_index(detect(vault_dir))
+        assert index is not None
+        entry = next(e for e in index["entries"]
+                     if e["path"] == "_shared/knowledge/retry-strategy.md")
+        assert entry["updated"] != "2026-06-10"  # bumped in the index too
 
     def test_update_missing_note_is_usage_error(self, vault_dir: Path, capsys):
         rc = main(["--vault", str(vault_dir), "capture",
