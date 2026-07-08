@@ -17,11 +17,11 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from .schema import LOOKUP_EXCLUDED
 from .vault import (
     SCHEMA_VERSION,
     SHARED_SUBDIRS,
     SKIP_DIRS,
-    TERMINAL_STATUSES,
     Vault,
     index_is_stale,
     iter_markdown_files,
@@ -306,7 +306,7 @@ def _is_excluded(
     entry: dict, include_archived: bool = False, include_expired: bool = False
 ) -> bool:
     """True if this entry should be excluded from results."""
-    if not include_archived and entry.get("status", "active") in TERMINAL_STATUSES:
+    if not include_archived and entry.get("status", "active") in LOOKUP_EXCLUDED:
         return True
     if not include_expired:
         expires = entry.get("expires", "")

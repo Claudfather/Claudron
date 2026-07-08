@@ -7,11 +7,14 @@ for ``.git/``).
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
 import yaml
+
+from .schema import NON_NOTE_FILES, STALENESS_DONE, split_fence
 
 
 # ── shared constants ─────────────────────────────────────────────────
@@ -58,11 +61,16 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
     for name in SCAFFOLD_TREE:
         (base / name).mkdir(parents=True, exist_ok=exist_ok)
 
-TERMINAL_STATUSES = frozenset({"completed", "superseded", "archived"})
+# Status semantics live in schema.py (SCHEMA.md is the SSOT): staleness
+# uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
+# LOOKUP_EXCLUDED — ratified is done-not-hidden, so the sets differ.
 
 SCHEMA_VERSION = 1  # bump when index.json structure changes
 
-_SKIP_NAMES = frozenset({"INDEX.md", "README.md"})
+# CONVENTIONS.md is the always-loaded layer (injected, not retrieved) —
+# never indexed/searched as a note; validate budget-checks it separately
+# (which is why it is NOT in schema.NON_NOTE_FILES).
+_SKIP_NAMES = NON_NOTE_FILES | {"CONVENTIONS.md"}
 
 
 def iter_markdown_files(base: Path):
@@ -97,6 +105,23 @@ class Vault:
 # ── detection ─────────────────────────────────────────────────────────
 
 
+def _dir_named(parent: Path, name: str) -> bool:
+    """True if ``parent/name`` is a directory with exactly that name.
+
+    ``(parent / "shared").is_dir()`` alone is a footgun on case-insensitive
+    filesystems: it matches ``/Users/Shared`` on macOS, which made detect()
+    treat ``/Users`` as a vault and walk the whole home directory. Listing
+    the parent is the only reliable way to see the on-disk casing
+    (``resolve()`` does not case-correct).
+    """
+    if not (parent / name).is_dir():
+        return False
+    try:
+        return name in os.listdir(parent)
+    except OSError:
+        return False
+
+
 def detect(path: Path | None = None) -> Vault | None:
     """Walk up from *path* looking for ``_shared/`` or ``shared/``.
 
@@ -104,11 +129,11 @@ def detect(path: Path | None = None) -> Vault | None:
     """
     start = (path or Path.cwd()).resolve()
     for candidate in [start, *start.parents]:
-        if (candidate / "_shared").is_dir():
+        if _dir_named(candidate, "_shared"):
             return _scan_vault(candidate)
         # shared/ is also valid, but NOT inside fleet overlays (which
         # have fleet.yaml next to their shared/ dir).
-        if (candidate / "shared").is_dir() and not (candidate / "fleet.yaml").is_file():
+        if _dir_named(candidate, "shared") and not (candidate / "fleet.yaml").is_file():
             return _scan_vault(candidate)
     return None
 
@@ -264,7 +289,7 @@ def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:
             pass
 
     # Status-based: terminal statuses aren't "stale", they're done
-    if fm.get("status", "") in TERMINAL_STATUSES:
+    if fm.get("status", "") in STALENESS_DONE:
         return False
 
     # Fall back to updated/created date + TTL
