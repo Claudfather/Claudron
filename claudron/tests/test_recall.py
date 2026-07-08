@@ -9,7 +9,7 @@ from textwrap import dedent
 import pytest
 
 from claudron.cli import main
-from claudron.session import BRIEF_TOKEN_BUDGET, derive_project
+from claudron.session import BRIEF_TOKEN_BUDGET, derive_project, recall
 
 
 def _conventions(vault: Path) -> None:
@@ -105,6 +105,61 @@ class TestBrief:
         assert rc == 0
         out = capsys.readouterr().out
         assert len(out.split()) <= BRIEF_TOKEN_BUDGET
+
+    def test_default_recall_is_index_only(self, vault_dir: Path, capsys):
+        """The implicit default (bare project name, every SessionStart) must
+        not trigger the O(vault) full-text fallback; an explicit --query
+        buys it. Observable via a heading-only match — invisible to the
+        index, found by full-text — for a term with zero Tier-A hits."""
+        proj = vault_dir / "projects" / "flaxo"
+        proj.mkdir(parents=True)
+        (vault_dir / "_shared" / "knowledge" / "quirks.md").write_text(
+            dedent("""\
+                ---
+                title: Platform Quirks
+                type: knowledge
+                status: current
+                owner: t
+                created: 2026-06-01
+                updated: 2026-06-01
+                ---
+
+                # Platform Quirks
+
+                ## flaxo ingestion quirks
+
+                The ingest path retries on 429s.
+            """)
+        )
+        # Implicit default: index has no 'flaxo' match and the full-text
+        # fallback stays off — heading-only match must NOT surface.
+        main(["--vault", str(vault_dir), "recall", "--project", "flaxo"])
+        assert "Platform Quirks" not in capsys.readouterr().out
+        # Explicit query: fallback allowed, heading match (70 ≥ floor) found.
+        main(["--vault", str(vault_dir), "recall",
+              "--project", "flaxo", "--query", "flaxo"])
+        assert "Platform Quirks" in capsys.readouterr().out
+
+    def test_json_note_shape_is_stable(self, vault_with_projects: Path, capsys):
+        """Every note carries the same key set; score is None for
+        membership (project) entries — the null is the signal."""
+        main(["--vault", str(vault_with_projects), "recall",
+              "--project", "storydump", "--query", "auth", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        notes = env["data"]["notes"]
+        keys = {"title", "path", "tier", "type", "status", "maturity",
+                "updated", "summary", "score"}
+        assert all(set(n) == keys for n in notes)
+        by_tier = {n["tier"]: n for n in notes}
+        assert by_tier["project:storydump"]["score"] is None
+        assert isinstance(by_tier["shared"]["score"], int)
+
+    def test_json_conventions_untransformed(self, vault_dir: Path, capsys):
+        """recall() returns authentic data — the H1 strip is render-only."""
+        _conventions(vault_dir)
+        main(["--vault", str(vault_dir), "recall", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert env["data"]["conventions"].startswith("# Vault conventions")
 
     def test_empty_recall_is_silent_payload(self, empty_vault: Path, capsys):
         """No conventions, no matches → empty stdout (fail-open posture:

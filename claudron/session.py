@@ -14,16 +14,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .knowledge import TIER_A_THRESHOLD, KnowledgeDoc, parse_doc, lookup
-from .schema import parse_note
-from .vault import Vault, iter_markdown_files
+from .knowledge import KnowledgeDoc, lookup, walk_knowledge_tier
+from .schema import count_tokens, parse_note
+from .vault import Vault
 
-# Whole-brief hard cap (whitespace-token proxy, same convention as
+# Whole-brief hard cap (count_tokens proxy, same as
 # schema.CONVENTIONS_BUDGET — which caps just the conventions component at
 # ≤160; this caps the whole brief). Conventions first, then project notes,
 # then shared matches until the budget is spent — the brief competes with
 # real work for context, so it degrades by dropping notes, never growing.
 BRIEF_TOKEN_BUDGET = 900
+
+# The abstention floor: a shared/fleet match below this injects nothing
+# (02-session-loop.md deliverable 1). Session policy, deliberately NOT
+# knowledge.TIER_A_THRESHOLD — that is a tier-escalation trigger that
+# retires with E4's ranking rework; this is a product relevance floor E4
+# must re-calibrate consciously against its new score scale. At today's
+# scale it excludes filename-only (30) and body-only (20) matches.
+RECALL_ABSTENTION_FLOOR = 50
 
 _SUMMARY_CHARS = 140
 
@@ -49,21 +57,22 @@ def _summary(body: str) -> str:
 
 
 def _entry(doc: KnowledgeDoc, vault: Vault, score: int | None = None) -> dict:
-    """Recall entry from an already-parsed doc — one read per note, total."""
-    entry = {
+    """Recall entry from an already-parsed doc — one read per note, total.
+
+    Stable key set for --json consumers: `maturity` is "" when unrated;
+    `score` is None for project-tier notes (membership, not relevance —
+    the null is the signal, kept explicit rather than by key absence)."""
+    return {
         "title": doc.title,
         "path": str(doc.source_path.relative_to(vault.root)),
         "tier": doc.tier,
         "type": doc.note_type,
         "status": doc.status,
+        "maturity": doc.maturity,
         "updated": doc.updated,
         "summary": _summary(doc.body),
+        "score": score,
     }
-    if doc.maturity:
-        entry["maturity"] = doc.maturity
-    if score is not None:
-        entry["score"] = score
-    return entry
 
 
 def recall(
@@ -74,41 +83,46 @@ def recall(
     limit: int = 5,
 ) -> dict:
     """Assemble the recall data: conventions + project notes + relevant
-    shared notes. Pure data; rendering/budgeting lives in render_brief."""
+    shared notes. Pure data; rendering/budgeting lives in render_brief.
+
+    Contract: with ``project=None`` and ``query=None`` the note sections are
+    empty (only conventions can appear) — direct callers (E3's MCP recall)
+    must resolve a project themselves, e.g. via derive_project().
+    """
     conventions = None
     conv_path = vault.shared / "CONVENTIONS.md"
     if conv_path.is_file():
         text = conv_path.read_text()
-        fm, body, err = parse_note(text)
-        raw = body if err is None and fm is not None else text
-        # Drop a leading H1 — render_brief adds its own section header.
-        lines = raw.strip().splitlines()
-        if lines and lines[0].startswith("# "):
-            lines = lines[1:]
-        conventions = "\n".join(lines).strip() or None
+        fm, body, _ = parse_note(text)
+        conventions = (body if fm is not None else text).strip() or None
 
     notes: list[dict] = []
     seen: set[str] = set()
 
     # Project tier: membership, not relevance — most recently updated first.
     if project and project in vault.projects:
-        entries = [
-            _entry(doc, vault)
-            for md in iter_markdown_files(vault.projects[project])
-            if (doc := parse_doc(md, f"project:{project}")) is not None
-        ]
-        entries.sort(key=lambda e: e["updated"], reverse=True)
+        docs = walk_knowledge_tier(vault.projects[project], f"project:{project}")
+        entries = sorted(
+            (_entry(doc, vault) for doc in docs),
+            key=lambda e: e["updated"],
+            reverse=True,
+        )
         for entry in entries[:limit]:
             notes.append(entry)
             seen.add(entry["path"])
 
     # Shared/fleet tiers: relevance with abstention — weak matches stay out.
+    # The implicit default (bare project name) stays index-only: a full-text
+    # scan on every SessionStart would be O(vault) work the abstention floor
+    # mostly discards. An explicit --query buys the full search.
     terms = query or project
     if terms:
         shared_added = 0
-        # Overfetch: the threshold and project-dedup drop some candidates.
-        for result in lookup(terms, vault, limit=limit * 2):
-            if result.score < TIER_A_THRESHOLD:
+        # Overfetch: the floor and project-dedup drop some candidates.
+        for result in lookup(
+            terms, vault, limit=limit * 2, tier_b=query is not None
+        ):
+            if result.score < RECALL_ABSTENTION_FLOOR:
                 continue
             entry = _entry(result.doc, vault, score=result.score)
             if entry["path"] in seen:
@@ -129,29 +143,35 @@ def recall(
 
 def render_brief(data: dict) -> str:
     """Render recall data as the injectable markdown brief, enforcing the
-    whole-brief token budget (drop notes, never truncate mid-thought)."""
+    whole-brief token budget (drop notes, never truncate mid-thought).
+
+    Presentation transforms live here, not in recall(): --json consumers
+    get the authentic data (incl. the conventions body's own H1)."""
     sections: list[str] = []
     spent = 0
 
-    def tokens(text: str) -> int:
-        return len(text.split())
-
     if data["conventions"]:
-        block = f"## Vault conventions\n\n{data['conventions']}"
-        sections.append(block)
-        spent += tokens(block)
+        body = data["conventions"]
+        # Drop a leading H1 — this renderer supplies the section header.
+        lines = body.splitlines()
+        if lines and lines[0].startswith("# "):
+            body = "\n".join(lines[1:]).strip()
+        if body:
+            block = f"## Vault conventions\n\n{body}"
+            sections.append(block)
+            spent += count_tokens(block)
 
-    lines: list[str] = []
+    lines = []
     header = "## Recalled context" + (
         f" — {data['project']}" if data["project"] else ""
     )
-    spent += tokens(header)
+    spent += count_tokens(header)
     for note in data["notes"]:
         qualifier = note["type"] or "note"
-        if note.get("maturity"):
+        if note["maturity"]:
             qualifier += f", {note['maturity']}"
         line = f"- **{note['title']}** ({qualifier}) — {note['summary']} `{note['path']}`"
-        cost = tokens(line)
+        cost = count_tokens(line)
         if spent + cost > BRIEF_TOKEN_BUDGET:
             break
         lines.append(line)
