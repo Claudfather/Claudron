@@ -1,10 +1,16 @@
 """Vault sync: the git leg of the SD-card loop (E2).
 
 `sync` is a thin, explicit git wrapper — commit vault changes, pull
---rebase, push. Conflicts are reported and left as markers for the human,
+--rebase, push. Conflicts are reported and left as markers for the human
+(the rebase stays stopped for the standard resolve/--continue flow),
 never auto-resolved; marker-bearing notes are quarantined (excluded from
 index/lookup/recall — detection is stateless, see
 schema.has_conflict_markers) until resolved.
+
+The quarantine scan is bounded to what the pull actually changed
+(``ORIG_HEAD..HEAD`` on a clean pull, unmerged files on a conflict) — a
+no-op pull reads zero notes, which keeps the SessionStart hook O(changed),
+not O(vault) (gauntlet finding).
 
 Single-writer-per-machine is the E2 assumption; cross-machine
 serialization happens here at the git layer. Hooks call the halves
@@ -14,22 +20,25 @@ and fail open on any nonzero outcome.
 
 from __future__ import annotations
 
+import socket
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .schema import has_conflict_markers
-from .vault import Vault, iter_markdown_files
+from .vault import Vault, scan_quarantine
 
 
 @dataclass
 class SyncResult:
-    ok: bool
     pulled: bool = False
     pushed: bool = False
     committed: bool = False
     quarantined: list[str] = field(default_factory=list)
-    detail: str = ""
+    detail: str = ""  # non-empty exactly when something needs the human
+
+    @property
+    def ok(self) -> bool:
+        return not self.detail
 
     def to_dict(self) -> dict:
         return {
@@ -52,24 +61,18 @@ def _git(root: Path, *args: str, timeout: float | None = None) -> subprocess.Com
             ["git", "-C", str(root), *args],
             capture_output=True, text=True, timeout=timeout,
         )
-    except FileNotFoundError as exc:
-        raise SyncError("git is not installed or not on PATH") from exc
+    except (FileNotFoundError, PermissionError) as exc:
+        raise SyncError(f"git is unavailable: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise SyncError(f"git {' '.join(args)} timed out") from exc
 
 
-def scan_quarantine(vault: Vault) -> list[str]:
-    """Vault-relative paths of notes carrying unresolved conflict markers."""
-    hits: list[str] = []
-    for md in sorted(vault.root.rglob("*.md")):
-        if ".git" in md.parts:
-            continue
-        try:
-            if has_conflict_markers(md.read_text()):
-                hits.append(str(md.relative_to(vault.root)))
-        except OSError:
-            continue
-    return hits
+def _changed_md(root: Path, spec: list[str]) -> list[str]:
+    """Vault-relative .md paths from a `git diff --name-only` invocation."""
+    out = _git(root, "diff", "--name-only", *spec)
+    if out.returncode != 0:
+        return []
+    return [p for p in out.stdout.splitlines() if p.endswith(".md")]
 
 
 def sync(
@@ -81,18 +84,23 @@ def sync(
 ) -> SyncResult:
     """Commit → pull --rebase → push. Raises SyncError for environment
     problems; returns ok=False (with detail + quarantine list) when a
-    conflict was left for the human."""
+    conflict or push failure was left for the human."""
     root = vault.root
     if _git(root, "rev-parse", "--git-dir").returncode != 0:
         raise SyncError(f"vault is not a git repository: {root}")
 
-    result = SyncResult(ok=True)
+    result = SyncResult()
 
     # Commit any working-tree changes first — captures don't commit, sync
     # owns the commit so notes actually travel.
-    if _git(root, "status", "--porcelain").stdout.strip():
+    porcelain = _git(root, "status", "--porcelain").stdout.strip()
+    if porcelain:
         _git(root, "add", "-A")
-        commit = _git(root, "commit", "-m", "claudron sync: vault changes")
+        n = len(porcelain.splitlines())
+        commit = _git(
+            root, "commit",
+            "-m", f"claudron sync: {n} change(s) from {socket.gethostname()}",
+        )
         result.committed = commit.returncode == 0
 
     if pull:
@@ -101,27 +109,29 @@ def sync(
             # Conflict (or no remote). The rebase stays stopped with markers
             # in the working tree — the standard resolve/--continue flow;
             # sync never aborts it (aborting would erase the markers the
-            # human is supposed to see).
-            result.quarantined = scan_quarantine(vault)
-            if result.quarantined:
-                result.ok = False
-                result.detail = (
-                    "pull hit conflicts — markers left for the human; "
-                    "conflicted notes are quarantined from search until resolved"
-                )
-                return result
-            result.detail = f"pull failed: {pulled.stderr.strip()[:200]}"
-            result.ok = False
+            # human is supposed to see). Scan only the unmerged files.
+            result.quarantined = scan_quarantine(
+                vault, paths=_changed_md(root, ["--diff-filter=U"])
+            )
+            result.detail = (
+                "pull hit conflicts — markers left for the human; conflicted "
+                "notes are quarantined from search until resolved"
+                if result.quarantined
+                else f"pull failed: {pulled.stderr.strip()[:200]}"
+            )
             return result
         result.pulled = True
-        # A clean pull can still land markers committed elsewhere.
-        result.quarantined = scan_quarantine(vault)
+        # A clean pull can still land markers committed elsewhere — scan
+        # exactly what the pull changed (no-op pull: ORIG_HEAD absent or
+        # equal to HEAD → zero files → zero reads).
+        result.quarantined = scan_quarantine(
+            vault, paths=_changed_md(root, ["ORIG_HEAD..HEAD"])
+        )
 
     if push:
         pushed = _git(root, "push", "origin", "HEAD", timeout=timeout)
         result.pushed = pushed.returncode == 0
         if not result.pushed:
-            result.ok = False
             result.detail = f"push failed: {pushed.stderr.strip()[:200]}"
 
     return result

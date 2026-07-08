@@ -22,9 +22,10 @@ from .vault import (
     status,
 )
 from .hooks import (
-    HOOK_HANDLERS,
+    HOOK_EVENTS,
     merge_settings,
     resolve_executable,
+    run_hook,
     settings_snippet,
 )
 from .knowledge import build_index, load_index, lookup
@@ -57,16 +58,17 @@ def _emit_json(command: str, data: dict, findings: list[Finding] | None = None) 
 # ── vault resolution ──────────────────────────────────────────────────
 
 
-def _resolve_vault(args) -> Vault:
-    """Resolve vault from --vault flag, CLAUDRON_VAULT env, or walk-up."""
-    vault_hint = getattr(args, "vault", None)
-    if vault_hint:
-        vault = detect(Path(vault_hint))
-    elif os.environ.get("CLAUDRON_VAULT"):
-        vault = detect(Path(os.environ["CLAUDRON_VAULT"]))
-    else:
-        vault = detect()
+def _detect_vault(args) -> Vault | None:
+    """The resolution chain (--vault flag → CLAUDRON_VAULT env → walk-up),
+    policy-free. _resolve_vault adds exit-3-on-None; hooks pass None
+    through (fail-open contract)."""
+    vault_hint = getattr(args, "vault", None) or os.environ.get("CLAUDRON_VAULT")
+    return detect(Path(vault_hint)) if vault_hint else detect()
 
+
+def _resolve_vault(args) -> Vault:
+    """Resolve vault or exit 3 (environment error, CLI contract)."""
+    vault = _detect_vault(args)
     if vault is None:
         print(
             "no vault found\n"
@@ -426,8 +428,12 @@ def cmd_recall(args) -> int:
 
 def cmd_sync(args) -> int:
     vault = _resolve_vault(args)
-    pull = not args.push_only
-    push = not args.pull_only
+    if args.pull_only:
+        pull, push = True, False
+    elif args.push_only:
+        pull, push = False, True
+    else:
+        pull, push = True, True
     try:
         result = sync(vault, pull=pull, push=push, timeout=args.timeout)
     except SyncError as exc:
@@ -455,11 +461,9 @@ def cmd_sync(args) -> int:
 
 
 def cmd_hook(args) -> int:
-    """Hook entry points: resolve the vault leniently (a hook must never
-    exit nonzero — fail-open contract), then dispatch."""
-    vault_hint = getattr(args, "vault", None) or os.environ.get("CLAUDRON_VAULT")
-    vault = detect(Path(vault_hint)) if vault_hint else detect()
-    return HOOK_HANDLERS[args.event](vault)
+    """Hook entry points: lenient vault resolution (None passes through —
+    fail-open), then the guarded dispatch (run_hook owns the contract)."""
+    return run_hook(args.event, _detect_vault(args))
 
 
 def cmd_hooks_install(args) -> int:
@@ -905,7 +909,7 @@ def main(argv=None) -> int:
         help="Hook entry points (SessionStart/PreCompact/SessionEnd plumbing)",
         parents=[vault_parent],
     )
-    p_hook.add_argument("event", choices=sorted(HOOK_HANDLERS))
+    p_hook.add_argument("event", choices=HOOK_EVENTS)
 
     # hooks
     p_hooks = sub.add_parser(

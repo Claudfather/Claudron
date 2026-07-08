@@ -152,6 +152,41 @@ class TestConflictQuarantine:
         assert "Shared Note" in capsys.readouterr().out
 
 
+class TestBoundedScan:
+    def test_noop_pull_reads_no_notes(self, synced_pair, monkeypatch):
+        """Gauntlet (efficiency b): the steady-state SessionStart — a no-op
+        pull — must not read the vault (scan is bounded to changed files)."""
+        from claudron import vault as vault_mod
+        from claudron.sync import sync
+        from claudron.vault import detect
+
+        a, _ = synced_pair
+        reads: list[str] = []
+        real = vault_mod.scan_quarantine
+
+        def spy(v, paths=None):
+            assert paths is not None, "unbounded full-vault scan on the pull path"
+            reads.extend(paths)
+            return real(v, paths)
+
+        monkeypatch.setattr("claudron.sync.scan_quarantine", spy)
+        result = sync(detect(a), pull=True, push=False)
+        assert result.ok
+        assert reads == []  # nothing changed → nothing read
+
+    def test_validate_names_conflicts(self, synced_pair, capsys):
+        """Gauntlet (altitude 1b): validate reports markers as the actual
+        condition, not generic YAML breakage or a false all-clear."""
+        a, _ = synced_pair
+        note = a / "_shared" / "knowledge" / "shared-note.md"
+        note.write_text(
+            note.read_text() + "\n<<<<<<< HEAD\nA\n=======\nB\n>>>>>>> x\n"
+        )
+        rc = main(["validate", str(note)])
+        assert rc == 1
+        assert "conflict markers" in capsys.readouterr().out
+
+
 class TestConflictMarkers:
     def test_real_markers_detected(self):
         text = (

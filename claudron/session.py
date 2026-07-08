@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .knowledge import KnowledgeDoc, lookup, walk_knowledge_tier
-from .schema import count_tokens, parse_note
+from .schema import count_tokens, has_conflict_markers, parse_note
 from .vault import Vault
 
 # Whole-brief hard cap (count_tokens proxy, same as
@@ -86,15 +86,23 @@ def recall(
     shared notes. Pure data; rendering/budgeting lives in render_brief.
 
     Contract: with ``project=None`` and ``query=None`` the note sections are
-    empty (only conventions can appear) — direct callers (E3's MCP recall)
-    must resolve a project themselves, e.g. via derive_project().
+    empty (only conventions can appear). recall() itself never pulls —
+    session-boundary callers need hooks.session_start_brief, which owns the
+    pull-before-recall ordering the acceptance test depends on.
     """
     conventions = None
     conv_path = vault.shared / "CONVENTIONS.md"
     if conv_path.is_file():
         text = conv_path.read_text()
-        fm, body, _ = parse_note(text)
-        conventions = (body if fm is not None else text).strip() or None
+        # Quarantine applies here too: CONVENTIONS.md bypasses the tier
+        # walker (injected, not retrieved), so the parse-time guard never
+        # sees it — without this check a conflicted CONVENTIONS.md would
+        # inject raw markers into every session brief (gauntlet finding).
+        if has_conflict_markers(text):
+            conventions = None
+        else:
+            fm, body, _ = parse_note(text)
+            conventions = (body if fm is not None else text).strip() or None
 
     notes: list[dict] = []
     seen: set[str] = set()

@@ -293,11 +293,9 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     # Conflict quarantine: marker-bearing notes are excluded from search
     # until a human resolves them — surface them here so they can't rot
     # invisibly (detection is stateless; fixing the file clears it).
-    quarantined = [
-        str(md.relative_to(vault.root))
-        for md in sorted(vault.root.rglob("*.md"))
-        if ".git" not in md.parts and _has_markers(md)
-    ]
+    # Full-vault second read, accepted: status is an at-will command, not
+    # the SessionStart hot path (which scans changed files only).
+    quarantined = scan_quarantine(vault)
     for path in quarantined:
         warnings.append(f"quarantined (unresolved conflict markers): {path}")
 
@@ -321,11 +319,29 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     }
 
 
-def _has_markers(md: Path) -> bool:
-    try:
-        return has_conflict_markers(md.read_text())
-    except OSError:
-        return False
+def scan_quarantine(vault: Vault, paths: list[str] | None = None) -> list[str]:
+    """Vault-relative paths of notes carrying unresolved conflict markers.
+
+    The single home of the quarantine scan. *paths* restricts the scan
+    (sync passes the pull's changed files so a no-op pull reads nothing);
+    None scans the whole vault (status). Deliberately covers files the
+    tier walker skips — a conflicted CONVENTIONS.md matters most, it is
+    the always-injected layer.
+    """
+    if paths is not None:
+        candidates = [vault.root / p for p in paths if p.endswith(".md")]
+    else:
+        candidates = [
+            md for md in sorted(vault.root.rglob("*.md")) if ".git" not in md.parts
+        ]
+    hits: list[str] = []
+    for md in candidates:
+        try:
+            if md.is_file() and has_conflict_markers(md.read_text()):
+                hits.append(str(md.relative_to(vault.root)))
+        except OSError:
+            continue
+    return hits
 
 
 def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:

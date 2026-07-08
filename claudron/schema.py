@@ -511,6 +511,24 @@ def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None)
     def one(p: Path) -> tuple[list[Finding], dict | None]:
         """Per-file dispatch: conventions budget vs note validation."""
         text = p.read_text()
+        if has_conflict_markers(text):
+            # Name the actual condition — a frontmatter conflict would
+            # otherwise misdiagnose as generic E004 and a body-only
+            # conflict would validate CLEAN while being quarantined from
+            # search everywhere else (gauntlet finding).
+            return [
+                Finding(
+                    code="E004",
+                    severity="error",
+                    path=rel(p),
+                    field=None,
+                    line=None,
+                    message=(
+                        "unresolved git conflict markers — the note is "
+                        "quarantined from search until resolved"
+                    ),
+                )
+            ], None
         if is_conventions(p):
             fm, body, _ = parse_note(text)
             return check_conventions(body if fm is not None else text, path=rel(p)), None

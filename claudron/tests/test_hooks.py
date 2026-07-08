@@ -95,6 +95,59 @@ class TestSessionEndHook:
         assert rc == 0
 
 
+class TestGauntletPins:
+    def test_conflicted_conventions_not_injected(self, vault_dir: Path, capsys):
+        """Gauntlet (altitude 1a): CONVENTIONS.md bypasses the tier walker,
+        so a conflicted one would inject raw markers into EVERY brief —
+        recall must quarantine it explicitly."""
+        (vault_dir / "_shared" / "CONVENTIONS.md").write_text(
+            "# Conventions\n\n<<<<<<< HEAD\nA's rules.\n=======\n"
+            "B's rules.\n>>>>>>> origin/main\n"
+        )
+        rc = main(["--vault", str(vault_dir), "recall", "--query", "auth"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "<<<<<<<" not in out and "Vault conventions" not in out
+
+    def test_run_hook_is_the_failopen_boundary(self, vault_dir: Path, capsys, monkeypatch):
+        """Gauntlet (altitude 2): exception classes the inner guards never
+        anticipated still exit 0 with clean stdout."""
+        import claudron.hooks as hooks_mod
+
+        def _boom(vault):
+            raise PermissionError("git exists but is not executable")
+
+        monkeypatch.setitem(hooks_mod._HOOK_HANDLERS, "session-start", _boom)
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        rc = main(["--vault", str(vault_dir), "hook", "session-start"])
+        assert rc == 0
+        assert capsys.readouterr().out == ""
+        assert "failed open" in (vault_dir / ".claudron" / "hooks.log").read_text()
+
+    def test_moved_executable_replaces_not_duplicates(self, vault_dir: Path, tmp_path, capsys, monkeypatch):
+        """Gauntlet (altitude 3): a venv move must replace the stale entry,
+        not append a second hook that runs every session."""
+        from claudron import hooks as hooks_mod
+
+        settings = tmp_path / "settings.json"
+        settings.write_text("{}")
+        main(["--vault", str(vault_dir), "hooks", "install",
+              "--write", "--settings", str(settings)])
+        capsys.readouterr()
+        monkeypatch.setattr(
+            hooks_mod, "resolve_executable", lambda: "/new/venv/bin/claudron"
+        )
+        monkeypatch.setattr(
+            "claudron.cli.resolve_executable", lambda: "/new/venv/bin/claudron"
+        )
+        main(["--vault", str(vault_dir), "hooks", "install",
+              "--write", "--settings", str(settings)])
+        merged = json.loads(settings.read_text())
+        starts = merged["hooks"]["SessionStart"]
+        assert len(starts) == 1  # replaced, not appended
+        assert starts[0]["hooks"][0]["command"].startswith("/new/venv/")
+
+
 class TestHooksInstall:
     def test_print_snippet_default(self, vault_dir: Path, capsys):
         rc = main(["--vault", str(vault_dir), "hooks", "install"])

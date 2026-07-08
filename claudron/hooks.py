@@ -29,6 +29,8 @@ from .sync import SyncError, sync
 from .vault import Vault, detect
 
 SESSION_START_PULL_TIMEOUT = 2.0  # seconds — the SessionStart latency budget
+SESSION_END_PUSH_TIMEOUT = 10.0  # bounded teardown — a hang isn't an error,
+# so fail-open alone can't save a stalled push (gauntlet finding)
 
 
 def _log(vault: Vault | None, event: str, message: str) -> None:
@@ -58,29 +60,44 @@ def _stdin_payload() -> dict:
 
 
 def _claudna_installed() -> bool:
+    # Bounded: marketplace/plugin layout is one level deep, and the dir
+    # itself is the signal (a `**/claudna/*` glob walked the whole cache
+    # on the miss path and missed empty dirs — gauntlet finding).
     plugins = Path.home() / ".claude" / "plugins"
-    return any(plugins.glob("**/claudna/*")) if plugins.is_dir() else False
+    if not plugins.is_dir():
+        return False
+    return any(plugins.glob("*/claudna")) or any(plugins.glob("*/*/claudna"))
 
 
-def hook_session_start(vault: Vault | None) -> int:
-    """Pull (bounded, fail-open) then emit the recall brief on stdout."""
-    _stdin_payload()  # drain stdin per the hook protocol
-    if vault is None:
-        _log(None, "session-start", "no vault resolvable — nothing injected")
-        return 0
+def session_start_brief(vault: Vault) -> str:
+    """The order-sensitive SessionStart composition: bounded pull, THEN
+    recall (pull must precede recall or machine B briefs stale — the
+    epic's acceptance-test invariant). The session-layer seam both the
+    hook and any future door (E3) call; sync degradation never blocks
+    the brief."""
     try:
         result = sync(vault, pull=True, push=False, timeout=SESSION_START_PULL_TIMEOUT)
         if not result.ok:
             _log(vault, "session-start", f"sync --pull degraded: {result.detail}")
+        if result.quarantined:
+            _log(
+                vault, "session-start",
+                f"quarantined this pull: {', '.join(result.quarantined)}",
+            )
     except SyncError as exc:
         _log(vault, "session-start", f"sync --pull skipped: {exc}")
-    try:
-        data = recall(vault, project=derive_project())
-        brief = render_brief(data)
-        if brief:
-            print(brief)
-    except Exception as exc:  # fail open — a brief is optional, a session is not
-        _log(vault, "session-start", f"recall failed: {exc!r}")
+    return render_brief(recall(vault, project=derive_project()))
+
+
+def hook_session_start(vault: Vault | None) -> int:
+    """Emit the session brief on stdout (fail-open, like every hook)."""
+    _stdin_payload()  # drain stdin per the hook protocol
+    if vault is None:
+        _log(None, "session-start", "no vault resolvable — nothing injected")
+        return 0
+    brief = session_start_brief(vault)
+    if brief:
+        print(brief)
     return 0
 
 
@@ -124,7 +141,7 @@ def hook_session_end(vault: Vault | None) -> int:
     if vault is None:
         return 0
     try:
-        result = sync(vault, pull=False, push=True)
+        result = sync(vault, pull=False, push=True, timeout=SESSION_END_PUSH_TIMEOUT)
         if not result.ok:
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
     except SyncError as exc:
@@ -132,11 +149,27 @@ def hook_session_end(vault: Vault | None) -> int:
     return 0
 
 
-HOOK_HANDLERS = {
+def run_hook(event: str, vault: Vault | None) -> int:
+    """THE fail-open boundary: whatever goes wrong inside a handler —
+    including exception classes the inner guards never anticipated — a
+    hook exits 0 with nothing on stdout. One guard at the boundary
+    instead of per-call try blocks of mismatched breadth (gauntlet
+    finding: a PermissionError from the git layer escaped the narrow
+    SyncError catch and would have broken the session)."""
+    try:
+        return _HOOK_HANDLERS[event](vault)
+    except Exception as exc:
+        _log(vault, event, f"hook failed open: {exc!r}")
+        return 0
+
+
+_HOOK_HANDLERS = {
     "session-start": hook_session_start,
     "pre-compact": hook_pre_compact,
     "session-end": hook_session_end,
 }
+
+HOOK_EVENTS = tuple(sorted(_HOOK_HANDLERS))
 
 
 def settings_snippet(executable: str) -> dict:
@@ -160,24 +193,36 @@ def settings_snippet(executable: str) -> dict:
     }
 
 
+def _is_claudron_hook(entry: dict, event_cmd: str) -> bool:
+    """A claudron hook's identity is (event, ours) — NOT the literal
+    command string. Keying on the full path made a moved venv/pipx path
+    append a duplicate entry instead of replacing the stale one (gauntlet
+    finding: the exact portability scenario absolute paths exist for)."""
+    return any(
+        str(h.get("command", "")).endswith(f"hook {event_cmd}")
+        for h in (entry.get("hooks") or [])
+    )
+
+
 def merge_settings(settings: dict, snippet: dict) -> dict:
     """Merge the snippet's hook entries into existing settings without
-    touching anything else. Idempotent: an entry whose command already
-    exists for the event is not re-added."""
+    touching anything else. Idempotent, and self-replacing: a prior
+    claudron entry for the same event is replaced (stale executable
+    paths don't accumulate); foreign entries are never touched."""
     merged = dict(settings)
     hooks = dict(merged.get("hooks") or {})
+    event_cmds = {
+        "SessionStart": "session-start",
+        "PreCompact": "pre-compact",
+        "SessionEnd": "session-end",
+    }
     for event, entries in snippet["hooks"].items():
-        existing = list(hooks.get(event) or [])
-        known = {
-            h.get("command")
-            for e in existing
-            for h in (e.get("hooks") or [])
-        }
-        for entry in entries:
-            cmd = entry["hooks"][0]["command"]
-            if cmd not in known:
-                existing.append(entry)
-        hooks[event] = existing
+        event_cmd = event_cmds[event]
+        kept = [
+            e for e in (hooks.get(event) or [])
+            if not _is_claudron_hook(e, event_cmd)
+        ]
+        hooks[event] = kept + entries
     merged["hooks"] = hooks
     return merged
 
