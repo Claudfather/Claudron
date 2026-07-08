@@ -12,4 +12,9 @@ conventions, linking conventions, promotion conventions, supersession
 conventions, capture conventions, review-queue conventions, and sync
 conventions, until any reasonable tokenizer counts well past one hundred
 sixty tokens of body content, which is the grace ceiling above the nominal
-one-hundred-twenty-token budget that the schema assigns to this file.
+one-hundred-twenty-token budget that the schema assigns to this file. And
+because one hundred forty-four tokens turned out to sit just under that
+ceiling in practice, here is one more deliberately verbose closing thought
+about how session briefs have finite room, how every standing convention
+crowds out one retrieved finding, and how the discipline of a tiny
+always-loaded file is what keeps the whole recall loop honest for everyone.

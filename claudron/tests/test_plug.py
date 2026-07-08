@@ -91,7 +91,7 @@ class TestPlug:
                     str(nowhere),
                 ]
             )
-        assert exc_info.value.code == 2
+        assert exc_info.value.code == 3  # environment error (CLI contract 0.2.0)
         err = capsys.readouterr().err
         assert "could not find claudlobby root" in err
         assert "plug requires a claudlobby installation" in err
@@ -165,9 +165,10 @@ class TestConfig:
 
         rc = main(["config", "--json", "--claudlobby", str(claudlobby_root)])
         assert rc == 0
-        data = json.loads(capsys.readouterr().out)
-        assert data["claudlobby_root"] == str(claudlobby_root)
-        assert data["vault"] == str(vault_for_plug)
+        env = json.loads(capsys.readouterr().out)
+        assert env["command"] == "config"
+        assert env["data"]["claudlobby_root"] == str(claudlobby_root)
+        assert env["data"]["vault"] == str(vault_for_plug)
 
     def test_config_not_plugged(self, claudlobby_root: Path, capsys):
         rc = main(["config", "--claudlobby", str(claudlobby_root)])

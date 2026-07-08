@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .schema import Finding, validate_path
 from .vault import (
     SCAFFOLD_TREE,
     SKIP_DIRS,
@@ -20,6 +21,28 @@ from .vault import (
     status,
 )
 from .knowledge import build_index, load_index, lookup
+
+
+# ── output contract (docs/CLI_CONTRACT.md) ────────────────────────────
+#
+# stdout carries payload only (session hooks inject it verbatim);
+# diagnostics go to stderr. --json emits exactly one envelope on stdout.
+
+
+def _envelope(command: str, data: dict, findings: list[Finding] | None = None) -> dict:
+    errors = [f.to_dict() for f in findings or [] if f.severity == "error"]
+    warnings = [f.to_dict() for f in findings or [] if f.severity == "warning"]
+    return {
+        "ok": not errors,
+        "command": command,
+        "data": data,
+        "warnings": warnings,
+        "errors": errors,
+    }
+
+
+def _emit_json(command: str, data: dict, findings: list[Finding] | None = None) -> None:
+    print(json.dumps(_envelope(command, data, findings), indent=2, default=str))
 
 
 # ── vault resolution ──────────────────────────────────────────────────
@@ -42,7 +65,7 @@ def _resolve_vault(args) -> Vault:
             "  or specify:  claudron --vault <path> <command>",
             file=sys.stderr,
         )
-        sys.exit(2)
+        sys.exit(3)  # environment error (docs/CLI_CONTRACT.md; was 2 pre-0.2.0)
     return vault
 
 
@@ -71,7 +94,7 @@ def _require_claudlobby_root(args, command: str) -> Path:
             f"  specify with: claudron {command} --claudlobby <path>",
             file=sys.stderr,
         )
-        sys.exit(2)
+        sys.exit(3)  # environment error (docs/CLI_CONTRACT.md; was 2 pre-0.2.0)
     return cl_root
 
 
@@ -107,6 +130,12 @@ def cmd_init(args) -> int:
     except VaultError as e:
         print(str(e), file=sys.stderr)
         return 2
+    if getattr(args, "json", False):
+        _emit_json(
+            "init",
+            {"root": str(root), "scaffold": [f"_shared/{n}" for n in SCAFFOLD_TREE]},
+        )
+        return 0
     print(f"vault created at {root}")
     for name in SCAFFOLD_TREE:
         print(f"  _shared/{name}/")
@@ -119,7 +148,7 @@ def cmd_status(args) -> int:
     info = status(vault, stale_days=getattr(args, "stale_days", 90))
 
     if args.json:
-        print(json.dumps(info, indent=2))
+        _emit_json("status", info)
         return 0
 
     print(f"vault: {info['root']}")
@@ -134,13 +163,13 @@ def cmd_status(args) -> int:
             stale_str = f"  ({tier_info['stale']} stale)" if tier_info["stale"] else ""
             print(f"  {tier_name}: {tier_info['docs']} docs{stale_str}")
 
+    # Index state + vault warnings are diagnostics, not payload → stderr
     if not info["index_present"]:
-        print("\n  index: not built (will auto-build on first lookup)")
+        print("index: not built (will auto-build on first lookup)", file=sys.stderr)
     elif not info["index_fresh"]:
-        print("\n  index: stale (will auto-rebuild on next lookup)")
-
+        print("index: stale (will auto-rebuild on next lookup)", file=sys.stderr)
     for w in info["warnings"]:
-        print(f"\n  warning: {w}")
+        print(f"warning: {w}", file=sys.stderr)
     return 0
 
 
@@ -159,27 +188,29 @@ def cmd_lookup(args) -> int:
 
     if not results:
         if args.json:
-            print(json.dumps({"query": query, "results": []}))
+            _emit_json("lookup", {"query": query, "results": []})
         else:
-            print(f"no results for '{query}'")
+            print(f"no results for '{query}'", file=sys.stderr)
         return 0
 
     if args.json:
-        out = {
-            "query": query,
-            "results": [
-                {
-                    "title": r.doc.title,
-                    "score": r.score,
-                    "match_type": r.match_type,
-                    "tier": r.doc.tier,
-                    "path": str(r.doc.source_path.relative_to(vault.root)),
-                    "tags": r.doc.tags,
-                }
-                for r in results
-            ],
-        }
-        print(json.dumps(out, indent=2))
+        _emit_json(
+            "lookup",
+            {
+                "query": query,
+                "results": [
+                    {
+                        "title": r.doc.title,
+                        "score": r.score,
+                        "match_type": r.match_type,
+                        "tier": r.doc.tier,
+                        "path": str(r.doc.source_path.relative_to(vault.root)),
+                        "tags": r.doc.tags,
+                    }
+                    for r in results
+                ],
+            },
+        )
         return 0
 
     for r in results:
@@ -196,18 +227,65 @@ def cmd_index(args) -> int:
         existing = load_index(vault)
         if existing is not None:
             count = len(existing.get("entries", []))
-            print(f"index up to date ({count} entries)")
+            if getattr(args, "json", False):
+                _emit_json("index", {"entries": count, "rebuilt": False})
+            else:
+                print(f"index up to date ({count} entries)", file=sys.stderr)
             return 0
 
     index = build_index(vault)
     count = len(index.get("entries", []))
-    print(f"indexed {count} docs")
+    if getattr(args, "json", False):
+        _emit_json("index", {"entries": count, "rebuilt": True})
+    else:
+        print(f"indexed {count} docs", file=sys.stderr)
     return 0
 
 
-def cmd_version(_args) -> int:
-    print(f"claudron {__version__}")
+def cmd_version(args) -> int:
+    if getattr(args, "json", False):
+        _emit_json("version", {"version": __version__})
+    else:
+        print(f"claudron {__version__}")
     return 0
+
+
+def cmd_validate(args) -> int:
+    strict = args.strict
+    if args.path:
+        target = Path(args.path).expanduser().resolve()
+        if not target.exists():
+            print(f"no such path: {target}", file=sys.stderr)
+            return 2
+        # Vault context (for relative paths + shared-root rules) when the
+        # target sits inside one; otherwise the target anchors itself.
+        anchor = detect(target if target.is_dir() else target.parent)
+        root = anchor.root if anchor else (target if target.is_dir() else target.parent)
+        findings = validate_path(target, strict=strict, vault_root=root)
+    else:
+        vault = _resolve_vault(args)
+        findings = validate_path(vault.root, strict=strict, vault_root=vault.root)
+
+    errors = [f for f in findings if f.severity == "error"]
+    warnings = [f for f in findings if f.severity == "warning"]
+
+    if args.json:
+        _emit_json(
+            "validate",
+            {"errors": len(errors), "warnings": len(warnings), "strict": strict},
+            findings,
+        )
+        return 1 if errors else 0
+
+    for f in findings:
+        loc = f.path + (f":{f.line}" if f.line else "")
+        print(f"[{f.code}] {f.severity} {loc} — {f.message}")
+    print(
+        f"{len(errors)} error(s), {len(warnings)} warning(s)"
+        + (" [strict]" if strict else ""),
+        file=sys.stderr,
+    )
+    return 1 if errors else 0
 
 
 # ── Phase 2: claudlobby integration commands ─────────────────────────
@@ -276,7 +354,7 @@ def cmd_config(args) -> int:
         info["vault"] = None
 
     if getattr(args, "json", False):
-        print(json.dumps(info, indent=2))
+        _emit_json("config", info)
     else:
         print(f"claudlobby: {info['claudlobby_root'] or '(not found)'}")
         print(f"vault:      {info.get('vault') or '(not plugged)'}")
@@ -439,16 +517,39 @@ def main(argv=None) -> int:
     parser.add_argument("--vault", help="Vault path (default: detect from CWD)")
     sub = parser.add_subparsers(dest="command")
 
+    # Shared parents (docs/CLI_CONTRACT.md): --vault/--json on subcommands
+    # too, so `claudron status --json` and `claudron status --vault X` both
+    # parse. Argparse only applies a subparser default when the attribute
+    # is absent, so the top-level --vault value survives.
+    # SUPPRESS is load-bearing: Python 3.14 argparse applies subparser
+    # defaults over values the top-level parser already set, so a plain
+    # default=None here would null out `claudron --vault X status`.
+    vault_parent = argparse.ArgumentParser(add_help=False)
+    vault_parent.add_argument(
+        "--vault",
+        default=argparse.SUPPRESS,
+        help="Vault path (default: detect from CWD)",
+    )
+    json_parent = argparse.ArgumentParser(add_help=False)
+    json_parent.add_argument(
+        "--json", action="store_true", help="Emit the standard JSON envelope"
+    )
+
     # init
-    p_init = sub.add_parser("init", help="Scaffold a new vault")
+    p_init = sub.add_parser(
+        "init", help="Scaffold a new vault", parents=[json_parent]
+    )
     p_init.add_argument("path", help="Where to create the vault")
     p_init.add_argument(
         "--adopt", action="store_true", help="Adopt an existing non-empty directory"
     )
 
     # status
-    p_status = sub.add_parser("status", help="Vault contents and health summary")
-    p_status.add_argument("--json", action="store_true", help="JSON output")
+    p_status = sub.add_parser(
+        "status",
+        help="Vault contents and health summary",
+        parents=[vault_parent, json_parent],
+    )
     p_status.add_argument(
         "--stale-days", type=int, default=90, help="Staleness threshold in days"
     )
@@ -456,15 +557,34 @@ def main(argv=None) -> int:
         "-v", "--verbose", action="store_true", help="Show empty tiers"
     )
 
+    # validate
+    p_validate = sub.add_parser(
+        "validate",
+        help="Lint notes against SCHEMA.md (never mutates)",
+        parents=[vault_parent, json_parent],
+    )
+    p_validate.add_argument(
+        "path",
+        nargs="?",
+        default=None,
+        help="File or directory (default: the detected vault)",
+    )
+    p_validate.add_argument(
+        "--strict",
+        action="store_true",
+        help="Authoring tier — what the engine/bot write paths enforce",
+    )
+
     # lookup
-    p_lookup = sub.add_parser("lookup", help="Search vault knowledge")
+    p_lookup = sub.add_parser(
+        "lookup", help="Search vault knowledge", parents=[vault_parent, json_parent]
+    )
     p_lookup.add_argument("query", nargs="+", help="Search terms")
     p_lookup.add_argument("--project", help="Project context for scoped search")
     p_lookup.add_argument("--fleet", help="Fleet context for scoped search")
     p_lookup.add_argument(
         "--limit", type=int, default=5, help="Max results (default: 5)"
     )
-    p_lookup.add_argument("--json", action="store_true", help="JSON output")
     p_lookup.add_argument(
         "--include-archived",
         action="store_true",
@@ -475,13 +595,17 @@ def main(argv=None) -> int:
     )
 
     # index
-    p_index = sub.add_parser("index", help="Build or rebuild the Tier A index")
+    p_index = sub.add_parser(
+        "index",
+        help="Build or rebuild the frontmatter index",
+        parents=[vault_parent, json_parent],
+    )
     p_index.add_argument(
         "--full", action="store_true", help="Force full rebuild even if fresh"
     )
 
     # version
-    sub.add_parser("version", help="Print version")
+    sub.add_parser("version", help="Print version", parents=[json_parent])
 
     # plug
     p_plug = sub.add_parser("plug", help="Register vault with claudlobby")
@@ -497,8 +621,9 @@ def main(argv=None) -> int:
     )
 
     # config
-    p_config = sub.add_parser("config", help="Show resolved config")
-    p_config.add_argument("--json", action="store_true", help="JSON output")
+    p_config = sub.add_parser(
+        "config", help="Show resolved config", parents=[json_parent]
+    )
     p_config.add_argument(
         "--claudlobby", default=None, help="Claudlobby root (default: auto-detect)"
     )
@@ -546,6 +671,7 @@ def main(argv=None) -> int:
     dispatch = {
         "init": cmd_init,
         "status": cmd_status,
+        "validate": cmd_validate,
         "lookup": cmd_lookup,
         "index": cmd_index,
         "version": cmd_version,
