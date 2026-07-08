@@ -8,8 +8,17 @@ import os
 import sys
 from pathlib import Path
 
+import yaml
+
 from . import __version__
-from .schema import Finding, validate_path
+from .schema import (
+    STATUS_VOCAB,
+    TYPE_DIRS,
+    TYPES,
+    Finding,
+    slugify,
+    validate_path,
+)
 from .vault import (
     SCAFFOLD_TREE,
     SKIP_DIRS,
@@ -243,6 +252,119 @@ def cmd_version(args) -> int:
         _emit_json("version", {"version": __version__})
     else:
         print(f"claudron {__version__}")
+    return 0
+
+
+def _derive_owner(args) -> str:
+    """--owner → git config user.name → $USER (docs/CLI_CONTRACT.md)."""
+    if getattr(args, "owner", None):
+        return args.owner
+    import subprocess
+
+    try:
+        name = subprocess.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        if name:
+            return name
+    except (OSError, subprocess.TimeoutExpired):
+        # TimeoutExpired is a SubprocessError, NOT an OSError — without
+        # naming it, the timeout guard guards nothing (review minor 6).
+        pass
+    return os.environ.get("USER", "unknown")
+
+
+def _yaml_scalar(value: str) -> str:
+    """Quote a string for hand-assembled frontmatter unless it round-trips
+    through the real YAML parser as the identical string. Character lists
+    are not enough — implicit typing turns bare `true`/`0`/`2026-07-08`
+    into bool/int/date (review: a bool title crashed lookup vault-wide).
+    json.dumps output is valid double-quoted YAML."""
+    if value != value.strip():
+        return json.dumps(value)
+    try:
+        parsed = yaml.safe_load(value)
+    except yaml.YAMLError:
+        return json.dumps(value)
+    if isinstance(parsed, str) and parsed == value:
+        return value
+    return json.dumps(value)
+
+
+def cmd_new(args) -> int:
+    from datetime import date
+
+    vault = _resolve_vault(args)
+    title = args.title
+    note_type = args.type
+
+    if args.project:
+        # Projects file flat (projects/<name>/ is one tier, not a tiered
+        # tree); TYPE_DIRS applies only inside shared trees.
+        base = vault.root / "projects" / args.project
+    elif args.fleet:
+        if args.fleet not in vault.fleets:
+            # Writing into an unregistered overlay creates untracked
+            # content and forecloses `fleet add` (review major 4).
+            print(
+                f"fleet not in vault: {args.fleet}\n"
+                f"  run: claudron fleet add {args.fleet}",
+                file=sys.stderr,
+            )
+            return 2
+        base = vault.fleets[args.fleet] / "shared" / TYPE_DIRS[note_type]
+    else:
+        base = vault.shared / TYPE_DIRS[note_type]
+
+    # Containment: scope names are agent-derived input; ../ must never
+    # write outside the vault (review blocker 3 — arbitrary-file-write).
+    base = base.resolve()
+    if not base.is_relative_to(vault.root.resolve()):
+        scope = args.project or args.fleet
+        print(f"scope {scope!r} escapes the vault root", file=sys.stderr)
+        return 2
+    base.mkdir(parents=True, exist_ok=True)
+
+    target = base / f"{slugify(title)}.md"
+    if target.exists() and not args.force:
+        print(
+            f"note already exists: {target}\n  pass --force to overwrite",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Hand-assembled rather than yaml.dump — pins key order, flow-style
+    # tags, and unquoted ISO dates so the note stays human-shaped.
+    # _yaml_scalar covers the escaping this trades away.
+    fm_lines = [
+        "---",
+        f"title: {_yaml_scalar(title)}",
+        f"type: {note_type}",
+        f"status: {STATUS_VOCAB[note_type]['default']}",
+        f"owner: {_yaml_scalar(_derive_owner(args))}",
+    ]
+    if args.tags:
+        # List-encoded, never hand-joined — "todo #urgent" / "foo]bar"
+        # produced unparseable notes (review blocker 2). json.dumps of a
+        # str list is a valid YAML flow sequence.
+        fm_lines.append(f"tags: {json.dumps([t.strip() for t in args.tags.split(',')])}")
+    today = date.today().isoformat()
+    fm_lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
+    target.write_text("\n".join(fm_lines) + f"\n\n# {title}\n")
+
+    if args.edit:
+        editor = os.environ.get("EDITOR")
+        if editor:
+            import subprocess
+
+            subprocess.run([editor, str(target)])
+        else:
+            print("$EDITOR is not set — note written, not opened", file=sys.stderr)
+
+    if args.json:
+        _emit_json("new", {"path": str(target)})
+    else:
+        print(str(target))
     return 0
 
 
@@ -575,6 +697,24 @@ def main(argv=None) -> int:
         help="Authoring tier — what the engine/bot write paths enforce",
     )
 
+    # new
+    p_new = sub.add_parser(
+        "new",
+        help="Scaffold a schema-valid note (passes validate --strict)",
+        parents=[vault_parent, json_parent],
+    )
+    p_new.add_argument("type", choices=TYPES, help="Note type")
+    p_new.add_argument("title", help="Note title")
+    scope = p_new.add_mutually_exclusive_group()
+    scope.add_argument("--project", help="File under projects/<name>/")
+    scope.add_argument("--fleet", help="File under <fleet>/shared/")
+    p_new.add_argument("--tags", help="Comma-separated tags")
+    p_new.add_argument("--owner", help="Owner (default: git user.name, then $USER)")
+    p_new.add_argument("--edit", action="store_true", help="Open in $EDITOR")
+    p_new.add_argument(
+        "--force", action="store_true", help="Overwrite an existing note"
+    )
+
     # lookup
     p_lookup = sub.add_parser(
         "lookup", help="Search vault knowledge", parents=[vault_parent, json_parent]
@@ -671,6 +811,7 @@ def main(argv=None) -> int:
     dispatch = {
         "init": cmd_init,
         "status": cmd_status,
+        "new": cmd_new,
         "validate": cmd_validate,
         "lookup": cmd_lookup,
         "index": cmd_index,
