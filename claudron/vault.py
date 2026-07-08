@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from .schema import NON_NOTE_FILES, STALENESS_DONE, split_fence
+from .schema import NON_NOTE_FILES, STALENESS_DONE, parse_note, split_fence
 
 
 # ── shared constants ─────────────────────────────────────────────────
@@ -199,7 +199,45 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
     if not gitignore.exists():
         gitignore.write_text(_GITIGNORE_CONTENT)
 
+    if adopt:
+        backfill_updated(root)
+
     return root
+
+
+def backfill_updated(root: Path) -> int:
+    """Backfill missing ``updated`` from file mtime across adopted notes.
+
+    The one sanctioned mutation (docs/CLI_CONTRACT.md), at adoption time
+    only — it is the remedy for the W101 wall a legacy docs tree would
+    otherwise produce. Line-level insert after ``created:`` (or at the
+    fence top); never re-serializes YAML, so user formatting is preserved.
+    Returns the number of files touched.
+    """
+    touched = 0
+    for md in root.rglob("*.md"):
+        if md.name in _SKIP_NAMES:
+            continue
+        text = md.read_text()
+        fm, _, err = parse_note(text)
+        if err is not None or not fm or "updated" in fm:
+            continue
+        stamp = datetime.fromtimestamp(md.stat().st_mtime).date().isoformat()
+        lines = text.splitlines(keepends=True)
+        insert_at = None
+        for i, line in enumerate(lines[1:], start=1):
+            if line.rstrip("\r\n") == "---":
+                insert_at = i  # fence end — fallback position
+                break
+            if line.split(":", 1)[0].strip() == "created":
+                insert_at = i + 1
+                break
+        if insert_at is None:
+            continue
+        lines.insert(insert_at, f"updated: {stamp}\n")
+        md.write_text("".join(lines))
+        touched += 1
+    return touched
 
 
 # ── status ────────────────────────────────────────────────────────────

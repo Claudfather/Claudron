@@ -27,14 +27,21 @@ pip install -e '.[dev]'
 claudron init my-vault
 cd my-vault
 
+# Write a schema-valid note (owner derived from git config / $USER)
+claudron new knowledge "Auth Patterns Across Services" --tags auth,jwt
+
+# Lint the vault against SCHEMA.md (lenient adoption tier)
+claudron validate
+
 # Check vault health
 claudron status
 
 # Search for knowledge
-claudron lookup "auth patterns" --tags jwt
+claudron lookup "auth patterns"
 
-# Rebuild the search index
-claudron index --full
+# Adopting an existing docs directory? --adopt also backfills missing
+# `updated` fields from file mtimes:
+claudron init ./existing-docs --adopt
 
 # Register vault with a claudlobby fleet
 claudron plug ./my-vault --claudlobby /path/to/claudlobby
@@ -46,10 +53,12 @@ Claudron works standalone as a knowledge engine. Commands marked with **(claudlo
 
 | Command | Purpose |
 |---------|---------|
-| `init` | Scaffold a new vault with `_shared/` structure |
+| `init` | Scaffold a new vault (`--adopt` converts + backfills an existing directory) |
+| `new` | Scaffold a schema-valid note in the right tier (passes `validate --strict`) |
+| `validate` | Lint notes against `SCHEMA.md` — lenient by default, `--strict` = the authoring/engine tier |
 | `status` | Vault contents and health summary |
 | `lookup` | Search vault knowledge by title, tags, or content |
-| `index` | Build or rebuild the Tier A frontmatter index |
+| `index` | Build or rebuild the frontmatter index |
 | `version` | Print version |
 | `fleet add` | Scaffold a fleet overlay inside the vault |
 | `fleet list` | List fleet overlays in the vault |
@@ -86,7 +95,7 @@ my-vault/
 ---
 title: Auth Patterns Across Services
 type: knowledge
-status: active
+status: current
 owner: mason
 tags: [auth, jwt, architecture]
 created: 2026-04-01

@@ -88,6 +88,23 @@ STATUS_VOCAB: dict[str, dict] = {
 # adds it) but validation budget-checks it.
 NON_NOTE_FILES = frozenset({"INDEX.md", "README.md"})
 
+# Where each type files inside a shared tier (SCHEMA.md §taxonomy; matches
+# clauDNA publish's disk routing — audit/review share planning/active).
+TYPE_DIRS = {
+    "knowledge": "knowledge",
+    "decision": "decisions",
+    "runbook": "runbooks",
+    "plan": "planning/active",
+    "audit": "planning/active",
+    "review": "planning/active",
+}
+
+
+def slugify(title: str) -> str:
+    """Kebab-case filename stem per SCHEMA.md's slug convention."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    return slug or "untitled"
+
 # Two sets, deliberately not one (SCHEMA.md: "Terminal ≠ hidden"): a
 # ratified decision is exempt from staleness but must stay searchable.
 # Derived from the per-type terminal tuples (doc-parity-bound), so adding a

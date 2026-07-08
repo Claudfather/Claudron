@@ -118,7 +118,7 @@ class TestIndex:
         # Add a new doc after a brief delay to ensure mtime differs
         time.sleep(0.05)
         (vault_dir / "_shared" / "knowledge" / "new-doc.md").write_text(
-            "---\ntitle: New Doc\ntype: knowledge\nstatus: active\n"
+            "---\ntitle: New Doc\ntype: knowledge\nstatus: current\n"
             "owner: test\ntags: [new]\ncreated: 2026-01-01\n"
             "updated: 2026-01-01\n---\n\n# New Doc\n"
         )
@@ -148,39 +148,51 @@ class TestVersion:
         assert "0.1.0" in out
 
 
+def _write_legacy_note(vault_dir: Path) -> Path:
+    """A claudlobby-style note: legacy status, no updated (W101+W102)."""
+    path = vault_dir / "_shared" / "knowledge" / "legacy-note.md"
+    path.write_text(
+        "---\ntitle: Legacy Note\ntype: knowledge\nstatus: active\n"
+        "owner: branden\ncreated: 2026-05-01\n---\n\n# Legacy Note\n"
+    )
+    return path
+
+
 class TestValidateCommand:
     def test_validate_vault_clean(self, vault_dir: Path, capsys):
+        # conftest fixtures are canonical since PR3 — zero findings
         rc = main(["--vault", str(vault_dir), "validate"])
         captured = capsys.readouterr()
-        # conftest docs use legacy `status: active` -> W102 warnings only
         assert rc == 0
-        assert "W102" in captured.out
-        assert "error(s)" in captured.err  # summary is a diagnostic
+        assert captured.out == ""
+        assert "0 error(s), 0 warning(s)" in captured.err
 
     def test_validate_json_envelope_findings(self, vault_dir: Path, capsys):
+        _write_legacy_note(vault_dir)
         rc = main(["--vault", str(vault_dir), "validate", "--json"])
         assert rc == 0
         env = json.loads(capsys.readouterr().out)
         assert env["command"] == "validate" and env["ok"] is True
         assert env["errors"] == []
         codes = {w["code"] for w in env["warnings"]}
-        assert "W102" in codes
+        assert codes == {"W101", "W102"}
         # Each element is a full serialized Finding (machine carrier)
         sample = env["warnings"][0]
         assert set(sample) == {"code", "severity", "path", "field", "line", "message"}
 
     def test_validate_strict_escalates(self, vault_dir: Path, capsys):
+        _write_legacy_note(vault_dir)
         rc = main(["--vault", str(vault_dir), "validate", "--strict", "--json"])
         env = json.loads(capsys.readouterr().out)
         assert rc == 1  # legacy statuses are errors on the authoring tier
         assert env["ok"] is False and len(env["errors"]) > 0
 
     def test_validate_single_file(self, vault_dir: Path, capsys):
-        target = vault_dir / "_shared" / "knowledge" / "auth-patterns.md"
+        target = _write_legacy_note(vault_dir)
         rc = main(["validate", str(target), "--json"])
         env = json.loads(capsys.readouterr().out)
         assert rc == 0
-        assert {w["code"] for w in env["warnings"]} == {"W102"}
+        assert {w["code"] for w in env["warnings"]} == {"W101", "W102"}
 
     def test_validate_missing_path_is_usage_error(self, capsys):
         rc = main(["validate", "/nonexistent/nowhere.md"])

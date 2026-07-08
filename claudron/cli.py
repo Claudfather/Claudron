@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .schema import Finding, validate_path
+from .schema import TYPE_DIRS, TYPES, Finding, slugify, validate_path
 from .vault import (
     SCAFFOLD_TREE,
     SKIP_DIRS,
@@ -243,6 +243,77 @@ def cmd_version(args) -> int:
         _emit_json("version", {"version": __version__})
     else:
         print(f"claudron {__version__}")
+    return 0
+
+
+def _derive_owner(args) -> str:
+    """--owner → git config user.name → $USER (docs/CLI_CONTRACT.md)."""
+    if getattr(args, "owner", None):
+        return args.owner
+    try:
+        import subprocess
+
+        name = subprocess.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, timeout=5
+        ).stdout.strip()
+        if name:
+            return name
+    except OSError:
+        pass
+    return os.environ.get("USER", "unknown")
+
+
+def cmd_new(args) -> int:
+    from datetime import date
+
+    from .schema import STATUS_VOCAB
+
+    vault = _resolve_vault(args)
+    title = args.title
+    note_type = args.type
+
+    if args.project:
+        base = vault.root / "projects" / args.project
+    elif args.fleet:
+        base = vault.root / args.fleet / "shared" / TYPE_DIRS[note_type]
+    else:
+        base = vault.shared / TYPE_DIRS[note_type]
+    base.mkdir(parents=True, exist_ok=True)
+
+    target = base / f"{slugify(title)}.md"
+    if target.exists() and not args.force:
+        print(
+            f"note already exists: {target}\n  pass --force to overwrite",
+            file=sys.stderr,
+        )
+        return 1
+
+    fm_lines = [
+        "---",
+        f"title: {title}",
+        f"type: {note_type}",
+        f"status: {STATUS_VOCAB[note_type]['default']}",
+        f"owner: {_derive_owner(args)}",
+    ]
+    if args.tags:
+        fm_lines.append(f"tags: [{', '.join(t.strip() for t in args.tags.split(','))}]")
+    today = date.today().isoformat()
+    fm_lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
+    target.write_text("\n".join(fm_lines) + f"\n\n# {title}\n")
+
+    if args.edit:
+        editor = os.environ.get("EDITOR")
+        if editor:
+            import subprocess
+
+            subprocess.run([editor, str(target)])
+        else:
+            print("$EDITOR is not set — note written, not opened", file=sys.stderr)
+
+    if args.json:
+        _emit_json("new", {"path": str(target)})
+    else:
+        print(str(target))
     return 0
 
 
@@ -575,6 +646,24 @@ def main(argv=None) -> int:
         help="Authoring tier — what the engine/bot write paths enforce",
     )
 
+    # new
+    p_new = sub.add_parser(
+        "new",
+        help="Scaffold a schema-valid note (passes validate --strict)",
+        parents=[vault_parent, json_parent],
+    )
+    p_new.add_argument("type", choices=TYPES, help="Note type")
+    p_new.add_argument("title", help="Note title")
+    scope = p_new.add_mutually_exclusive_group()
+    scope.add_argument("--project", help="File under projects/<name>/")
+    scope.add_argument("--fleet", help="File under <fleet>/shared/")
+    p_new.add_argument("--tags", help="Comma-separated tags")
+    p_new.add_argument("--owner", help="Owner (default: git user.name, then $USER)")
+    p_new.add_argument("--edit", action="store_true", help="Open in $EDITOR")
+    p_new.add_argument(
+        "--force", action="store_true", help="Overwrite an existing note"
+    )
+
     # lookup
     p_lookup = sub.add_parser(
         "lookup", help="Search vault knowledge", parents=[vault_parent, json_parent]
@@ -671,6 +760,7 @@ def main(argv=None) -> int:
     dispatch = {
         "init": cmd_init,
         "status": cmd_status,
+        "new": cmd_new,
         "validate": cmd_validate,
         "lookup": cmd_lookup,
         "index": cmd_index,

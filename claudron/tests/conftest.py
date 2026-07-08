@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from textwrap import dedent
 
 import pytest
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture
+def reference_vault(tmp_path: Path) -> Path:
+    """Writable copy of the shipped exemplar vault (examples/reference-vault)."""
+    dest = tmp_path / "reference-vault"
+    shutil.copytree(REPO_ROOT / "examples" / "reference-vault", dest)
+    return dest
 
 
 @pytest.fixture
@@ -22,7 +33,7 @@ def vault_dir(tmp_path: Path) -> Path:
         ---
         title: Auth Patterns Across Services
         type: knowledge
-        status: active
+        status: current
         owner: mason
         tags: [auth, jwt, architecture]
         created: 2026-04-01
@@ -45,7 +56,7 @@ def vault_dir(tmp_path: Path) -> Path:
         ---
         title: Deploy Checklist
         type: knowledge
-        status: active
+        status: current
         owner: alex
         tags: [deploy, operations]
         created: 2026-03-15
@@ -71,7 +82,7 @@ def vault_with_projects(vault_dir: Path) -> Path:
         ---
         title: Neon Connection Pooling Gotchas
         type: knowledge
-        status: active
+        status: current
         owner: alex
         tags: [neon, database, storydump]
         created: 2026-04-10
@@ -106,7 +117,7 @@ def vault_with_fleet(vault_dir: Path) -> Path:
         ---
         title: Railway Deploy Gotchas
         type: knowledge
-        status: active
+        status: current
         owner: branden
         tags: [railway, deploy]
         created: 2026-04-15
@@ -145,7 +156,7 @@ def shared_vault(tmp_path: Path) -> Path:
         ---
         title: Testing Guide
         type: knowledge
-        status: active
+        status: current
         owner: alex
         tags: [testing, guide]
         created: 2026-04-01
