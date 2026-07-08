@@ -168,6 +168,21 @@ CONVENTIONS_BUDGET = 120
 CONVENTIONS_BUDGET_HARD = 160
 
 
+_MARKER_OPEN_RE = re.compile(r"^<{7}(?: |$)", re.MULTILINE)
+_MARKER_CLOSE_RE = re.compile(r"^>{7}(?: |$)", re.MULTILINE)
+
+
+def has_conflict_markers(text: str) -> bool:
+    """True when *text* carries unresolved git conflict markers.
+
+    Line-anchored AND both fence sides required — prose *about* markers
+    (a backticked `<<<<<<< HEAD` mid-line, or a lone mention) does not
+    trip it. Marker-bearing notes are quarantined: excluded from index,
+    lookup, and recall until a human resolves them (E2 sync contract).
+    """
+    return bool(_MARKER_OPEN_RE.search(text) and _MARKER_CLOSE_RE.search(text))
+
+
 def count_tokens(text: str) -> int:
     """The whitespace-token proxy every budget uses (W105's conventions
     budget here; the session brief budget in session.py). One home, so the

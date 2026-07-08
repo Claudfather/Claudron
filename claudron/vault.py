@@ -14,7 +14,13 @@ from pathlib import Path
 
 import yaml
 
-from .schema import NON_NOTE_FILES, STALENESS_DONE, parse_note, split_fence
+from .schema import (
+    NON_NOTE_FILES,
+    STALENESS_DONE,
+    has_conflict_markers,
+    parse_note,
+    split_fence,
+)
 
 
 # ── shared constants ─────────────────────────────────────────────────
@@ -284,6 +290,17 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     if total_docs == 0:
         warnings.append("vault is empty — no knowledge docs found")
 
+    # Conflict quarantine: marker-bearing notes are excluded from search
+    # until a human resolves them — surface them here so they can't rot
+    # invisibly (detection is stateless; fixing the file clears it).
+    quarantined = [
+        str(md.relative_to(vault.root))
+        for md in sorted(vault.root.rglob("*.md"))
+        if ".git" not in md.parts and _has_markers(md)
+    ]
+    for path in quarantined:
+        warnings.append(f"quarantined (unresolved conflict markers): {path}")
+
     # Check index freshness
     index_path = vault.root / ".claudron" / "index.json"
     index_fresh = False
@@ -297,10 +314,18 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
         "total_stale": total_stale,
         "projects": list(vault.projects.keys()),
         "fleets": list(vault.fleets.keys()),
+        "quarantined": quarantined,
         "index_present": index_path.is_file(),
         "index_fresh": index_fresh,
         "warnings": warnings,
     }
+
+
+def _has_markers(md: Path) -> bool:
+    try:
+        return has_conflict_markers(md.read_text())
+    except OSError:
+        return False
 
 
 def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:

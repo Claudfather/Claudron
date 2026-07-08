@@ -21,8 +21,15 @@ from .vault import (
     scaffold_shared_tree,
     status,
 )
+from .hooks import (
+    HOOK_HANDLERS,
+    merge_settings,
+    resolve_executable,
+    settings_snippet,
+)
 from .knowledge import build_index, load_index, lookup
 from .session import derive_project, recall, render_brief
+from .sync import SyncError, sync
 
 
 # ── output contract (docs/CLI_CONTRACT.md) ────────────────────────────
@@ -417,6 +424,74 @@ def cmd_recall(args) -> int:
     return 0
 
 
+def cmd_sync(args) -> int:
+    vault = _resolve_vault(args)
+    pull = not args.push_only
+    push = not args.pull_only
+    try:
+        result = sync(vault, pull=pull, push=push, timeout=args.timeout)
+    except SyncError as exc:
+        print(str(exc), file=sys.stderr)
+        return 3  # environment error (CLI contract)
+
+    if args.json:
+        _emit_json("sync", result.to_dict())
+    else:
+        parts = [
+            name
+            for name, done in (
+                ("committed", result.committed),
+                ("pulled", result.pulled),
+                ("pushed", result.pushed),
+            )
+            if done
+        ]
+        print(f"sync: {', '.join(parts) if parts else 'nothing to do'}")
+        if result.detail:
+            print(result.detail, file=sys.stderr)
+        for path in result.quarantined:
+            print(f"conflict — quarantined until resolved: {path}", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
+def cmd_hook(args) -> int:
+    """Hook entry points: resolve the vault leniently (a hook must never
+    exit nonzero — fail-open contract), then dispatch."""
+    vault_hint = getattr(args, "vault", None) or os.environ.get("CLAUDRON_VAULT")
+    vault = detect(Path(vault_hint)) if vault_hint else detect()
+    return HOOK_HANDLERS[args.event](vault)
+
+
+def cmd_hooks_install(args) -> int:
+    snippet = settings_snippet(resolve_executable())
+    if not args.write:
+        print(json.dumps(snippet, indent=2))
+        print(
+            "\nmerge into ~/.claude/settings.json (or rerun with --write)",
+            file=sys.stderr,
+        )
+        return 0
+
+    settings_path = Path(
+        args.settings or Path.home() / ".claude" / "settings.json"
+    ).expanduser()
+    current: dict = {}
+    if settings_path.is_file():
+        try:
+            current = json.loads(settings_path.read_text())
+        except json.JSONDecodeError:
+            print(f"cannot parse {settings_path} — not touching it", file=sys.stderr)
+            return 3
+    merged = merge_settings(current, snippet)
+    if merged == current:
+        print("hooks already installed — no changes", file=sys.stderr)
+        return 0
+    print(f"writing {settings_path}", file=sys.stderr)
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(merged, indent=2) + "\n")
+    return 0
+
+
 def cmd_validate(args) -> int:
     strict = args.strict
     if args.path:
@@ -807,6 +882,47 @@ def main(argv=None) -> int:
         "--limit", type=int, default=5, help="Notes per tier (default: 5)"
     )
 
+    # sync
+    p_sync = sub.add_parser(
+        "sync",
+        help="Commit vault changes, pull --rebase, push (the SD-card git leg)",
+        parents=[vault_parent, json_parent],
+    )
+    sync_dir = p_sync.add_mutually_exclusive_group()
+    sync_dir.add_argument(
+        "--pull", dest="pull_only", action="store_true", help="Pull only"
+    )
+    sync_dir.add_argument(
+        "--push", dest="push_only", action="store_true", help="Push only"
+    )
+    p_sync.add_argument(
+        "--timeout", type=float, default=None, help="Seconds per git network op"
+    )
+
+    # hook (plumbing — invoked by Claude Code, fail-open by contract)
+    p_hook = sub.add_parser(
+        "hook",
+        help="Hook entry points (SessionStart/PreCompact/SessionEnd plumbing)",
+        parents=[vault_parent],
+    )
+    p_hook.add_argument("event", choices=sorted(HOOK_HANDLERS))
+
+    # hooks
+    p_hooks = sub.add_parser(
+        "hooks", help="Hook management", parents=[vault_parent]
+    )
+    hooks_sub = p_hooks.add_subparsers(dest="hooks_command")
+    p_hooks_install = hooks_sub.add_parser(
+        "install", help="Print (default) or --write the settings.json hooks block"
+    )
+    p_hooks_install.add_argument(
+        "--write", action="store_true", help="Merge into settings.json (shows target)"
+    )
+    p_hooks_install.add_argument(
+        "--settings", default=None,
+        help="Settings file to merge into (default: ~/.claude/settings.json)",
+    )
+
     # lookup
     p_lookup = sub.add_parser(
         "lookup", help="Search vault knowledge", parents=[vault_parent, json_parent]
@@ -900,12 +1016,20 @@ def main(argv=None) -> int:
         }
         return fleet_dispatch[args.fleet_command](args)
 
+    if args.command == "hooks":
+        if getattr(args, "hooks_command", None) != "install":
+            p_hooks.print_help()
+            return 1
+        return cmd_hooks_install(args)
+
     dispatch = {
         "init": cmd_init,
         "status": cmd_status,
         "new": cmd_new,
         "capture": cmd_capture,
         "recall": cmd_recall,
+        "sync": cmd_sync,
+        "hook": cmd_hook,
         "validate": cmd_validate,
         "lookup": cmd_lookup,
         "index": cmd_index,
