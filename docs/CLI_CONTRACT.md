@@ -1,0 +1,87 @@
+# Claudron CLI Contract
+
+Normative for every `claudron` command, current and future. Machine
+consumers (hooks, fleet bots, CI) build against this; changes are breaking
+changes and get CHANGELOG entries.
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Success. **Warnings do not change the exit code.** |
+| 1 | Findings: validation errors, review-queue items |
+| 2 | Usage error (bad arguments) |
+| 3 | Environment error (no vault resolvable, git missing) |
+
+CI that wants to gate on warnings runs `validate --strict` (which promotes
+the gateable warnings to errors) rather than parsing warning counts.
+
+> Breaking change at 0.2.0: no-vault previously exited 2; it is now 3.
+
+## Channels
+
+**stdout carries payload only; every diagnostic goes to stderr.** This rule
+is load-bearing: session hooks inject command stdout directly into agent
+context (E2 `recall`), so a stray progress line on stdout becomes garbage in
+a session brief. A parametrized channel-discipline test enforces this across
+the command table.
+
+## `--json` envelope
+
+One shape, every command:
+
+```json
+{
+  "ok": true,
+  "command": "validate",
+  "data": { },
+  "warnings": [ {"code": "W101", "severity": "warning", "path": "…",
+                 "field": "updated", "line": null, "message": "…"} ],
+  "errors": [ ]
+}
+```
+
+- `errors` / `warnings` are the authoritative finding lists; each element is
+  a serialized `Finding` (see SCHEMA.md §Validation) — never a bare string.
+- `data` is the per-command payload: `validate` → summary counts + per-note
+  breakdown; `new` → `{"path": "…"}`; `status` → the health dict; `lookup` →
+  `{query, results}`.
+- `ok` is `errors == []` (warnings don't flip it).
+
+> Breaking change at 0.2.0: `status --json`, `lookup --json`, and
+> `config --json` previously emitted three ad-hoc shapes; all now emit the
+> envelope (their old payloads live under `data`).
+
+## Flags
+
+- `--vault PATH` and `--json` are accepted by every subcommand (implemented
+  via a shared parent parser — `claudron status --json` parses).
+- Vault resolution order: `--vault` → `$CLAUDRON_VAULT_PATH` →
+  `$CLAUDRON_VAULT` → walk up from CWD.
+- Scoping: `--project NAME` / `--fleet NAME` where meaningful; they are
+  mutually exclusive wherever both exist.
+
+## Command groups (`--help` taxonomy)
+
+| Group | Commands |
+|---|---|
+| vault | `init`, `status`, `validate`, `index` |
+| notes | `new`, `lookup` |
+| session | `recall`, `capture`, `sync`, `hooks` *(E2)* |
+| fleet | `fleet add`, `fleet list` |
+| integration | `plug`, `unplug`, `config`, `migrate` |
+| curation | `promote`, `review` *(E5)* |
+| packs | `pack …`, `scenarios export` *(E6)* |
+
+## Command-specific contracts
+
+- `validate [PATH]` — no arg: detected vault; directory: that subtree; file:
+  that single note. `--strict` applies the authoring tier (SCHEMA.md). Never
+  mutates. Tip for humans: `validate --strict` previews exactly what the
+  engine/bot write paths will accept.
+- `new <type> "<title>"` — output always passes `validate --strict`. `owner`
+  derivation: `--owner` → `git config user.name` → `$USER`. Slug collision
+  errors (never silently overwrites); `--force` overrides. `--edit` without
+  `$EDITOR` still writes the note and errors on stderr.
+- `init --adopt` — additionally backfills missing `updated` from file mtime
+  (the one sanctioned mutation, at adoption time only).

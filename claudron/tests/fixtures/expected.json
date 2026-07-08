@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "note": "Fixture manifest — PR2's validator tests consume this. Every fixture is a typed record: target (file|directory) + path (relative to this dir) drive how validate is invoked; optional as = validate the file as if it lived at this vault-relative path (required for path-contextual rules like W105); expect lists the exact finding-code sets per tier (order-insensitive); optional full_finding pins one complete serialized Finding element (the codes-as-API machine carrier, asserted once to avoid brittle message coupling everywhere); note is prose, never semantic. Codes keep their identity across tiers; severity changes (e.g. W101 is a warning in lenient, an error in strict).",
+  "fixtures": [
+    {
+      "target": "file",
+      "path": "known-bad/missing-title.md",
+      "expect": { "lenient": ["E001"], "strict": ["E001"] }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/unknown-type.md",
+      "expect": { "lenient": ["E002"], "strict": ["E002"] }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/bad-status.md",
+      "expect": { "lenient": ["W106"], "strict": ["E003"] },
+      "full_finding": {
+        "tier": "strict",
+        "finding": {
+          "code": "E003",
+          "severity": "error",
+          "path": "known-bad/bad-status.md",
+          "field": "status",
+          "line": 4,
+          "message": "status 'bananas' is not valid for type 'knowledge' (canonical: current, stale, superseded, archived; accepted legacy: active, draft)"
+        }
+      }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/broken-yaml.md",
+      "expect": { "lenient": ["E004"], "strict": ["E004"] }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/bad-date.md",
+      "expect": { "lenient": ["W107"], "strict": ["E005"] }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/trust-draft-knowledge.md",
+      "expect": { "lenient": ["W102"], "strict": ["E006"] }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/no-owner.md",
+      "expect": { "lenient": [], "strict": ["E007"] }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/skill-shaped.md",
+      "expect": { "lenient": ["W103"], "strict": ["W103"] }
+    },
+    {
+      "target": "directory",
+      "path": "known-bad/dup-titles",
+      "expect": { "lenient": ["W104"], "strict": ["W104"] }
+    },
+    {
+      "target": "file",
+      "path": "known-bad/conventions-over-budget/CONVENTIONS.md",
+      "as": "_shared/CONVENTIONS.md",
+      "expect": { "lenient": ["W105"], "strict": ["W105"] }
+    },
+    {
+      "target": "file",
+      "path": "legacy/claudlobby-style.md",
+      "expect": { "lenient": ["W101", "W102"], "strict": ["W101", "W102"] },
+      "note": "The adoption case: a real claudlobby fleet doc warns, never errors, in lenient mode (W102 legacy status active->current; W101 missing updated)."
+    }
+  ]
+}

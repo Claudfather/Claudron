@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -96,6 +97,9 @@ class TestInit:
         assert (root / "_shared" / "knowledge").is_dir()
         assert (root / "_shared" / "decisions").is_dir()
         assert (root / "_shared" / "runbooks").is_dir()
+        # planning/ scaffolds nested (SCHEMA.md taxonomy, E1 — reverses #4)
+        assert (root / "_shared" / "planning" / "active").is_dir()
+        assert (root / "_shared" / "planning" / "completed").is_dir()
         assert (root / "projects").is_dir()
         assert (root / ".gitignore").is_file()
 
@@ -129,6 +133,30 @@ class TestStatus:
         info = status(vault)
         assert info["total_docs"] == 2
         assert info["tiers"]["shared/knowledge"]["docs"] == 2
+
+    def test_status_walks_shared_planning(self, vault_dir: Path):
+        """Docs under _shared/planning/active count in the shared/planning tier (E1, reverses #4)."""
+        active = vault_dir / "_shared" / "planning" / "active"
+        active.mkdir(parents=True)
+        (active / "q3-roadmap.md").write_text(
+            dedent("""\
+                ---
+                title: Q3 Roadmap
+                type: plan
+                status: active
+                owner: chris
+                tags: [roadmap]
+                created: 2026-07-01
+                updated: 2026-07-01
+                ---
+
+                # Q3 Roadmap
+            """)
+        )
+        vault = detect(vault_dir)
+        info = status(vault)
+        assert info["tiers"]["shared/planning"]["docs"] == 1
+        assert info["total_docs"] == 3
 
     def test_status_empty_vault_warns(self, empty_vault: Path):
         vault = detect(empty_vault)

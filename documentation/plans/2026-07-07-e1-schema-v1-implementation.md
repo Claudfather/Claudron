@@ -31,22 +31,18 @@ paths enforce this; humans may omit). Universal optional: `aliases`,
 Each table row separates **canonical values** (what writers should emit) from
 **accepted legacy aliases** (validated with a W102-class warning + mapping
 suggestion) — so an agent reading SCHEMA.md never mistakes an alias for
-first-class vocabulary (devex fold):
+first-class vocabulary (devex fold).
 
-| type | canonical `status` values | accepted legacy aliases | Notes |
-|---|---|---|---|
-| `knowledge` | `current \| stale \| superseded \| archived` | `active → current`, `draft → maturity: draft` | claudlobby's knowledge enum (`current\|stale\|superseded`) **plus `archived`** — a deliberate superset addition across all six types, not verbatim adoption (engineering correction); the mapping table records it |
-| `decision` | `draft \| ratified \| superseded \| archived` | — | `draft` here is claudlobby's pre-ratification state (activity, not trust) — the one place `draft` is a *native* status value |
-| `runbook` | `current \| stale \| superseded \| archived` | `active → current`, `draft → maturity: draft` | mirrors knowledge |
-| `plan` | `draft \| active \| completed \| superseded \| archived` | — | claudlobby's plan enum + terminal values |
-| `audit` | `draft \| completed \| archived` | — | claudlobby/clauDNA audit shape |
-| `review` | `draft \| completed \| archived` | — | same |
-
-**Equivalence mapping (normative, used by `validate` in lenient mode and by
-the sibling-alignment docs):** `current ≈ active` (knowledge/runbook),
-`stale` ⇒ valid + auto-enters the E5 review queue, `ratified` ⇒ terminal-lock
-for decisions (treated like `completed` for staleness), legacy `status: draft`
-on non-decision/plan/audit/review types ⇒ warn + suggest `maturity: draft`.
+> **Ratified — the normative per-type status table and equivalence mapping
+> now live in `SCHEMA.md` §Status vocabulary** (landed with E1 PR1, #22; this
+> plan's draft tables were collapsed to this pointer at ratification so the
+> vocabulary has exactly one home — simplify pass, reuse finding). Design
+> intent that shaped it, kept for the record: claudlobby's enums adopted
+> **plus a deliberate `archived` superset across all six types** (not
+> verbatim adoption — engineering correction); `draft` is a *native* activity
+> value only for decision/plan/audit/review; `stale` auto-enters the E5
+> review queue; `ratified` is terminal for staleness but never hidden from
+> lookup.
 
 **Terminal statuses — two constants, because the two consumers diverge**
 (engineering blocker: `TERMINAL_STATUSES` feeds both `_is_stale`
@@ -125,46 +121,24 @@ E2's recall injects it unconditionally.
 
 ## CLI contract (ships as `docs/CLI_CONTRACT.md`, PR1)
 
-- Exit codes: `0` ok **(warnings do not change the exit code — warnings → 0,
-  errors → 1; CI that wants to gate on warnings runs `validate --strict`)** ·
-  `1` findings (validate errors, review items) · `2` usage error · `3`
-  environment error (no vault, git missing). **Breaking change, called out:**
-  no-vault currently exits 2 (`cli.py:36`); it moves to 3 at 0.2.0 —
-  CHANGELOG entry required.
-- Global flags: `--vault`, `--json`; scoping flags `--project`/`--fleet`
-  where meaningful. Argparse mechanics: `--json` and `--vault` live on a
-  **shared parent parser** attached to every subcommand (not the top parser
-  alone) so `claudron status --json` keeps parsing — the flag-placement
-  footgun devex flagged.
-- `--json` envelope: `{"ok": bool, "command": str, "data": {...},
-  "warnings": [Finding...], "errors": [Finding...]}`. **Each element of
-  `errors`/`warnings` IS a serialized `Finding`** (struct below) — the
-  top-level arrays are the authoritative finding lists; `data` carries the
-  per-command payload (for `validate`: summary counts + per-note breakdown;
-  for `new`: `{path}` of the created note — `new` honors `--json` like
-  everything else).
-- **Envelope migration is in-scope for E1 (PR2):** `status`, `lookup`, and
-  `config` currently emit three different ad-hoc `--json` shapes
-  (`cli.py:113-114`, `:159-174`, `:270-277`) — 0.2.0 is the first public
-  release and therefore the cheapest moment there will ever be to unify
-  them. Breaking change, CHANGELOG'd with before/after examples.
-- stdout = payload only; all diagnostics to stderr (recall's stdout is
-  injected session context — this rule is load-bearing). **Made true, not
-  just documented:** PR2 retrofits the existing offenders (`status` human
-  report, `lookup`'s "no results", `index` progress lines → stderr where
-  they are diagnostics) and adds a **channel-discipline test** parametrized
-  over the command table so regressions fail CI.
-- `validate [PATH]` trichotomy, stated: no arg → detected vault; directory →
-  that subtree; file → that single note.
-- One preview line for humans: "run `validate --strict` to see what the
-  engine/bot write paths will accept" (the two-tier model gives one note two
-  verdicts; say so where users look).
-- Command groups for `--help`: vault (init/status/validate/index) · notes
-  (new/lookup) · session (recall/capture/sync/hooks — E2) · fleet
-  (fleet add/fleet list) · **integration (plug/unplug/config/migrate)** —
-  renamed from the draft's "fleet" grouping because `fleet` is a real
-  subcommand namespace and "fleet → plug" in help would teach users a
-  command that doesn't exist · curation (promote/review — E5) · packs (E6)
+> **Ratified — the normative contract (exit codes, envelope, channels,
+> groups, per-command rules) now lives in `docs/CLI_CONTRACT.md`** (landed
+> with E1 PR1, #22; this section's draft was collapsed to this pointer at
+> ratification — simplify pass, reuse finding). Implementation notes that
+> stay plan-side because they are *work items*, not contract:
+>
+> - **Envelope migration is in-scope for E1 (PR2):** `status`, `lookup`, and
+>   `config` emit three ad-hoc `--json` shapes today (`cli.py:113-114`,
+>   `:159-174`, `:270-277`); 0.2.0 is the cheapest break point. CHANGELOG
+>   with before/after examples.
+> - **Channel discipline made true, not just documented (PR2):** retrofit
+>   the existing stdout offenders (`status` report, `lookup` "no results",
+>   `index` progress) + a channel-discipline test parametrized over the
+>   command table.
+> - **Argparse mechanics:** `--json`/`--vault` via a shared parent parser on
+>   every subcommand, so `claudron status --json` keeps parsing.
+> - The no-vault exit-code change (2→3) breaks green tests
+>   (`test_cli.py:67`, `test_plug.py:94`) — update in the same PR, red-first.
 
 ## `claudron validate` design
 
@@ -181,24 +155,13 @@ Two tiers (cycle-1 M2):
 
 **Error catalog — closed for the 0.x line** (devex blocker fold: an
 open-ended catalog cannot be API). Every condition the design enumerates has
-a code; additions are minor-version events recorded in SCHEMA.md's changelog:
+a code; additions are minor-version events recorded in SCHEMA.md's changelog.
 
-| Code | Condition | Tier |
-|---|---|---|
-| `E001` | missing required field (`title`/`type`/`created`) | both |
-| `E002` | unknown `type` | both |
-| `E003` | status not in type's canonical-or-alias set | strict (lenient ⇒ W106) |
-| `E004` | unparseable YAML frontmatter | both |
-| `E005` | malformed date (non-ISO `created`/`updated`/`expires`) | strict (lenient ⇒ W107) |
-| `E006` | trust-draftness on `status` for knowledge/runbook (`maturity` owns it) | strict |
-| `E007` | missing `owner` on agent-written note | strict |
-| `W101` | missing `updated` | lenient |
-| `W102` | accepted legacy status value (mapping suggested) | lenient |
-| `W103` | skill-shaped note (referential-boundary heuristic) | both |
-| `W104` | duplicate title / alias collision across tiers | both |
-| `W105` | CONVENTIONS.md over token budget | both |
-| `W106` | status outside union (lenient form of E003) | lenient |
-| `W107` | malformed date (lenient form of E005) | lenient |
+> **Ratified — the normative catalog table (E001–E007 / W101–W107, with
+> per-tier behavior) now lives in `SCHEMA.md` §Error catalog** (landed with
+> E1 PR1, #22; draft table collapsed to this pointer at ratification —
+> simplify pass, reuse finding). PR2's doc-parity test binds that table to
+> `schema.py`; this plan intentionally carries no copy for it to drift from.
 
 **`Finding` is a stable struct — the machine carrier of the catalog** (devex
 blocker): `{code: str, severity: "error"|"warning", path: str, field:

@@ -22,7 +22,41 @@ SKIP_DIRS = frozenset(
 
 SHARED_MARKERS = ("_shared", "shared")
 
-SHARED_SUBDIRS = ("knowledge", "decisions", "runbooks")
+# Single source of truth for the shared tier tree: keys are the tiers that
+# status/index/search walk; values are on-disk filing subdirs (scaffolded
+# nested, walked as one tier — rglob sweeps them in the tier's pass).
+# `planning` was added in E1 (SCHEMA.md), deliberately reversing issue #4 —
+# vault-level planning docs are content.
+SHARED_TIERS: dict[str, tuple[str, ...]] = {
+    "knowledge": (),
+    "decisions": (),
+    "runbooks": (),
+    "planning": ("active", "completed"),
+}
+
+# Walked by status/index/search — derived, cannot drift from the map.
+SHARED_SUBDIRS = tuple(SHARED_TIERS)
+
+
+def _scaffold_leaves() -> tuple[str, ...]:
+    leaves: list[str] = []
+    for tier, subs in SHARED_TIERS.items():
+        if subs:
+            leaves.extend(f"{tier}/{sub}" for sub in subs)
+        else:
+            leaves.append(tier)
+    return tuple(leaves)
+
+
+# Created by scaffolding (init, fleet add) — derived from the same map.
+SCAFFOLD_TREE = _scaffold_leaves()
+
+
+def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
+    """Create the shared tier tree under *base* (a `_shared/` or fleet
+    `shared/` mount point)."""
+    for name in SCAFFOLD_TREE:
+        (base / name).mkdir(parents=True, exist_ok=exist_ok)
 
 TERMINAL_STATUSES = frozenset({"completed", "superseded", "archived"})
 
@@ -133,8 +167,7 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
             f"  use --adopt to turn an existing directory into a vault"
         )
 
-    for name in SHARED_SUBDIRS:
-        (root / "_shared" / name).mkdir(parents=True, exist_ok=True)
+    scaffold_shared_tree(root / "_shared", exist_ok=True)
     (root / "projects").mkdir(parents=True, exist_ok=True)
 
     gitignore = root / ".gitignore"

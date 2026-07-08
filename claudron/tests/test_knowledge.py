@@ -155,6 +155,59 @@ class TestFiltering:
         assert len(matching) >= 1
         assert matching[0].doc.title == "No frontmatter"
 
+    def test_ratified_decision_visible_by_default(self, vault_dir: Path):
+        """Pin (E1/PR2 guard): `ratified` is terminal for staleness but must
+        NEVER enter the lookup-exclusion set — a ratified decision is the most
+        authoritative note in the vault and stays searchable."""
+        (vault_dir / "_shared" / "decisions" / "adr-sqlite.md").write_text(
+            dedent("""\
+                ---
+                title: ADR SQLite Index Backend
+                type: decision
+                status: ratified
+                owner: chris
+                tags: [adr, index]
+                created: 2026-07-01
+                updated: 2026-07-01
+                ---
+
+                # ADR SQLite Index Backend
+
+                The index mirror uses stdlib sqlite3.
+            """)
+        )
+        vault = detect(vault_dir)
+        results = lookup("ADR SQLite Index Backend", vault, limit=10)
+        ratified = [r for r in results if r.doc.title == "ADR SQLite Index Backend"]
+        assert len(ratified) == 1
+
+    def test_shared_planning_docs_searchable(self, vault_dir: Path):
+        """E1 (#4 reversal): vault-level planning docs are indexed and found."""
+        active = vault_dir / "_shared" / "planning" / "active"
+        active.mkdir(parents=True)
+        (active / "sd-card-rollout.md").write_text(
+            dedent("""\
+                ---
+                title: SD Card Rollout Plan
+                type: plan
+                status: active
+                owner: chris
+                tags: [rollout]
+                created: 2026-07-01
+                updated: 2026-07-01
+                ---
+
+                # SD Card Rollout Plan
+
+                Ship recall and capture to both machines.
+            """)
+        )
+        vault = detect(vault_dir)
+        results = lookup("SD Card Rollout Plan", vault, limit=10)
+        plans = [r for r in results if r.doc.title == "SD Card Rollout Plan"]
+        assert len(plans) == 1
+        assert plans[0].doc.tier == "shared"
+
     def test_excludes_archived_by_default(self, vault_dir: Path):
         (vault_dir / "_shared" / "knowledge" / "old-auth.md").write_text(
             dedent("""\
