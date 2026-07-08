@@ -14,14 +14,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .knowledge import TIER_A_THRESHOLD, lookup
+from .knowledge import TIER_A_THRESHOLD, KnowledgeDoc, parse_doc, lookup
 from .schema import parse_note
 from .vault import Vault, iter_markdown_files
 
-# Whole-brief hard cap (whitespace-token proxy, same convention as the
-# CONVENTIONS budget). Conventions first, then project notes, then shared
-# matches until the budget is spent — the brief competes with real work
-# for context, so it degrades by dropping notes, never by growing.
+# Whole-brief hard cap (whitespace-token proxy, same convention as
+# schema.CONVENTIONS_BUDGET — which caps just the conventions component at
+# ≤160; this caps the whole brief). Conventions first, then project notes,
+# then shared matches until the budget is spent — the brief competes with
+# real work for context, so it degrades by dropping notes, never growing.
 BRIEF_TOKEN_BUDGET = 900
 
 _SUMMARY_CHARS = 140
@@ -37,18 +38,6 @@ def derive_project(cwd: Path | None = None) -> str:
     return start.name
 
 
-def entry_updated(path: Path) -> str:
-    """Sortable updated-stamp for a note: frontmatter `updated` when
-    parseable, else empty (sorts last)."""
-    try:
-        fm, _, err = parse_note(path.read_text())
-    except OSError:
-        return ""
-    if err is not None or not fm:
-        return ""
-    return str(fm.get("updated") or fm.get("created") or "")
-
-
 def _summary(body: str) -> str:
     """First substantive body line, truncated — the one-line summary the
     brief shows per note."""
@@ -59,24 +48,19 @@ def _summary(body: str) -> str:
     return ""
 
 
-def _note_entry(path: Path, vault: Vault, tier: str, score: int | None = None) -> dict | None:
-    try:
-        text = path.read_text()
-    except OSError:
-        return None
-    fm, body, err = parse_note(text)
-    if err is not None or fm is None:
-        return None
+def _entry(doc: KnowledgeDoc, vault: Vault, score: int | None = None) -> dict:
+    """Recall entry from an already-parsed doc — one read per note, total."""
     entry = {
-        "title": str(fm.get("title") or path.stem),
-        "path": str(path.relative_to(vault.root)),
-        "tier": tier,
-        "type": fm.get("type", ""),
-        "status": str(fm.get("status", "")),
-        "summary": _summary(body),
+        "title": doc.title,
+        "path": str(doc.source_path.relative_to(vault.root)),
+        "tier": doc.tier,
+        "type": doc.note_type,
+        "status": doc.status,
+        "updated": doc.updated,
+        "summary": _summary(doc.body),
     }
-    if fm.get("maturity"):
-        entry["maturity"] = str(fm["maturity"])
+    if doc.maturity:
+        entry["maturity"] = doc.maturity
     if score is not None:
         entry["score"] = score
     return entry
@@ -94,40 +78,45 @@ def recall(
     conventions = None
     conv_path = vault.shared / "CONVENTIONS.md"
     if conv_path.is_file():
-        fm, body, err = parse_note(conv_path.read_text())
-        conventions = (body if err is None and fm is not None else conv_path.read_text()).strip() or None
+        text = conv_path.read_text()
+        fm, body, err = parse_note(text)
+        raw = body if err is None and fm is not None else text
+        # Drop a leading H1 — render_brief adds its own section header.
+        lines = raw.strip().splitlines()
+        if lines and lines[0].startswith("# "):
+            lines = lines[1:]
+        conventions = "\n".join(lines).strip() or None
 
     notes: list[dict] = []
     seen: set[str] = set()
 
     # Project tier: membership, not relevance — most recently updated first.
     if project and project in vault.projects:
-        dated: list[tuple[str, dict]] = []
-        for md in iter_markdown_files(vault.projects[project]):
-            entry = _note_entry(md, vault, f"project:{project}")
-            if entry:
-                dated.append((entry_updated(md), entry))
-        dated.sort(key=lambda pair: pair[0], reverse=True)
-        for _, entry in dated[:limit]:
+        entries = [
+            _entry(doc, vault)
+            for md in iter_markdown_files(vault.projects[project])
+            if (doc := parse_doc(md, f"project:{project}")) is not None
+        ]
+        entries.sort(key=lambda e: e["updated"], reverse=True)
+        for entry in entries[:limit]:
             notes.append(entry)
             seen.add(entry["path"])
 
     # Shared/fleet tiers: relevance with abstention — weak matches stay out.
     terms = query or project
     if terms:
+        shared_added = 0
+        # Overfetch: the threshold and project-dedup drop some candidates.
         for result in lookup(terms, vault, limit=limit * 2):
             if result.score < TIER_A_THRESHOLD:
                 continue
-            rel = str(result.doc.source_path.relative_to(vault.root))
-            if rel in seen:
+            entry = _entry(result.doc, vault, score=result.score)
+            if entry["path"] in seen:
                 continue
-            entry = _note_entry(
-                result.doc.source_path, vault, result.doc.tier, score=result.score
-            )
-            if entry:
-                notes.append(entry)
-                seen.add(rel)
-            if len(notes) >= limit * 2:
+            notes.append(entry)
+            seen.add(entry["path"])
+            shared_added += 1
+            if shared_added >= limit:  # --limit is per tier
                 break
 
     return {

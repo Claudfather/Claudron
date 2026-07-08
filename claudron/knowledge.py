@@ -40,6 +40,9 @@ class KnowledgeDoc:
     tier: str  # "shared" | "project:<name>" | "fleet:<name>" | "other"
     status: str = "active"
     expires: str = ""
+    note_type: str = ""  # SCHEMA.md type enum
+    maturity: str = ""  # D11 trust axis — E4 ranks on it; recall labels it
+    updated: str = ""  # sortable stamp (updated, else created)
 
 
 @dataclass
@@ -87,13 +90,13 @@ def _walk_knowledge_tier(base: Path, tier: str) -> list[KnowledgeDoc]:
     """Recursively collect knowledge docs under *base*."""
     docs: list[KnowledgeDoc] = []
     for md_path in iter_markdown_files(base):
-        doc = _parse_doc(md_path, tier)
+        doc = parse_doc(md_path, tier)
         if doc is not None:
             docs.append(doc)
     return docs
 
 
-def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
+def parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
     try:
         text = path.read_text()
     except OSError:
@@ -111,6 +114,9 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
         tier=tier,
         status=fm.get("status", "active"),
         expires=str(fm.get("expires", "")),
+        note_type=str(fm.get("type", "")),
+        maturity=str(fm.get("maturity", "")),
+        updated=str(fm.get("updated") or fm.get("created") or ""),
     )
 
 
@@ -361,7 +367,7 @@ def lookup(
         if score > 0:
             best_a_score = max(best_a_score, score)
             doc_path = vault.root / entry["path"]
-            doc = _parse_doc(doc_path, entry.get("tier", "shared"))
+            doc = parse_doc(doc_path, entry.get("tier", "shared"))
             if doc is not None:
                 results.append(
                     KnowledgeResult(doc=doc, score=score, match_type=match_type)
