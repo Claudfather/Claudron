@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from .schema import STALENESS_DONE
+from .schema import NON_NOTE_FILES, STALENESS_DONE, split_fence
 
 
 # ── shared constants ─────────────────────────────────────────────────
@@ -68,8 +68,9 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
 SCHEMA_VERSION = 1  # bump when index.json structure changes
 
 # CONVENTIONS.md is the always-loaded layer (injected, not retrieved) —
-# never indexed/searched as a note; validate budget-checks it separately.
-_SKIP_NAMES = frozenset({"INDEX.md", "README.md", "CONVENTIONS.md"})
+# never indexed/searched as a note; validate budget-checks it separately
+# (which is why it is NOT in schema.NON_NOTE_FILES).
+_SKIP_NAMES = NON_NOTE_FILES | {"CONVENTIONS.md"}
 
 
 def iter_markdown_files(base: Path):

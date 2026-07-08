@@ -130,7 +130,7 @@ def cmd_init(args) -> int:
     except VaultError as e:
         print(str(e), file=sys.stderr)
         return 2
-    if getattr(args, "json", False):
+    if args.json:
         _emit_json(
             "init",
             {"root": str(root), "scaffold": [f"_shared/{n}" for n in SCAFFOLD_TREE]},
@@ -223,27 +223,23 @@ def cmd_lookup(args) -> int:
 def cmd_index(args) -> int:
     vault = _resolve_vault(args)
 
-    if not args.full:
-        existing = load_index(vault)
-        if existing is not None:
-            count = len(existing.get("entries", []))
-            if getattr(args, "json", False):
-                _emit_json("index", {"entries": count, "rebuilt": False})
-            else:
-                print(f"index up to date ({count} entries)", file=sys.stderr)
-            return 0
-
-    index = build_index(vault)
-    count = len(index.get("entries", []))
-    if getattr(args, "json", False):
-        _emit_json("index", {"entries": count, "rebuilt": True})
+    existing = None if args.full else load_index(vault)
+    if existing is not None:
+        count, rebuilt = len(existing.get("entries", [])), False
+        msg = f"index up to date ({count} entries)"
     else:
-        print(f"indexed {count} docs", file=sys.stderr)
+        count, rebuilt = len(build_index(vault).get("entries", [])), True
+        msg = f"indexed {count} docs"
+
+    if args.json:
+        _emit_json("index", {"entries": count, "rebuilt": rebuilt})
+    else:
+        print(msg, file=sys.stderr)
     return 0
 
 
 def cmd_version(args) -> int:
-    if getattr(args, "json", False):
+    if args.json:
         _emit_json("version", {"version": __version__})
     else:
         print(f"claudron {__version__}")
@@ -259,9 +255,13 @@ def cmd_validate(args) -> int:
             return 2
         # Vault context (for relative paths + shared-root rules) when the
         # target sits inside one; otherwise the target anchors itself.
-        anchor = detect(target if target.is_dir() else target.parent)
-        root = anchor.root if anchor else (target if target.is_dir() else target.parent)
-        findings = validate_path(target, strict=strict, vault_root=root)
+        # Note: an explicit PATH anchors to its own vault — --vault is
+        # deliberately not consulted here.
+        probe = target if target.is_dir() else target.parent
+        anchor = detect(probe)
+        findings = validate_path(
+            target, strict=strict, vault_root=anchor.root if anchor else probe
+        )
     else:
         vault = _resolve_vault(args)
         findings = validate_path(vault.root, strict=strict, vault_root=vault.root)
@@ -353,7 +353,7 @@ def cmd_config(args) -> int:
     else:
         info["vault"] = None
 
-    if getattr(args, "json", False):
+    if args.json:
         _emit_json("config", info)
     else:
         print(f"claudlobby: {info['claudlobby_root'] or '(not found)'}")

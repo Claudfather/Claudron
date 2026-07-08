@@ -18,9 +18,6 @@ from pathlib import Path
 
 import yaml
 
-SCHEMA_VERSION = 1
-
-
 class _SchemaLoader(yaml.SafeLoader):
     """SafeLoader whose timestamp constructor never raises.
 
@@ -86,12 +83,17 @@ STATUS_VOCAB: dict[str, dict] = {
     },
 }
 
-MATURITY_VALUES = ("draft", "verified", "canonical")
+# Structural files that are never notes (skipped by walks AND validation).
+# CONVENTIONS.md is deliberately not here: walks skip it (vault._SKIP_NAMES
+# adds it) but validation budget-checks it.
+NON_NOTE_FILES = frozenset({"INDEX.md", "README.md"})
 
 # Two sets, deliberately not one (SCHEMA.md: "Terminal ≠ hidden"): a
 # ratified decision is exempt from staleness but must stay searchable.
-STALENESS_DONE = frozenset({"completed", "superseded", "archived", "ratified"})
-LOOKUP_EXCLUDED = frozenset({"completed", "superseded", "archived"})
+# Derived from the per-type terminal tuples (doc-parity-bound), so adding a
+# terminal status to a type cannot silently miss the staleness set.
+STALENESS_DONE = frozenset(s for v in STATUS_VOCAB.values() for s in v["terminal"])
+LOOKUP_EXCLUDED = STALENESS_DONE - {"ratified"}
 
 REQUIRED_ALWAYS = ("title", "type", "created")
 DATE_FIELDS = ("created", "updated", "expires", "last_verified")
@@ -150,6 +152,24 @@ class Finding:
 # ── parsing ───────────────────────────────────────────────────────────
 
 
+def split_fence(text: str) -> tuple[str | None, str, bool]:
+    """Split raw text at the ``---`` frontmatter fences.
+
+    Returns (raw_yaml_or_None, body, fence_opened). The single home of the
+    fence protocol — both the lenient walk parser (vault.parse_frontmatter)
+    and the error-reporting validation parser (parse_note) build on it.
+    """
+    if not text.startswith("---\n") and not text.startswith("---\r\n"):
+        return None, text, False
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines[1:], start=1):
+        if line.rstrip("\r\n") == "---":
+            raw = "".join(lines[1:i])
+            body = "".join(lines[i + 1 :]).lstrip("\n")
+            return raw, body, True
+    return None, text, True  # fence opened, never closed
+
+
 def parse_note(text: str) -> tuple[dict | None, str, str | None]:
     """Split a note into (frontmatter, body, parse_error).
 
@@ -157,36 +177,20 @@ def parse_note(text: str) -> tuple[dict | None, str, str | None]:
     distinguish "no frontmatter" (fm={}) from "broken frontmatter"
     (fm=None, parse_error set) — E004 is unemittable otherwise.
     """
-    if not text.startswith("---\n") and not text.startswith("---\r\n"):
+    raw, body, opened = split_fence(text)
+    if raw is None:
+        if opened:
+            return None, text, "frontmatter fence opened but never closed"
         return {}, text, None
-    lines = text.splitlines(keepends=True)
-    end = None
-    for i, line in enumerate(lines[1:], start=1):
-        if line.rstrip("\r\n") == "---":
-            end = i
-            break
-    if end is None:
-        return None, text, "frontmatter fence opened but never closed"
     try:
-        fm = yaml.load("".join(lines[1:end]), Loader=_SchemaLoader)
+        fm = yaml.load(raw, Loader=_SchemaLoader)
     except yaml.YAMLError as exc:
         return None, text, f"YAML parse error: {exc}"
     if fm is None:
         fm = {}
     if not isinstance(fm, dict):
         return None, text, "frontmatter is not a YAML mapping"
-    body = "".join(lines[end + 1 :]).lstrip("\n")
     return fm, body, None
-
-
-def field_line(text: str, field: str) -> int | None:
-    """1-indexed line of a top-level frontmatter field, for Finding.line."""
-    for i, line in enumerate(text.splitlines()[:200], start=1):
-        if line.rstrip("\r\n") == "---" and i > 1:
-            return None
-        if re.match(rf"^{re.escape(field)}\s*:", line):
-            return i
-    return None
 
 
 # ── per-note validation ───────────────────────────────────────────────
@@ -196,15 +200,15 @@ def _tier(code: str, strict: bool) -> tuple[str, str] | None:
     """Resolve a catalog code for the active tier.
 
     Returns (emitted_code, severity) or None when the code is n/a in this
-    tier. A "→ X" deferral emits code X with X's severity in that tier.
+    tier. A "→ X" deferral emits code X with X's severity — deferrals only
+    ever target a terminal code (one hop), so a single re-lookup suffices.
     """
-    behavior = CATALOG[code]["strict" if strict else "lenient"]
-    if behavior is None:
-        return None
-    if behavior.startswith("→ "):
-        target = behavior[2:]
-        return _tier(target, strict)
-    return code, behavior
+    key = "strict" if strict else "lenient"
+    behavior = CATALOG[code][key]
+    if behavior and behavior.startswith("→ "):
+        code = behavior[2:]
+        behavior = CATALOG[code][key]
+    return (code, behavior) if behavior else None
 
 
 def _check_date(value) -> bool:
@@ -235,6 +239,17 @@ def validate_note(
     """
     findings: list[Finding] = []
 
+    # One frontmatter scan up front (fields → line numbers); emit() then
+    # does O(1) lookups instead of re-splitting the note per finding.
+    line_of: dict[str, int] = {}
+    if raw:
+        for i, line in enumerate(raw.splitlines()[:200], start=1):
+            if line.rstrip() == "---" and i > 1:
+                break
+            key = line.split(":", 1)[0].strip()
+            if ":" in line and key and key not in line_of:
+                line_of[key] = i
+
     def emit(code: str, message: str, field: str | None = None) -> None:
         resolved = _tier(code, strict)
         if resolved is None:
@@ -246,7 +261,7 @@ def validate_note(
                 severity=severity,
                 path=path,
                 field=field,
-                line=field_line(raw, field) if (raw and field) else None,
+                line=line_of.get(field) if field else None,
                 message=message,
             )
         )
@@ -372,23 +387,22 @@ def check_collisions(notes: list[tuple[str, dict]]) -> list[Finding]:
         for name in names:
             if name:
                 claims.setdefault(str(name).lower(), []).append(path)
-    findings = []
-    for name, paths in sorted(claims.items()):
-        if len(paths) > 1:
-            findings.append(
-                Finding(
-                    code="W104",
-                    severity="warning",
-                    path=paths[0],
-                    field="title",
-                    line=None,
-                    message=(
-                        f"'{name}' is claimed by {len(paths)} notes "
-                        f"({', '.join(sorted(paths))}) — wikilink resolution is ambiguous"
-                    ),
-                )
-            )
-    return findings
+    return [
+        Finding(
+            code="W104",
+            severity="warning",
+            path=paths[0],
+            field="title",
+            line=None,
+            message=(
+                f"'{name}' is claimed by {len(paths)} notes "
+                f"({', '.join(sorted(paths))}) — wikilink resolution is ambiguous"
+            ),
+        )
+        for name, paths in sorted(
+            (n, p) for n, p in claims.items() if len(p) > 1
+        )
+    ]
 
 
 def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None) -> list[Finding]:
@@ -409,32 +423,30 @@ def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None)
     def is_conventions(p: Path) -> bool:
         return p.name == "CONVENTIONS.md" and p.parent.name in ("_shared", "shared")
 
-    findings: list[Finding] = []
-    if target.is_file():
-        text = target.read_text()
-        if is_conventions(target):
+    def one(p: Path) -> tuple[list[Finding], dict | None]:
+        """Per-file dispatch: conventions budget vs note validation."""
+        text = p.read_text()
+        if is_conventions(p):
             fm, body, _ = parse_note(text)
-            return check_conventions(body if fm is not None else text, path=rel(target))
+            return check_conventions(body if fm is not None else text, path=rel(p)), None
         fm, body, err = parse_note(text)
-        return validate_note(
-            fm, body, strict=strict, path=rel(target), raw=text, parse_error=err
+        return (
+            validate_note(
+                fm, body, strict=strict, path=rel(p), raw=text, parse_error=err
+            ),
+            fm,
         )
 
+    if target.is_file():
+        return one(target)[0]
+
+    findings: list[Finding] = []
     parsed: list[tuple[str, dict]] = []
     for md in sorted(target.rglob("*.md")):
-        if md.name in ("INDEX.md", "README.md"):
+        if md.name in NON_NOTE_FILES:
             continue
-        text = md.read_text()
-        if is_conventions(md):
-            fm, body, _ = parse_note(text)
-            findings.extend(
-                check_conventions(body if fm is not None else text, path=rel(md))
-            )
-            continue
-        fm, body, err = parse_note(text)
-        findings.extend(
-            validate_note(fm, body, strict=strict, path=rel(md), raw=text, parse_error=err)
-        )
+        file_findings, fm = one(md)
+        findings.extend(file_findings)
         if fm:
             parsed.append((rel(md), fm))
     findings.extend(check_collisions(parsed))
