@@ -49,17 +49,36 @@ class TestNewRoundTrip:
         assert rc == 0, capsys.readouterr().out
 
     def test_owner_derivation_fallback(self, vault_dir: Path, capsys, monkeypatch):
-        """--owner absent → git config user.name → $USER."""
+        """--owner absent and git unavailable → $USER, deterministically."""
+        import subprocess
+
         monkeypatch.setenv("USER", "env-user")
+
+        def _no_git(*a, **k):
+            raise FileNotFoundError("git not on PATH")
+
+        monkeypatch.setattr(subprocess, "run", _no_git)
         rc = main(
             ["--vault", str(vault_dir), "new", "knowledge", "Ownerless", "--json"]
         )
         assert rc == 0
         env = json.loads(capsys.readouterr().out)
         fm, _, _ = parse_note(Path(env["data"]["path"]).read_text())
-        # In this repo git user.name is set; either derivation source is
-        # acceptable — the contract is only that owner is non-empty.
-        assert fm["owner"]
+        assert fm["owner"] == "env-user"
+
+    def test_yaml_special_title_round_trips(self, vault_dir: Path, capsys):
+        """Titles with YAML-special characters are quoted, not misparsed."""
+        rc = main(
+            ["--vault", str(vault_dir), "new", "knowledge",
+             "Auth: A Deep Dive", "--owner", "t", "--json"]
+        )
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        path = Path(env["data"]["path"])
+        fm, _, err = parse_note(path.read_text())
+        assert err is None
+        assert fm["title"] == "Auth: A Deep Dive"
+        assert main(["validate", str(path), "--strict"]) == 0
 
     def test_tags_and_project_scope(self, vault_with_projects: Path, capsys):
         rc = main(

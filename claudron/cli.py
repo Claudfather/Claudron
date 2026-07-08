@@ -5,11 +5,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 from . import __version__
-from .schema import TYPE_DIRS, TYPES, Finding, slugify, validate_path
+from .schema import (
+    STATUS_VOCAB,
+    TYPE_DIRS,
+    TYPES,
+    Finding,
+    slugify,
+    validate_path,
+)
 from .vault import (
     SCAFFOLD_TREE,
     SKIP_DIRS,
@@ -263,16 +271,25 @@ def _derive_owner(args) -> str:
     return os.environ.get("USER", "unknown")
 
 
+def _yaml_scalar(value: str) -> str:
+    """Quote a string for hand-assembled frontmatter when YAML would
+    misparse it bare (colons, quotes, leading specials). json.dumps output
+    is valid double-quoted YAML."""
+    if re.search(r"[:#'\"{}\[\]&*!|>%@`]", value) or value != value.strip():
+        return json.dumps(value)
+    return value
+
+
 def cmd_new(args) -> int:
     from datetime import date
-
-    from .schema import STATUS_VOCAB
 
     vault = _resolve_vault(args)
     title = args.title
     note_type = args.type
 
     if args.project:
+        # Projects file flat (projects/<name>/ is one tier, not a tiered
+        # tree); TYPE_DIRS applies only inside shared trees.
         base = vault.root / "projects" / args.project
     elif args.fleet:
         base = vault.root / args.fleet / "shared" / TYPE_DIRS[note_type]
@@ -288,12 +305,15 @@ def cmd_new(args) -> int:
         )
         return 1
 
+    # Hand-assembled rather than yaml.dump — pins key order, flow-style
+    # tags, and unquoted ISO dates so the note stays human-shaped.
+    # _yaml_scalar covers the escaping this trades away.
     fm_lines = [
         "---",
-        f"title: {title}",
+        f"title: {_yaml_scalar(title)}",
         f"type: {note_type}",
         f"status: {STATUS_VOCAB[note_type]['default']}",
-        f"owner: {_derive_owner(args)}",
+        f"owner: {_yaml_scalar(_derive_owner(args))}",
     ]
     if args.tags:
         fm_lines.append(f"tags: [{', '.join(t.strip() for t in args.tags.split(','))}]")
