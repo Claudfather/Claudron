@@ -8,17 +8,9 @@ import os
 import sys
 from pathlib import Path
 
-import yaml
-
 from . import __version__
-from .schema import (
-    STATUS_VOCAB,
-    TYPE_DIRS,
-    TYPES,
-    Finding,
-    slugify,
-    validate_path,
-)
+from .engine import ScopeError, append_addendum, capture, compose_note, resolve_target_dir
+from .schema import TYPES, Finding, slugify, validate_path
 from .vault import (
     SCAFFOLD_TREE,
     SKIP_DIRS,
@@ -275,54 +267,16 @@ def _derive_owner(args) -> str:
     return os.environ.get("USER", "unknown")
 
 
-def _yaml_scalar(value: str) -> str:
-    """Quote a string for hand-assembled frontmatter unless it round-trips
-    through the real YAML parser as the identical string. Character lists
-    are not enough — implicit typing turns bare `true`/`0`/`2026-07-08`
-    into bool/int/date (review: a bool title crashed lookup vault-wide).
-    json.dumps output is valid double-quoted YAML."""
-    if value != value.strip():
-        return json.dumps(value)
-    try:
-        parsed = yaml.safe_load(value)
-    except yaml.YAMLError:
-        return json.dumps(value)
-    if isinstance(parsed, str) and parsed == value:
-        return value
-    return json.dumps(value)
-
-
 def cmd_new(args) -> int:
-    from datetime import date
-
     vault = _resolve_vault(args)
     title = args.title
-    note_type = args.type
 
-    if args.project:
-        # Projects file flat (projects/<name>/ is one tier, not a tiered
-        # tree); TYPE_DIRS applies only inside shared trees.
-        base = vault.root / "projects" / args.project
-    elif args.fleet:
-        if args.fleet not in vault.fleets:
-            # Writing into an unregistered overlay creates untracked
-            # content and forecloses `fleet add` (review major 4).
-            print(
-                f"fleet not in vault: {args.fleet}\n"
-                f"  run: claudron fleet add {args.fleet}",
-                file=sys.stderr,
-            )
-            return 2
-        base = vault.fleets[args.fleet] / "shared" / TYPE_DIRS[note_type]
-    else:
-        base = vault.shared / TYPE_DIRS[note_type]
-
-    # Containment: scope names are agent-derived input; ../ must never
-    # write outside the vault (review blocker 3 — arbitrary-file-write).
-    base = base.resolve()
-    if not base.is_relative_to(vault.root.resolve()):
-        scope = args.project or args.fleet
-        print(f"scope {scope!r} escapes the vault root", file=sys.stderr)
+    try:
+        base = resolve_target_dir(
+            vault, args.type, project=args.project, fleet=args.fleet
+        )
+    except ScopeError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
     base.mkdir(parents=True, exist_ok=True)
 
@@ -334,24 +288,14 @@ def cmd_new(args) -> int:
         )
         return 1
 
-    # Hand-assembled rather than yaml.dump — pins key order, flow-style
-    # tags, and unquoted ISO dates so the note stays human-shaped.
-    # _yaml_scalar covers the escaping this trades away.
-    fm_lines = [
-        "---",
-        f"title: {_yaml_scalar(title)}",
-        f"type: {note_type}",
-        f"status: {STATUS_VOCAB[note_type]['default']}",
-        f"owner: {_yaml_scalar(_derive_owner(args))}",
-    ]
-    if args.tags:
-        # List-encoded, never hand-joined — "todo #urgent" / "foo]bar"
-        # produced unparseable notes (review blocker 2). json.dumps of a
-        # str list is a valid YAML flow sequence.
-        fm_lines.append(f"tags: {json.dumps([t.strip() for t in args.tags.split(',')])}")
-    today = date.today().isoformat()
-    fm_lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
-    target.write_text("\n".join(fm_lines) + f"\n\n# {title}\n")
+    target.write_text(
+        compose_note(
+            note_type=args.type,
+            title=title,
+            owner=_derive_owner(args),
+            tags=args.tags.split(",") if args.tags else None,
+        )
+    )
 
     if args.edit:
         editor = os.environ.get("EDITOR")
@@ -366,6 +310,89 @@ def cmd_new(args) -> int:
         _emit_json("new", {"path": str(target)})
     else:
         print(str(target))
+    return 0
+
+
+def cmd_capture(args) -> int:
+    vault = _resolve_vault(args)
+
+    if args.update:
+        note_path = (vault.root / args.update).resolve()
+        if not note_path.is_relative_to(vault.root.resolve()) or not note_path.is_file():
+            print(f"no such note in vault: {args.update}", file=sys.stderr)
+            return 2
+        if not args.body:
+            print("--update requires --body", file=sys.stderr)
+            return 2
+        try:
+            result = append_addendum(vault, note_path, args.body)
+        except ScopeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        return _emit_write_result(args, result)
+
+    if args.stdin:
+        try:
+            finding = json.loads(sys.stdin.read())
+        except json.JSONDecodeError as exc:
+            print(f"invalid JSON on stdin: {exc}", file=sys.stderr)
+            return 2
+    else:
+        finding = {}
+    note_type = finding.get("type") or args.type
+    title = finding.get("title") or args.title
+    body = finding.get("body") or args.body or ""
+    if not note_type or not title:
+        print("capture requires --type and --title (or --stdin JSON)", file=sys.stderr)
+        return 2
+    tags = finding.get("tags") or (
+        [t.strip() for t in args.tags.split(",")] if args.tags else None
+    )
+    owner = finding.get("owner") or _derive_owner(args)
+
+    try:
+        result = capture(
+            vault,
+            note_type=note_type,
+            title=title,
+            body=body,
+            owner=owner,
+            tags=tags,
+            project=finding.get("project") or args.project,
+            fleet=finding.get("fleet") or args.fleet,
+            force=args.force,
+        )
+    except ScopeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    return _emit_write_result(args, result)
+
+
+def _emit_write_result(args, result) -> int:
+    """One WriteResult renderer for the write commands (capture --update
+    shares it): rejected → findings + exit 1, else action/path + exit 0."""
+    if result.action == "rejected":
+        if args.json:
+            _emit_json(
+                "capture",
+                {"action": result.action, "path": result.path, "reason": result.reason},
+                result.errors,
+            )
+        else:
+            for f in result.errors:
+                print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        _emit_json(
+            "capture",
+            {"action": result.action, "path": result.path, "reason": result.reason},
+        )
+    else:
+        print(f"{result.action}: {result.path}")
+        if result.action.startswith("suggest_"):
+            print(result.reason, file=sys.stderr)
     return 0
 
 
@@ -737,6 +764,33 @@ def main(argv=None) -> int:
         "--force", action="store_true", help="Overwrite an existing note"
     )
 
+    # capture
+    p_capture = sub.add_parser(
+        "capture",
+        help="Write a finding through the guarded engine (validate + dedup)",
+        parents=[vault_parent, json_parent],
+    )
+    p_capture.add_argument("--type", choices=TYPES, help="Note type")
+    p_capture.add_argument("--title", help="Note title")
+    p_capture.add_argument("--body", help="Note body (markdown)")
+    p_capture.add_argument("--tags", help="Comma-separated tags")
+    p_capture.add_argument("--owner", help="Owner (default: git user.name, then $USER)")
+    cap_scope = p_capture.add_mutually_exclusive_group()
+    cap_scope.add_argument("--project", help="File under projects/<name>/")
+    cap_scope.add_argument("--fleet", help="File under <fleet>/shared/")
+    p_capture.add_argument(
+        "--stdin", action="store_true",
+        help="Read the finding as JSON from stdin (fields: type, title, body, tags, owner, project, fleet)",
+    )
+    p_capture.add_argument(
+        "--update", metavar="PATH",
+        help="Append a dated addendum to an existing note (vault-relative path) instead of creating",
+    )
+    p_capture.add_argument(
+        "--force", action="store_true",
+        help="Create even when dedup would suggest updating an existing note",
+    )
+
     # recall
     p_recall = sub.add_parser(
         "recall",
@@ -850,6 +904,7 @@ def main(argv=None) -> int:
         "init": cmd_init,
         "status": cmd_status,
         "new": cmd_new,
+        "capture": cmd_capture,
         "recall": cmd_recall,
         "validate": cmd_validate,
         "lookup": cmd_lookup,

@@ -112,6 +112,54 @@ def slugify(title: str) -> str:
 STALENESS_DONE = frozenset(s for v in STATUS_VOCAB.values() for s in v["terminal"])
 LOOKUP_EXCLUDED = STALENESS_DONE - {"ratified"}
 
+# Statuses whose notes no longer attract write-time dedup: their topic moved
+# on and a fresh note is the successor. Deliberately the LOOKUP set, not
+# STALENESS_DONE — a *ratified* decision is authoritative and searchable, so
+# a same-title capture must suggest updating it, never silently twin it.
+DEDUP_EXEMPT = LOOKUP_EXCLUDED
+
+# The trust axis (SCHEMA.md §The two axes; D11). Agent write paths stamp the
+# first rung; E5's promote walks the rest.
+MATURITY_VALUES = ("draft", "verified", "canonical")
+
+
+def claimed_names(mapping: dict) -> list[str]:
+    """Lowercased title + aliases a note claims — the name set wikilink
+    resolution and dedup both key on. One home (used by write-time dedup
+    and validate's W104 collision check)."""
+    names = [mapping.get("title")] + list(mapping.get("aliases") or [])
+    return [str(n).lower() for n in names if n]
+
+
+def set_frontmatter_field(text: str, field: str, value: str) -> str:
+    """Line-level frontmatter upsert: replace *field*'s line if present,
+    else insert after ``created:``, else before the closing fence. Never
+    re-serializes YAML — the note's own formatting is preserved. The single
+    write-side fm-surgery primitive (adopt-backfill and addendum both use
+    it)."""
+    if not text.startswith("---"):
+        return text
+    lines = text.splitlines(keepends=True)
+    replace_at = insert_at = None
+    for i, line in enumerate(lines[1:], start=1):
+        if line.rstrip("\r\n") == "---":
+            if insert_at is None:
+                insert_at = i
+            break
+        key = line.split(":", 1)[0].strip()
+        if key == field:
+            replace_at = i
+            break
+        if key == "created":
+            insert_at = i + 1
+    if replace_at is not None:
+        lines[replace_at] = f"{field}: {value}\n"
+    elif insert_at is not None:
+        lines.insert(insert_at, f"{field}: {value}\n")
+    else:
+        return text
+    return "".join(lines)
+
 REQUIRED_ALWAYS = ("title", "type", "created")
 DATE_FIELDS = ("created", "updated", "expires", "last_verified")
 
@@ -407,10 +455,8 @@ def check_collisions(notes: list[tuple[str, dict]]) -> list[Finding]:
     """
     claims: dict[str, list[str]] = {}
     for path, fm in notes:
-        names = [fm.get("title")] + list(fm.get("aliases") or [])
-        for name in names:
-            if name:
-                claims.setdefault(str(name).lower(), []).append(path)
+        for name in claimed_names(fm):
+            claims.setdefault(name, []).append(path)
     return [
         Finding(
             code="W104",
