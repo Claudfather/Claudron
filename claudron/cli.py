@@ -30,6 +30,7 @@ from .vault import (
     status,
 )
 from .knowledge import build_index, load_index, lookup
+from .session import derive_project, recall, render_brief
 
 
 # ── output contract (docs/CLI_CONTRACT.md) ────────────────────────────
@@ -365,6 +366,27 @@ def cmd_new(args) -> int:
         _emit_json("new", {"path": str(target)})
     else:
         print(str(target))
+    return 0
+
+
+def cmd_recall(args) -> int:
+    vault = _resolve_vault(args)
+    # A derived name with no matching project tier still contributes as
+    # the shared-tier relevance term — recall() handles both roles.
+    project = args.project or derive_project()
+    query = " ".join(args.query) if args.query else None
+    data = recall(vault, project=project, query=query, limit=args.limit)
+
+    if args.json:
+        _emit_json("recall", data)
+        return 0
+
+    brief = render_brief(data)
+    if brief:
+        print(brief)
+    else:
+        # Abstention: inject nothing rather than something (stderr only).
+        print("no context recalled", file=sys.stderr)
     return 0
 
 
@@ -715,6 +737,22 @@ def main(argv=None) -> int:
         "--force", action="store_true", help="Overwrite an existing note"
     )
 
+    # recall
+    p_recall = sub.add_parser(
+        "recall",
+        help="Session-start context brief (stdout is the injectable payload)",
+        parents=[vault_parent, json_parent],
+    )
+    p_recall.add_argument(
+        "--project", help="Project scope (default: derive from cwd git root)"
+    )
+    p_recall.add_argument(
+        "--query", nargs="*", help="Relevance terms (default: the project name)"
+    )
+    p_recall.add_argument(
+        "--limit", type=int, default=5, help="Notes per tier (default: 5)"
+    )
+
     # lookup
     p_lookup = sub.add_parser(
         "lookup", help="Search vault knowledge", parents=[vault_parent, json_parent]
@@ -812,6 +850,7 @@ def main(argv=None) -> int:
         "init": cmd_init,
         "status": cmd_status,
         "new": cmd_new,
+        "recall": cmd_recall,
         "validate": cmd_validate,
         "lookup": cmd_lookup,
         "index": cmd_index,

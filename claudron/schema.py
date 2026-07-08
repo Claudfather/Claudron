@@ -119,6 +119,13 @@ DATE_FIELDS = ("created", "updated", "expires", "last_verified")
 CONVENTIONS_BUDGET = 120
 CONVENTIONS_BUDGET_HARD = 160
 
+
+def count_tokens(text: str) -> int:
+    """The whitespace-token proxy every budget uses (W105's conventions
+    budget here; the session brief budget in session.py). One home, so the
+    proxies can't diverge."""
+    return len(text.split())
+
 # Frontmatter keys that mark a note as skill-shaped (W103) — SKILL.md
 # artifacts, not referential markers. Deliberately narrow: imperative
 # bodies alone never trigger (runbooks are supposed to contain those).
@@ -373,7 +380,7 @@ def validate_note(
 
 def check_conventions(body: str, *, path: str = "") -> list[Finding]:
     """W105: CONVENTIONS.md body budget (whitespace-token proxy)."""
-    count = len(body.split())
+    count = count_tokens(body)
     if count > CONVENTIONS_BUDGET_HARD:
         return [
             Finding(

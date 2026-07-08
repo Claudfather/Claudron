@@ -40,6 +40,9 @@ class KnowledgeDoc:
     tier: str  # "shared" | "project:<name>" | "fleet:<name>" | "other"
     status: str = "active"
     expires: str = ""
+    note_type: str = ""  # SCHEMA.md type enum
+    maturity: str = ""  # D11 trust axis — E4 ranks on it; recall labels it
+    updated: str = ""  # sortable stamp (updated, else created)
 
 
 @dataclass
@@ -83,14 +86,24 @@ def _derive_title(stem: str) -> str:
 # ── tier walking ─────────────────────────────────────────────────────
 
 
-def _walk_knowledge_tier(base: Path, tier: str) -> list[KnowledgeDoc]:
-    """Recursively collect knowledge docs under *base*."""
+def walk_knowledge_tier(base: Path, tier: str) -> list[KnowledgeDoc]:
+    """Recursively collect knowledge docs under *base*. Public: the session
+    layer walks project tiers through this (membership, not relevance)."""
     docs: list[KnowledgeDoc] = []
     for md_path in iter_markdown_files(base):
         doc = _parse_doc(md_path, tier)
         if doc is not None:
             docs.append(doc)
     return docs
+
+
+def _stamp(fm: dict) -> str:
+    """Canonical sortable recency stamp: `updated`, else `created`.
+
+    The single home of this derivation — the index and E4's future
+    notes.updated column must use it too, or recency sorting and ranking
+    silently diverge (simplify-panel finding)."""
+    return str(fm.get("updated") or fm.get("created") or "")
 
 
 def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
@@ -111,6 +124,9 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
         tier=tier,
         status=fm.get("status", "active"),
         expires=str(fm.get("expires", "")),
+        note_type=str(fm.get("type", "")),
+        maturity=str(fm.get("maturity", "")),
+        updated=_stamp(fm),
     )
 
 
@@ -135,7 +151,7 @@ def build_index(vault: "Vault") -> dict:
                     "tags": fm.get("tags") or [],
                     "aliases": fm.get("aliases") or [],
                     "status": fm.get("status", "active"),
-                    "updated": str(fm.get("updated", "")),
+                    "updated": _stamp(fm),
                     "expires": str(fm.get("expires", "")),
                     "filename": md.stem,
                     "path": str(md.relative_to(vault.root)),
@@ -343,8 +359,14 @@ def lookup(
     limit: int = 5,
     include_archived: bool = False,
     include_expired: bool = False,
+    tier_b: bool = True,
 ) -> list[KnowledgeResult]:
-    """Search vault knowledge. Returns ranked results."""
+    """Search vault knowledge. Returns ranked results.
+
+    ``tier_b=False`` restricts to the frontmatter index — no full-text
+    body scan. Hot-path callers (recall at every SessionStart) use it for
+    implicit queries where an O(vault) scan would mostly be discarded.
+    """
     # Ensure index is fresh
     index = load_index(vault)
     if index is None:
@@ -368,7 +390,7 @@ def lookup(
                 )
 
     # ── Tier B: full-text fallback ──
-    if best_a_score < TIER_A_THRESHOLD:
+    if tier_b and best_a_score < TIER_A_THRESHOLD:
         result_by_path = {r.doc.source_path: r for r in results}
         for doc in _collect_all_docs(vault, project=project, fleet=fleet):
             if _is_doc_excluded(doc, include_archived, include_expired):
@@ -408,26 +430,26 @@ def _collect_all_docs(
 
     # Project-local (most specific)
     if project and project in vault.projects:
-        docs.extend(_walk_knowledge_tier(vault.projects[project], f"project:{project}"))
+        docs.extend(walk_knowledge_tier(vault.projects[project], f"project:{project}"))
     else:
         # No project scope — include all projects at lower priority
         for name, proj_path in vault.projects.items():
-            docs.extend(_walk_knowledge_tier(proj_path, f"project:{name}"))
+            docs.extend(walk_knowledge_tier(proj_path, f"project:{name}"))
 
     # Fleet shared
     if fleet and fleet in vault.fleets:
         fleet_shared = vault.fleets[fleet] / "shared"
-        docs.extend(_walk_knowledge_tier(fleet_shared, f"fleet:{fleet}"))
+        docs.extend(walk_knowledge_tier(fleet_shared, f"fleet:{fleet}"))
 
     # Vault shared (always)
     for subdir in SHARED_SUBDIRS:
-        docs.extend(_walk_knowledge_tier(vault.shared / subdir, "shared"))
+        docs.extend(walk_knowledge_tier(vault.shared / subdir, "shared"))
 
     # Unrecognized root dirs
     fleet_names = set(vault.fleets.keys())
     for d in sorted(vault.root.iterdir()):
         if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
             if d.name not in fleet_names:
-                docs.extend(_walk_knowledge_tier(d, f"other:{d.name}"))
+                docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
 
     return docs
