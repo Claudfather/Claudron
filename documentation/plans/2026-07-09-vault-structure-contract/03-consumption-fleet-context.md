@@ -17,7 +17,7 @@ verdicts. **Tier-A cross-fleet pooling is intended** for a single-tenant vault
 (the operator's accepted "one hub") — it gets *documented*, not fixed.
 **Fleet-blind `recall` is the real gap** — the automated brief never scopes to a
 fleet. This phase **specs** the fix (`derive_fleet()` + a fleet-aware `recall`)
-but **builds it only if the crog-eng-team dogfood shows the blindness actually
+but **builds it only if a pilot-fleet dogfood shows the blindness actually
 degrades recall** (Fork F6). It may never ship — and that is a success state,
 not a gap.
 
