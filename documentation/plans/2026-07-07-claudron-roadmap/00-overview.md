@@ -138,9 +138,15 @@ commitments. Entry criteria, measured over ≥2 weeks of E2 dogfood:
   (see E3): single-writer dogfood cannot validate them
 
 **Release train:** each epic ends in a tagged release with CHANGELOG discipline.
-0.2.0 goes to PyPI and flips the org README's Claudron status from "Design" to
-"Active". E1+E2 ship together as 0.2.0 — the schema alone isn't a usable
-release; the SD card is. **Floor (D10): 0.2.0 + the first post-gate release
+0.2.0 ships via a **GitHub release** (wheel + sdist attached) and flips the org
+README's Claudron status from "Design" to "Active". **PyPI is deferred** (pivot
+2026-07-09): the four repos are co-installed *products* with split distribution
+channels — Claudron + Claudlobby → PyPI, clauDNA → Claude Code plugin
+marketplace — so shipping one PyPI leg before the session loop is validated (and
+before its sibling leg exists) is premature. Coordinated PyPI/marketplace
+distribution becomes a **G1-gated decision**, ideally Claudron + Claudlobby
+published together under one install story. E1+E2 ship together as 0.2.0 — the
+schema alone isn't a usable release; the SD card is. **Floor (D10): 0.2.0 + the first post-gate release
 shipped *with the G1 verdict recorded* = success; E4–E6 are upside.** The
 verdict requirement keeps the floor honest — "wedge validated" and "wedge
 failed, pivoted, shipped anyway" are different outcomes and the record says
