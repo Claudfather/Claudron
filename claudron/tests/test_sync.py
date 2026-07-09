@@ -176,6 +176,13 @@ class TestScaffoldTravels:
         assert vault is not None, "empty-tier vault clone lost _shared/"
         assert (b / "_shared" / "CONVENTIONS.md").is_file()  # E1 deliverable
         assert (b / "projects" / ".gitkeep").is_file()
+        # The tier leaves themselves must travel (.gitkeep per leaf) —
+        # CONVENTIONS.md alone carries _shared/ but not its subdirs, and
+        # this assertion is what makes the .gitkeep red-green cycle red.
+        from claudron.vault import SCAFFOLD_TREE
+
+        for leaf in SCAFFOLD_TREE:
+            assert (b / "_shared" / leaf).is_dir(), f"tier leaf lost in clone: {leaf}"
 
 
 class TestHookDrivenLoop:
