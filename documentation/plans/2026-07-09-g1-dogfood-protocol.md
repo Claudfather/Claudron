@@ -46,6 +46,21 @@ Three guardrails keep this a *gate*, not a smuggled E3 build:
 3. **Signals pre-registered.** See below — fix the four thresholds *before* the
    clock starts and do not move them mid-flight.
 
+## Relationship to the vault-structure contract (PR #33)
+
+PR #33 (`2026-07-09-vault-structure-contract/`) is the *structure* half of this
+same moment: P1 the vault-structure SSOT + consumption contract, P2 enforcing
+init, and **P3 fleet-scoped consumption** — which specs `derive_fleet()` + a
+fleet-aware `recall` but builds it **only if a ≥2-week fleet dogfood shows
+fleet-blind recall actually degrades relevance** (bots get cross-fleet noise in
+briefs, or a fleet's own canon ranks below another's). That is the **same
+dogfood clock as this one** — treat the Pi fleet here and P3's `crog-eng-team`
+dogfood as one run. So P3's build-or-not gate is a **sub-question folded into
+this protocol**, observed alongside S1/S2: cross-fleet noise in a brief is both
+an S1/S2 finding *and* P3's trigger to build fleet-aware recall. **Run one
+two-week clock, not two** — its evidence feeds both the E3-vs-E4 selection here
+and P3's build/skip verdict there.
+
 ## The four signals (pre-register before the clock starts)
 
 "Decide the four signals" means: commit in writing to these four as *the*
@@ -100,6 +115,9 @@ Keep this running; it *is* the evidence attached to the verdict.
 - [ ] **Week 1 end** — status snapshot; S3 events (if any) noted with recovery;
       spot-check S4 (did hooks fire unprompted?).
 - [ ] **Week 2 mid** — status snapshot; S1 tally check (on track for ≥3?).
+- [ ] **P3 fleet-blindness observation** (PR #33) — are briefs getting
+      cross-fleet noise, or is a fleet's own canon out-ranked? → feeds P3's
+      build/skip verdict for `derive_fleet()` + fleet-aware recall.
 - [ ] **Day 14** — final status snapshot; **S2 keep/junk skim**; assemble S1–S4
       against thresholds.
 - [ ] **Write `G1-verdict.md`** (dated, in the roadmap dir) — PASS or PIVOT,
