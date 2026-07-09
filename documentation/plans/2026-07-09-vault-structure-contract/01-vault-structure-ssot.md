@@ -25,8 +25,9 @@ conforms to a stated contract.
 
 - **The shape exists but is undocumented.** `init` scaffolds `_shared/` +
   `CONVENTIONS.md` (`vault.py:217,221`); `_scan_vault` discovers fleets as
-  root-level dirs containing `fleet.yaml` (`vault.py:178-183`) and treats
-  `_shared`/`shared`/`projects` as reserved (`SKIP_DIRS`, `vault.py:37-39`);
+  root-level dirs containing `fleet.yaml` (`vault.py:178-183`); `SKIP_DIRS`
+  (`vault.py:37-41`, 7 entries incl. infra like `.git`/`__pycache__`) reserves
+  top-level names — the *user-facing* subset being `_shared`/`shared`/`projects`;
   the vault-wide hub is a first-class field, `Vault.shared` (`vault.py:117-124`).
   No doc states any of this.
 - **Personal topology is locked (D4):** `_shared/` + `projects/<repo>/`
@@ -65,14 +66,18 @@ conforms to a stated contract.
 Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
 `conventions/`) with these sections:
 
-1. **Directory contract.** The tree from `00-overview.md#architecture`.
+1. **Directory contract + human on-ramp.** Open with a "start here"
+   orientation for a human browsing the vault (where knowledge lives, where to
+   drop a note by hand), then the tree from `00-overview.md#architecture`.
    Normative statements: one git repo per tenant vault; `_shared/` (or legacy
    `shared/`) at root is the vault marker; fleets are **flat** root-level dirs
    with a `fleet.yaml`; `runtime/` and `.env` are gitignored within the vault.
-2. **Reserved names.** State that top-level names in `SKIP_DIRS`
-   (`_shared`, `shared`, `projects`) are vault-internal and a fleet may not
-   take them. **Point at `SKIP_DIRS` as the source** — do not hardcode a second
-   list (P2 derives its check from the same constant).
+2. **Reserved names.** State that the user-facing reserved top-level names —
+   `_shared`, `shared`, `projects` — are vault-internal and a fleet may not take
+   them. These are the **subset** of `SKIP_DIRS` (`vault.py:37-41`) a human would
+   collide with; the constant also holds infra names (`.git`, `__pycache__`)
+   that never belong in a user-facing message. **Point at `SKIP_DIRS` as the
+   source** — P2 derives the subset from it, no second list.
 3. **Content contract (three tiers).** Define what belongs where:
    - bot `memory/` — a bot's private, unshared working state.
    - `<fleet>/shared/` — knowledge scoped to one fleet's mission.
@@ -89,27 +94,39 @@ Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
    returns `_shared/` + fleet notes, tie-broken `project > fleet > shared`
    (`knowledge.py:430-437`); cross-fleet pooling is **intended for a
    single-tenant vault** (see P3 for the fleet-scoping gap and its conditional
-   fix).
+   fix). State the consequence plainly: single-tenant pooling means a fleet
+   bot's query can surface the operator's personal `projects/` notes. This
+   reconciles with D4's "work knowledge stays out" by reading **one tenant = the
+   operator's own ventures**; the boundary for true separation (employer
+   systems, another person's data) is a **separate vault**, not a dir inside
+   this one.
 5. **Promotion model (prose only).** Reproduce the E5 ladder
    (`memory/ → <fleet>/shared/ → _shared/ → pack`) as the *model*, link
    `05-lifecycle.md` for the *mechanism*, and state the **interim**: promotion
    is manual today (`capture --fleet` / `git mv`) until E5's `promote` ships.
 6. **Reciprocal cross-link.** VAULT-STRUCTURE.md links SCHEMA.md ("notes:
    frontmatter") and SCHEMA.md gains a one-line pointer back ("layout: see
-   VAULT-STRUCTURE.md"). This pair is what P2's drift-lint checks.
+   VAULT-STRUCTURE.md"). A Claudron **repo test** (`tests/`, not the per-vault
+   lens — these docs never live inside a vault) asserts both exist and
+   cross-link. Honest limit: the test checks existence, not semantic agreement.
 
 ## Test Plan
 
 Doc-only, but falsifiable:
-- The reserved-name list in the doc equals `SKIP_DIRS` verbatim (P2 asserts).
-- The tier ladder equals `05-lifecycle.md:69` (no divergent third description).
+- The doc's user-facing reserved names are the subset `{_shared, shared,
+  projects}` derived from `SKIP_DIRS` (P2 asserts the derivation, not verbatim
+  equality — the constant also carries infra names).
+- The tier ladder matches E5's model (`05-lifecycle.md`) — asserted by meaning,
+  not pinned to a line number (which would couple this doc to E5's churn).
 - A reader following the doc scaffolds a vault that `_scan_vault` discovers
   without an `other:` surprise (validated once P2 lands).
 
 ## Verification Checklist
 
-- [ ] `documentation/VAULT-STRUCTURE.md` exists with all six sections.
-- [ ] Reserved names match `SKIP_DIRS` (`vault.py:37-39`) exactly.
+- [ ] `documentation/VAULT-STRUCTURE.md` exists with all six sections, opening
+      with a human "start here" on-ramp.
+- [ ] User-facing reserved names are the subset `{_shared, shared, projects}`
+      derived from `SKIP_DIRS` (`vault.py:37-41`); infra names excluded.
 - [ ] Promotion section links E5 and states "manual interim"; contains **no**
       new lifecycle rules.
 - [ ] SCHEMA.md ↔ VAULT-STRUCTURE.md cross-link both directions.
@@ -125,5 +142,5 @@ Doc-only, but falsifiable:
 ## Context
 
 Area: documentation (Claudron) · Effort: **S–M** · Risk: low (prose; the risk is
-drift, handled by the cross-link lint in P2) · Priority: **high** — blocks P2 and
-both Claudlobby conformance issues.
+drift, handled by the cross-link repo test P2 adds) · Priority: **high** — blocks
+P2 and both Claudlobby conformance issues.

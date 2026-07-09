@@ -12,131 +12,180 @@ updated: 2026-07-09
 
 ## Summary
 
-Give `claudron validate` a **directory-structure lens** to sit beside its
-existing frontmatter lens. Today `validate` only rglobs `*.md` and lints
-frontmatter — it never checks the *directory contract*. This phase adds
-structure checks that report drift as warnings and **exit non-zero without
-mutating** (Fork F2), plus an opt-in `--fix` that **creates missing expected
-dirs only** (never moves or deletes). `init` is extended to scaffold exactly the
-shape VAULT-STRUCTURE.md (P1) documents.
+Give `claudron validate` a **directory-structure lens** beside its existing
+frontmatter lens (today it only rglobs `*.md` and lints frontmatter —
+`schema.py:506`, `cli.py:598-637`). Structure findings flow through Claudron's
+**existing** `error`/`warning` severity model, so they honor the CLI contract
+(`docs/CLI_CONTRACT.md:11` — *"warnings do not change the exit code,"* `--strict`
+gates warnings, `:16`): **errors gate exit; warnings gate only under `--strict`**.
+An opt-in `--fix` performs **creation-only** repairs inside a hard containment
+boundary — never moves, deletes, or escapes the vault root. `init` scaffolds
+exactly the shape VAULT-STRUCTURE.md (P1) documents.
 
 ## Evidence (current state this changes)
 
-- **`validate` is frontmatter-only.** It lints notes; it has no notion of the
-  directory contract. `is_conventions()` is the closest thing — a `parent.name
-  in ("_shared", "shared")` check for a CONVENTIONS budget rule
-  (`schema.py:522`) — but nothing validates the *tree*.
-- **The shape is enforced only implicitly**, by `_scan_vault` treating unknown
-  root dirs as `other:` (`vault.py:163-184`) and by `init`/`fleet add`
-  scaffolding (`vault.py:217,221`; `cli.py:726-749`). Drift (a fleet missing
-  `shared/`, a stray note at root, a fleet named `projects`) is silent.
-- **The hub name is a hardcoded constant** (`SHARED_MARKERS`, `vault.py:41`;
-  `SKIP_DIRS`, `vault.py:37-39`) but **consumers go through the `Vault.shared`
-  abstraction** — so the structure check keys off `Vault`/`SKIP_DIRS`, never a
-  fresh literal.
+- **`validate` is frontmatter-only.** `validate_path` rglobs `*.md` and lints
+  frontmatter (`schema.py:506`, `cli.py:598-637`); no tree-shape check.
+  `is_conventions()` (`schema.py:522`) is the closest thing, and it's a
+  CONVENTIONS budget rule, not a structure check.
+- **The exit-code contract is normative.** `validate` returns `1 if errors else
+  0` (`cli.py:637`); `docs/CLI_CONTRACT.md:11` guarantees warnings don't change
+  the exit code, and `:16` names `--strict` as the sanctioned warning-gate.
+  Structure findings must obey this, not invent a third rule.
+- **A `Finding` type + `--json` envelope already exist** (`schema.py`;
+  `cli.py:42-55`), with `severity ∈ {error, warning}`, `.line`, `.to_dict()`.
+  Reuse it — a divergent shape (`severity:"warn"`, no `.line`/`.to_dict()`)
+  vanishes from `--json` and throws `AttributeError` in the report path.
+- **Drift is silent only on the hand-created/adopted vector.** `_scan_vault`
+  tolerates unknown dirs as `other:` (`vault.py:163-184`); `init`/`fleet add`
+  scaffold (`vault.py:217,221`; `cli.py:726-749`). But `fleet add` **already**
+  rejects reserved names (`_RESERVED_FLEET_NAMES = SKIP_DIRS`, `cli.py:723,
+  730-735`), so the enforcement gap is only the non-`fleet add` path.
+- **Reserved names are a *subset* of `SKIP_DIRS`.** The constant
+  (`vault.py:37-41`) holds 7 entries incl. infra (`.git`, `__pycache__`); the
+  *user-facing* reserved names are `_shared`/`shared`/`projects`. Derive the
+  subset; never re-list.
+- **Hub name hardcoded, but consumers use `Vault.shared`** — so the check keys
+  off `Vault`/`SKIP_DIRS`, never a fresh literal.
 
 ## Implementation Plan
 
 ### Dependencies
 
-- **P1** — the contract must be written before it can be enforced. The check's
-  reserved-name set and expected per-fleet shape derive from what P1 documents
+- **P1** — the contract must be written before it can be enforced; the check's
+  reserved subset and expected per-fleet shape derive from what P1 documents
   (and, mechanically, from `SKIP_DIRS`).
 
 ### Blocks
 
 - Claudlobby sibling issue #1 (overlay conformance) — Claudlobby runs `validate`
   to confirm its `local/` conforms.
-- The crog-eng-team dogfood (#4) — `init --adopt` + `validate` is the adoption
-  path.
+- The crog-eng-team dogfood (#4).
 
 ### Steps
 
-1. **Add `claudron/structure.py`** — a pure, read-only checker
-   `check_structure(vault: Vault) -> list[StructureFinding]`. Findings, each
-   with a code + severity + path:
-   - `S1` (warn) — no `_shared/`/`shared/` at root (vault marker absent).
-   - `S2` (warn) — a fleet dir (has `fleet.yaml`) lacks `shared/`.
-   - `S3` (error) — a top-level dir collides with a reserved name **and** carries
-     a `fleet.yaml` (a fleet trying to take `projects`/`_shared`/`shared`).
-     Reserved set = `SKIP_DIRS` (imported, not re-listed).
-   - `S4` (warn) — an unrecognized top-level dir (not a fleet, not in
-     `SKIP_DIRS`, not `projects/<repo>`) → reported as `other:`, **never an
-     error** (extensibility escape hatch).
-   - `S5` (warn) — VAULT-STRUCTURE.md and SCHEMA.md do not both exist and
-     cross-reference each other (the two-SSOT drift guard from F3).
-2. **Wire into `cmd_validate`** (`cli.py`): run `check_structure` after the
-   frontmatter pass; print findings in the same report; **exit non-zero if any
-   finding fires**; **never mutate** on the default path.
-3. **Add `--fix` (opt-in, conservative).** Repairs **only** creation-safe
-   findings: `S1` scaffold the hub (reuse `init`'s `scaffold_shared_tree`), `S2`
-   create the missing `<fleet>/shared/` tree. `--fix` **never moves or deletes**
-   — a stray note (a plausible `S4`) is reported with a suggested destination,
-   not relocated. Print each action taken; re-run the check and exit 0 only if
-   clean.
-4. **Extend `init`** to scaffold the full documented shape (it already does
-   `_shared/` + `CONVENTIONS.md`; ensure a fresh vault also validates clean —
-   `init` then `validate` is a no-op).
-5. **Reserved-name single-source guarantee:** `structure.py` imports `SKIP_DIRS`
-   from `vault.py`; a test asserts no second hardcoded reserved list exists.
+1. **Add `claudron/structure.py`** — a pure, read-only
+   `check_structure(vault: Vault) -> list[Finding]` **reusing `schema.Finding`**
+   (add an additive `fixable: bool` and a `code` per its docstring's
+   additive-field allowance; do **not** fork the class). Findings use the
+   existing `error`/`warning` vocabulary:
+   - `S1` (**warning**, fixable) — a fleet dir (has `fleet.yaml`) lacks `shared/`.
+   - `S2` (**error**) — a **hand-created/adopted** top-level dir collides with a
+     reserved name and carries a `fleet.yaml`. Must **raw-walk** the root, not
+     iterate `vault.fleets` (which pre-filters reserved names out, `vault.py:180`);
+     this is the audit-time backstop for the vector `fleet add` already guards.
+   - `S3` (**warning**) — an unrecognized top-level dir (not a fleet, not in
+     `SKIP_DIRS`, not `projects/<repo>`): the `other:` extensibility hatch. A
+     warning, so a deliberately-extended vault (`vault/experiments/`) never
+     red-fails the default `validate`.
+   - `S4` (**warning**) — **both** `_shared/` and `shared/` present:
+     `_scan_vault` prefers `_shared` (`vault.py:165`) and the index skips
+     `shared` as a SKIP_DIR (`knowledge.py:207-210`), silently dropping the
+     non-preferred tree. A data-loss hazard nothing else catches.
 
-### New-file skeleton (`claudron/structure.py`)
+   Two checks are deliberately **not** here: the "no vault marker" case (a
+   `Vault` can't exist without the marker — `vault.py:154-159` — so `validate`
+   already errors upstream on a markerless dir), and the SCHEMA↔VAULT-STRUCTURE
+   cross-link drift-guard (F3), which is a **Claudron repo test**, since those
+   docs never live inside a vault (they'd false-positive on every real vault and
+   break `init && validate`).
+2. **Wire into `cmd_validate`** (`cli.py`): run `check_structure` after the
+   frontmatter pass; findings flow through the **same** report + `--json`
+   envelope; exit code = **1 iff any error fires** (structure or frontmatter),
+   **warnings gate only under the existing `--strict`**. Never mutate on the
+   default path. When fixable findings are present, print a stderr footer naming
+   them and the exact `--fix` command (no silent switch).
+3. **Add `--fix` (opt-in, creation-only, contained).** Repairs only
+   creation-safe findings (`S1` → create `<fleet>/shared/`; hub scaffolding
+   stays in `init`). Hard guards: every target path must be
+   `is_relative_to(vault.root)` (mirror `resolve_target_dir`, `engine.py:150`),
+   reject symlinked path components (no escape), pin `exist_ok=True`, and be
+   idempotent (re-run = no-op). Print each action; re-run the check and exit 0
+   only if clean. **Never moves or deletes** — a stray dir/note is reported with
+   a suggested destination, never relocated. Register `--fix` in `--help` and
+   fix its help string, which currently promises "never mutates" (`cli.py:923`);
+   sync `docs/CLI_CONTRACT.md` + CHANGELOG.
+4. **Extend `init`** to scaffold the full documented shape (it already does
+   `_shared/` + `CONVENTIONS.md`; ensure `init` then `validate` is a clean
+   no-op) and print a next-step pointer.
+5. **Reserved-name single-source:** `structure.py` imports `SKIP_DIRS` from
+   `vault.py`; the user-facing reserved set is the **subset**
+   `{_shared, shared, projects}` derived from it; a test asserts the derivation
+   (no second hardcoded list) and that infra names (`.git`, `__pycache__`) never
+   reach a user-facing message.
+
+### Reusing the existing Finding (`claudron/schema.py`)
 
 ```python
-"""Directory-structure checks for a vault (the VAULT-STRUCTURE.md contract).
-
-Read-only by default; the CLI's --fix path performs creation-only repairs.
-Reserved names come from vault.SKIP_DIRS — never re-listed here.
-"""
-from dataclasses import dataclass
+# structure.py — no new Finding type; extend the existing one.
+from .schema import Finding          # severity ∈ {"error","warning"}, .line, .to_dict()
 from .vault import Vault, SKIP_DIRS
 
-@dataclass(frozen=True)
-class StructureFinding:
-    code: str        # S1..S5
-    severity: str    # "warn" | "error"
-    path: str
-    message: str
-    fixable: bool    # True only for creation-safe repairs (S1, S2)
+USER_RESERVED = {"_shared", "shared", "projects"}   # subset of SKIP_DIRS (infra names excluded)
 
-def check_structure(vault: Vault) -> list[StructureFinding]:
-    ...  # returns [] for a conforming vault
+def check_structure(vault: Vault) -> list[Finding]:
+    ...   # [] for a conforming vault; findings carry code S1..S4 + fixable
 ```
 
 ## Test Plan
 
 Unit tests (`tests/test_structure.py`), each a tmp vault:
 - Conforming vault → `check_structure` returns `[]`; `validate` exits 0.
-- Fleet missing `shared/` → `S2` warn; `validate` exits 1; **`git status`
-  clean afterward** (no mutation); `validate --fix` creates it, exits 0.
-- Stray root dir → `S4` warn, `validate` exits 1, but **not** an error code and
-  **not** touched by `--fix`.
-- Dir named `projects/` with a `fleet.yaml` → `S3` error.
-- Missing/one-way SCHEMA↔VAULT-STRUCTURE cross-link → `S5`.
-- Reserved-name single-source: a test greps that `SKIP_DIRS` is the only
-  reserved-name definition consumed by the checker.
-- Golden: `check_structure` on the reference vault returns `[]`.
+- Fleet missing `shared/` → `S1` **warning**; `validate` exits **0** by default,
+  **1 under `--strict`**; `--fix` creates it, exits 0.
+- **`--fix` containment:** a fleet `shared` that is a **symlink out of the repo**
+  is rejected (not followed); assert every created path
+  `is_relative_to(vault.root)`. This replaces a "git status clean" assertion —
+  which can't see a symlink escape.
+- Unknown root dir (`vault/experiments/`) → `S3` **warning**, exit 0 by default
+  (extensibility preserved); untouched by `--fix`.
+- Hand-created `projects/` dir carrying a `fleet.yaml` → `S2` **error**, exit 1
+  (raw-walk reaches it though `vault.fleets` filters it).
+- Both `_shared/` and `shared/` present → `S4` **warning**.
+- `--json`: structure findings appear in the envelope (proving `schema.Finding`
+  reuse, not a divergent shape).
+- **Repo-level test** (`tests/test_docs_crosslink.py`, NOT the per-vault lens):
+  SCHEMA.md and VAULT-STRUCTURE.md exist and cross-reference each other (the F3
+  drift guard).
+- Reserved-name single-source: the user-facing set derives from `SKIP_DIRS` and
+  excludes infra names.
+- Golden: `check_structure` on `examples/reference-vault/` returns `[]`, and
+  `init && validate` there is a no-op.
 
 ## Verification Checklist
 
-- [ ] `claudron validate` on a drifted vault exits non-zero **and leaves the
-      repo byte-identical** (`git status` clean).
-- [ ] `claudron validate --fix` creates missing `shared/`/hub dirs and exits 0.
-- [ ] No code path in `validate`/`--fix` moves or deletes an existing file.
-- [ ] `claudron init && claudron validate` on a fresh vault is a clean no-op.
-- [ ] `structure.py` imports `SKIP_DIRS`; no second reserved list (test-asserted).
+- [ ] `claudron validate` exit code obeys the CLI contract: **1 iff an error
+      fires**; a lone structure **warning** exits 0 (and 1 under `--strict`) —
+      identical to how frontmatter warnings behave.
+- [ ] Structure findings appear in `validate --json` (they use `schema.Finding`).
+- [ ] `claudron validate --fix` creates missing `<fleet>/shared/` dirs, every
+      created path is `is_relative_to(vault.root)`, a symlink-escape is rejected,
+      and re-running is a no-op (idempotent).
+- [ ] No code path in `validate`/`--fix` moves or deletes an existing file; the
+      `--fix` help string no longer claims "never mutates".
+- [ ] `claudron init && claudron validate` on a fresh vault **and** on
+      `examples/reference-vault/` is a clean no-op.
+- [ ] `structure.py` derives the user-facing reserved set from `SKIP_DIRS`
+      (subset, infra excluded); no second list (test-asserted).
 
 ## What NOT To Do
 
-- `--fix` must **not** move or delete — creation-only. Relocating a stray note
-  is a suggestion, never an action (F2).
+- `--fix` must **not** move or delete — creation-only, and only inside the
+  `is_relative_to(root)` boundary (F2).
 - No auto-repair on the default `validate` path (F2).
-- No fresh reserved-name literal — derive from `SKIP_DIRS`.
+- Do **not** invent a new exit rule — reuse `error` + `--strict` (the CLI
+  contract). Warnings do not gate the default exit.
+- Do **not** put the SCHEMA↔VAULT-STRUCTURE cross-link check in the per-vault
+  lens — it is a repo test.
+- No fresh reserved-name literal, and no infra names in user messages — derive
+  the subset from `SKIP_DIRS`.
 - Don't rename `_shared/` (F5) or touch promotion (E5).
 
 ## Context
 
-Area: `claudron/` CLI + new `structure.py` · Effort: **M** · Risk: medium — it
-introduces a mutation path (`--fix`), contained by creation-only scope + the
-"repo unchanged on default path" test · Priority: **high** — the enforcing half
-of the contract; Claudlobby conformance depends on it.
+Area: `claudron/` CLI + new `structure.py` (reusing `schema.Finding`) · Effort:
+**M** · Risk: medium — the `--fix` mutation path is the risk, contained by
+`is_relative_to(root)` + symlink rejection + creation-only scope + the
+containment assertion (which replaces the insufficient git-clean test) ·
+Priority: **high** — the enforcing half of the contract; Claudlobby conformance
+depends on it.

@@ -57,12 +57,17 @@ Absent that evidence, **skip** — pooling is the accepted behavior.
 
 ### Steps (only if the gate passes)
 
-1. **`derive_fleet()`** (`session.py`) — mirror `derive_project()`: from the
-   bot's cwd / vault position, resolve the owning fleet dir name (the root-level
-   ancestor that carries a `fleet.yaml`). Returns `None` outside a fleet.
-2. **Thread `fleet` into `recall`/`session_start_brief`** — when a fleet is
-   derived, scope the brief to that fleet's `shared/` + `_shared/`, ranked by
-   the existing `tier_priority`. No fleet derived → today's behavior, unchanged.
+1. **`derive_fleet()`** (`session.py`) — analogous to `derive_project()` but
+   **not a pure mirror**: it needs the **vault root** to bound the upward walk
+   (find the root-level ancestor under the vault carrying a `fleet.yaml`).
+   Returns `None` outside a fleet (at vault root, or inside `projects/`).
+2. **Thread `fleet` into `recall`/`session_start_brief` — and into the index
+   path.** `recall` takes no `fleet` today and its hot path is `tier_b=False`,
+   so a `fleet` argument never filters Tier A (`knowledge.py`); real scoping
+   means adding a fleet filter to the Tier-A query, not just passing an arg.
+   When a fleet is derived, scope the brief to that fleet's `shared/` +
+   `_shared/`, ranked by the existing `tier_priority`. No fleet derived →
+   today's behavior, unchanged. (This is why the effort is S→M, not a trivial S.)
 3. **Preserve pooling as the default for explicit queries.** `lookup` stays
    cross-fleet; add an **opt-in** `lookup --fleet-only <f>` for a user who wants
    isolation. Isolation is opt-in; pooling is the default (single-tenant
@@ -84,7 +89,9 @@ Absent that evidence, **skip** — pooling is the accepted behavior.
       (this box is checkable even when the answer is "skip").
 - [ ] (if built) `recall` in a fleet context excludes sibling-fleet notes from
       the brief while `lookup` still reaches them.
-- [ ] (if built) no-fleet context behaves exactly as today (no regression).
+- [ ] (if built) no-fleet context is a **byte-identical** brief on a no-fleet
+      fixture (diff the recall output before/after — not a subjective "no
+      regression").
 
 ## What NOT To Do
 
@@ -96,6 +103,7 @@ Absent that evidence, **skip** — pooling is the accepted behavior.
 
 ## Context
 
-Area: `claudron/` `session.py`/`knowledge.py` · Effort: **S** · Risk: low
-(additive; default path unchanged) · Priority: **low / conditional** —
+Area: `claudron/` `session.py`/`knowledge.py` · Effort: **S–M** (S for
+`derive_fleet` + recall-scoping; M if the Tier-A index filter is needed) · Risk:
+low (additive; default path unchanged) · Priority: **low / conditional** —
 dogfood-gated; the honest default is not to build it.

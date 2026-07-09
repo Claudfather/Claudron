@@ -30,9 +30,14 @@ SSOT, siblings conform).
 
 ## Where this sits in the roadmap
 
-This is **not a new gated epic.** It is a pre-G1, general-infrastructure
-addition that hardens a contract **both** the personal vault (D4) and fleet
-vaults share:
+This is **not a new gated epic** — and the load-bearing reason to build it
+pre-gate is that the **already-ratified G1 fleet dogfood needs a documented,
+checkable structure to run**: a fleet can't conform to, or be audited against, a
+contract that today exists only in `_scan_vault`'s head. That it *also* hardens
+the personal vault (D4) is a bonus, not the warrant. **Release placement:** P1
+(the doc) can land immediately; P2's `structure.py` targets a **0.2.x point
+release** — after E1's frontmatter `validate` (0.2.0), before the G1-gated 0.3.0
+— which is what makes "pre-G1 / extends E1" falsifiable rather than rhetorical:
 
 - **Extends E1.** E1 gives `validate` a *frontmatter* lens; this adds a
   *directory-structure* lens to the same command. VAULT-STRUCTURE.md is the
@@ -42,10 +47,9 @@ vaults share:
   content contract's backbone. This epic writes that tier model down as the
   *content* contract; it builds **no** promotion code — that stays E5.
 - **Respects G1 and the D-decisions.** No cross-tenant query surface
-  (portfolio non-goal); no change to the two-field `status`/`maturity` model
-  (D11); the personal topology (D4, `_shared/` + `projects/<repo>/`) is
-  extended, not replaced. Structure enforcement helps a **personal** vault too,
-  so it is not behind the fleet wedge.
+  (portfolio non-goal — single-tenant pooling is intra-tenant); no change to the
+  two-field `status`/`maturity` model (D11); the personal topology (D4,
+  `_shared/` + `projects/<repo>/`) is extended, not replaced.
 - **Fleet dogfood rides the interim CLI wedge**, not E3's MCP server. The
   crog-eng-team dogfood consumes the vault via Claudlobby's already-shipped
   query-before preflight (#528, the "1e wedge"), so nothing here depends on the
@@ -112,13 +116,16 @@ obvious to the author is not obvious to the next reader.
 
 ## Risks
 
-| Risk | Impact | Mitigation |
-|---|---|---|
-| VAULT-STRUCTURE.md drifts from SCHEMA.md (two SSOT docs, F3) | Consumers follow contradictory contracts | P1 adds a reciprocal cross-link + a `validate` lint that both docs exist and reference each other (the price of choosing two docs over one). |
-| Structure `validate` hard-codes a shape that D4/E5 later evolve | A check blocks a legitimate personal vault | Enforce **only** what VAULT-STRUCTURE.md states; reserved-name list derives from `SKIP_DIRS` (single source), not a second hardcoded list; unknown top-level dirs warn (`other:`), never error. |
-| Deferred hub rename (F5) accrues habit-debt | "Rename later" gets stickier as `_shared/` spreads into docs/muscle-memory | The consumption contract forbids hardcoding the hub path from day one → a future rename touches ~10 Claudron sites + the operator's habits, not bot instructions. |
-| Cross-fleet pooling (F6) surprises a future multi-tenant user | The "leak" is fine for one operator, wrong for true multi-tenant | Document it as **intended for a single-tenant vault**; the isolation path (`derive_fleet()` + fleet-scoped `recall`) is specced in P3, dormant until a real need. |
-| Scope creep into E5 promotion | This epic balloons; E5 double-built | "What NOT To Do" in P1/P2 names promotion code as out of bounds; P1 links E5 instead of restating it. |
+| Risk | Sev | Impact | Mitigation |
+|---|---|---|---|
+| `--fix` mutation escapes the vault | **High** | A symlinked `shared` lets `--fix` create dirs outside the repo — invisible to a "git status clean" check | P2: every created path `is_relative_to(vault.root)` (mirrors `engine.py:150`), symlink components rejected, creation-only, idempotent; a containment assertion **replaces** the git-clean test |
+| VAULT-STRUCTURE.md drifts from SCHEMA.md (two SSOT docs, F3) | **Med** | Consumers follow contradictory contracts | Reciprocal cross-link + a **Claudron repo test** (`tests/`, not the per-vault lens — those docs never live in a vault) asserting both exist and reference each other. Honest limit: it checks existence, not semantic agreement |
+| Cross-repo tier-set drift | **Med** | `SHARED_TIERS` (`vault.py:48-53`) and Claudlobby `composer.py:1876-1882` hardcode the shared-tier subdirs twice; match today, nothing ties them | Named as a Claudlobby sibling issue (single-source the tier set); flagged, not silently assumed |
+| Both `_shared/` and `shared/` present drops a tree | **Med** | `_scan_vault` prefers `_shared`, the index skips `shared` — the non-preferred tree's knowledge silently vanishes | P2 `S4` warns on it (the only check that catches it) |
+| Structure `validate` hard-codes a shape D4/E5 later evolve | **Med** | A check blocks a legitimate vault | Enforce **only** what VAULT-STRUCTURE.md states; reserved subset derives from `SKIP_DIRS`; unknown dirs warn (`other:`), never gate the default exit |
+| Deferred hub rename (F5) accrues habit-debt | **Low** | "Rename later" gets stickier as `_shared/` spreads | Bots consume by query, not hardcoded path → a rename touches ~10 Claudron code sites + ~13 test/doc sites + a per-vault `git mv` + reserved-name accretion (old name lingers in `SKIP_DIRS`), but **zero bot instructions** |
+| Cross-fleet pooling (F6) surprises a future multi-tenant user | **Low** | Fine for one operator; a fleet bot can read personal `projects/` notes | Documented as **intended for a single-tenant vault** (one tenant = the operator's own ventures); true separation is a separate vault; isolation path specced in P3, dormant |
+| Scope creep into E5 promotion | **Low** | Epic balloons; E5 double-built | "What NOT To Do" fences promotion code; P1 links E5 instead of restating it |
 
 ## Complexity and Sequencing
 
@@ -126,7 +133,7 @@ obvious to the author is not obvious to the next reader.
 |---|---|---|---|---|
 | [P1 — VAULT-STRUCTURE.md (the SSOT)](01-vault-structure-ssot.md) | S–M | E1 (SCHEMA.md exists) | — | The directory + content + consumption contract, as a doc. Pure prose; no code. |
 | [P2 — Structure enforcement in `validate`/`init`](02-structure-enforcement.md) | M | P1 | P3 | `validate` gains a directory lens (audit-only); `--fix` opt-in; `init` scaffolds to the contract. |
-| [P3 — Fleet-scoped consumption (conditional)](03-consumption-fleet-context.md) | S | P1 | P2 | Documents the Tier-A/recall scoping gaps; `derive_fleet()` + fleet-scoped `recall` **only if** the dogfood needs it. |
+| [P3 — Fleet-scoped consumption (conditional)](03-consumption-fleet-context.md) | S–M | P1 | P2 | Documents the Tier-A/recall scoping gaps; `derive_fleet()` + fleet-scoped `recall` **only if** the dogfood needs it. |
 
 **Critical path:** P1 → P2. P3 is dogfood-gated and may never build (F6).
 
@@ -147,7 +154,9 @@ afterthought. Filed back to Claudfather/Claudlobby after this plan is reviewed.
    (`composer.py`) and the `[vault]` extra (pin to a released tag).
 4. **crog-eng-team dogfood** — `git init` the deployment `local/` → `claudron
    init --adopt` in place → enable the interim query-before wedge (#528) on one
-   fleet → clone to the operator's workstation.
+   fleet → clone to the operator's workstation. Note: `init --adopt` mass-mutates
+   frontmatter (`vault.py:230-262`) — run it dry-run/backed-up first, on a
+   committed tree.
 
 ## What NOT To Do
 
@@ -158,5 +167,6 @@ afterthought. Filed back to Claudfather/Claudlobby after this plan is reviewed.
 - Do **not** add a second reserved-name list — derive from `SKIP_DIRS`
   (`vault.py:37-39`) so it can't drift.
 - Do **not** rename `_shared/` in this epic (F5). If it ever happens, it is its
-  own small PR touching the ~10 hardcoded sites.
+  own PR touching ~10 Claudron code sites + ~13 test/doc sites + a per-vault
+  `git mv` (the old name also lingers in `SKIP_DIRS`) — bounded, but not "~10".
 - Do **not** add auto-repair as `validate`'s default (F2). `--fix` is opt-in.
