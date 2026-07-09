@@ -50,8 +50,8 @@ release** — after E1's frontmatter `validate` (0.2.0), before the G1-gated 0.3
   (portfolio non-goal — single-tenant pooling is intra-tenant); no change to the
   two-field `status`/`maturity` model (D11); the personal topology (D4,
   `_shared/` + `projects/<repo>/`) is extended, not replaced.
-- **Fleet dogfood rides the interim CLI wedge**, not E3's MCP server. The
-  crog-eng-team dogfood consumes the vault via Claudlobby's already-shipped
+- **Fleet dogfood rides the interim CLI wedge**, not E3's MCP server. A
+  pilot-fleet dogfood consumes the vault via Claudlobby's already-shipped
   query-before preflight (#528, the "1e wedge"), so nothing here depends on the
   G1-gated E3.
 
@@ -152,7 +152,7 @@ afterthought. Filed back to Claudfather/Claudlobby after this plan is reviewed.
 3. **`init` consumption / mount wiring** — `CLAUDRON_VAULT_PATH` → the hub;
    dedup against Claudlobby's existing `claudron_vault_path` field
    (`composer.py`) and the `[vault]` extra (pin to a released tag).
-4. **crog-eng-team dogfood** — `git init` the deployment `local/` → `claudron
+4. **Pilot-fleet dogfood** — `git init` the deployment `local/` → `claudron
    init --adopt` in place → enable the interim query-before wedge (#528) on one
    fleet → clone to the operator's workstation. Note: `init --adopt` mass-mutates
    frontmatter (`vault.py:230-262`) — run it dry-run/backed-up first, on a

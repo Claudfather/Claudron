@@ -60,7 +60,7 @@ exactly the shape VAULT-STRUCTURE.md (P1) documents.
 
 - Claudlobby sibling issue #1 (overlay conformance) — Claudlobby runs `validate`
   to confirm its `local/` conforms.
-- The crog-eng-team dogfood (#4).
+- The pilot-fleet dogfood (#4).
 
 ### Steps
 

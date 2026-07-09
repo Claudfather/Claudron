@@ -49,7 +49,7 @@ not a gap.
 
 ### Gate (build-or-not)
 
-Build **only if**, over ≥2 weeks of crog-eng-team dogfood, fleet-blind `recall`
+Build **only if**, over ≥2 weeks of a pilot-fleet dogfood, fleet-blind `recall`
 measurably hurts — bots receive cross-fleet noise in briefs, or miss their own
 fleet's canon because it ranked below another fleet's. Mirror the roadmap's G1
 pulse discipline: record a one-line verdict (build / skip) with the evidence.
