@@ -21,8 +21,13 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 class TestInitPersonal:
     def test_creates_vault_git_repo_with_seed_commit(self, tmp_path: Path, capsys):
         target = tmp_path / "my-vault"
-        rc = main(["init", str(target), "--personal"])
+        rc = main(["init", str(target), "--personal", "--owner", "tester"])
         assert rc == 0
+        # --owner flows to the bootstrap note (live battery caught the
+        # flag missing from the parser while the code read args.owner)
+        note = next((target / "_shared" / "knowledge").glob("vault-bootstrap*.md"))
+        fm, _, _ = parse_note(note.read_text())
+        assert fm["owner"] == "tester"
         # Vault scaffold present
         assert (target / "_shared" / "CONVENTIONS.md").is_file()
         # It's a git repo with the scaffold committed (the SD card must

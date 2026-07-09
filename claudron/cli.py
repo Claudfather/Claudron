@@ -888,6 +888,11 @@ def main(argv=None) -> int:
         help="Bootstrap the SD card: vault + git repo + smoke-tested first "
         "note + machine-B one-liners",
     )
+    p_init.add_argument(
+        "--owner",
+        help="Owner for the --personal bootstrap note "
+        "(default: git user.name, then $USER)",
+    )
 
     # status
     p_status = sub.add_parser(
