@@ -58,7 +58,9 @@ class SyncError(Exception):
 def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
     """The package git invoker: guarded subprocess with SyncError-typed
     environment failures (git missing/not executable, timeouts). Every
-    git call in the package goes through this."""
+    *vault-scoped* git call goes through this — the one deliberate
+    exception is cli._derive_owner's global `git config` lookup, which
+    must not receive `-C root` and carries its own guard."""
     try:
         return subprocess.run(
             ["git", "-C", str(root), *args],

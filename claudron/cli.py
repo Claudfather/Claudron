@@ -215,16 +215,17 @@ def _init_personal(args, root: Path) -> int:
     # Commit the scaffold + bootstrap note so machine B's clone gets it —
     # and say so when it fails (unset git identity is the common cause;
     # an unconditional success message would tell the user to push a
-    # commit that doesn't exist).
+    # commit that doesn't exist). No SyncError catch here by design: git
+    # presence is proven by rev-parse above and no timeout is passed, so
+    # run_git cannot raise on this path.
+    seed_msg = "claudron init --personal"
     run_git(root, "add", "-A")
-    committed = (
-        run_git(root, "commit", "-m", "claudron init --personal").returncode == 0
-    )
+    committed = run_git(root, "commit", "-m", seed_msg).returncode == 0
     if not committed:
         print(
             "warning: seed commit failed (git identity unset?) — run\n"
             f"  git -C {root} -c user.name=YOU -c user.email=YOU@example.com "
-            "commit -m 'claudron init --personal'\n"
+            f"commit -m '{seed_msg}'\n"
             "before pushing to a remote",
             file=sys.stderr,
         )

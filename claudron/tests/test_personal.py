@@ -91,6 +91,49 @@ class TestInitPersonal:
         assert "user history" in log  # preserved
         assert (target / "_shared" / "CONVENTIONS.md").is_file()
 
+    def test_git_missing_is_clean_env_error(
+        self, tmp_path: Path, capsys, monkeypatch
+    ):
+        """Fold pin: a fresh machine without git gets exit 3 + a named
+        message, never a traceback (run_git maps it to SyncError)."""
+        import claudron.cli as cli_mod
+        from claudron.sync import SyncError
+
+        def _no_git(root, *args, **kwargs):
+            raise SyncError("git is unavailable: [Errno 2] No such file")
+
+        monkeypatch.setattr(cli_mod, "run_git", _no_git)
+        rc = main(["init", str(tmp_path / "v"), "--personal"])
+        assert rc == 3
+        assert "needs git" in capsys.readouterr().err
+
+    def test_failed_seed_commit_warns_honestly(
+        self, tmp_path: Path, capsys, monkeypatch
+    ):
+        """Fold pin: unset git identity → warning + committed:false, never
+        an unconditional success story about a commit that doesn't exist."""
+        import subprocess as sp
+
+        import claudron.cli as cli_mod
+
+        real = cli_mod.run_git
+
+        def _commit_fails(root, *args, **kwargs):
+            if args and args[0] == "commit":
+                return sp.CompletedProcess(args, 1, "", "empty ident")
+            return real(root, *args, **kwargs)
+
+        monkeypatch.setattr(cli_mod, "run_git", _commit_fails)
+        rc = main(["init", str(tmp_path / "v"), "--personal",
+                   "--owner", "t", "--json"])
+        assert rc == 0  # vault is locally usable — not a failure
+        env = json.loads(capsys.readouterr().out)
+        assert env["data"]["committed"] is False
+        # And human mode warns on stderr
+        rc = main(["init", str(tmp_path / "v2"), "--personal", "--owner", "t"])
+        assert rc == 0
+        assert "seed commit failed" in capsys.readouterr().err
+
     def test_smoke_failure_is_reported_not_hidden(
         self, tmp_path: Path, capsys, monkeypatch
     ):
