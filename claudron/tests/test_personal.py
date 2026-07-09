@@ -19,7 +19,7 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 
 
 class TestInitPersonal:
-    def test_creates_vault_git_repo_with_seed_commit(self, tmp_path: Path, capsys):
+    def test_creates_vault_git_repo_with_seed_commit(self, tmp_path: Path):
         target = tmp_path / "my-vault"
         rc = main(["init", str(target), "--personal", "--owner", "tester"])
         assert rc == 0
@@ -72,7 +72,7 @@ class TestInitPersonal:
         assert env["data"]["personal"] is True
         assert env["data"]["smoke_test"] == "passed"
 
-    def test_idempotent_inside_existing_repo(self, tmp_path: Path, capsys):
+    def test_idempotent_inside_existing_repo(self, tmp_path: Path):
         """--personal --adopt inside an existing git repo must not re-init
         or commit over the user's history."""
         target = tmp_path / "existing"

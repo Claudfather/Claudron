@@ -30,7 +30,7 @@ from .hooks import (
 )
 from .knowledge import build_index, load_index, lookup
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, sync
+from .sync import SyncError, run_git, sync
 
 
 # ── output contract (docs/CLI_CONTRACT.md) ────────────────────────────
@@ -162,34 +162,28 @@ def _init_personal(args, root: Path) -> int:
     """The two-command bootstrap (E2): vault + git repo + a real first
     note proving the loop, then the machine-B one-liners. The smoke test
     is honest — a broken loop reports, it doesn't hide (verify mandate)."""
-    import subprocess
     from datetime import date
 
-    from .vault import detect as _detect
-
     # Git repo: init only when the vault isn't already inside one — never
-    # re-init or commit over user history (--adopt case).
-    in_repo = (
-        subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--git-dir"],
-            capture_output=True, text=True,
-        ).returncode
-        == 0
-    )
-    if not in_repo:
-        made = subprocess.run(
-            ["git", "-C", str(root), "init", "--initial-branch=main"],
-            capture_output=True, text=True,
-        )
-        if made.returncode != 0:
-            print(
-                f"git init failed: {made.stderr.strip()[:200]}", file=sys.stderr
-            )
-            return 3  # environment error — the SD card needs git
+    # re-init or commit over user history (--adopt case). run_git maps a
+    # missing git binary to SyncError → clean exit 3 instead of a
+    # traceback on the exact fresh machine this command targets.
+    try:
+        if run_git(root, "rev-parse", "--git-dir").returncode != 0:
+            made = run_git(root, "init", "--initial-branch=main")
+            if made.returncode != 0:
+                print(
+                    f"git init failed: {made.stderr.strip()[:200]}",
+                    file=sys.stderr,
+                )
+                return 3
+    except SyncError as exc:
+        print(f"{exc} — the SD card needs git", file=sys.stderr)
+        return 3  # environment error
 
     # Doctor-style smoke test as a REAL first note: capture through the
     # engine, then prove recall serves it. Bootstraps trust in the loop.
-    vault = _detect(root)
+    vault = detect(root)
     try:
         result = capture(
             vault,
@@ -218,17 +212,32 @@ def _init_personal(args, root: Path) -> int:
         )
         return 1
 
-    # Commit the scaffold + bootstrap note so machine B's clone gets it.
-    subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
-    subprocess.run(
-        ["git", "-C", str(root), "commit", "-m", "claudron init --personal"],
-        capture_output=True, text=True,
+    # Commit the scaffold + bootstrap note so machine B's clone gets it —
+    # and say so when it fails (unset git identity is the common cause;
+    # an unconditional success message would tell the user to push a
+    # commit that doesn't exist).
+    run_git(root, "add", "-A")
+    committed = (
+        run_git(root, "commit", "-m", "claudron init --personal").returncode == 0
     )
+    if not committed:
+        print(
+            "warning: seed commit failed (git identity unset?) — run\n"
+            f"  git -C {root} -c user.name=YOU -c user.email=YOU@example.com "
+            "commit -m 'claudron init --personal'\n"
+            "before pushing to a remote",
+            file=sys.stderr,
+        )
 
     if args.json:
         _emit_json(
             "init",
-            {"root": str(root), "personal": True, "smoke_test": "passed"},
+            {
+                "root": str(root),
+                "personal": True,
+                "smoke_test": "passed",
+                "committed": committed,
+            },
         )
         return 0
 

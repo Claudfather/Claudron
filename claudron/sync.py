@@ -55,7 +55,10 @@ class SyncError(Exception):
     these to exit 3; conflicts are NOT errors, they are reported results."""
 
 
-def _git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
+def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
+    """The package git invoker: guarded subprocess with SyncError-typed
+    environment failures (git missing/not executable, timeouts). Every
+    git call in the package goes through this."""
     try:
         return subprocess.run(
             ["git", "-C", str(root), *args],
@@ -69,7 +72,7 @@ def _git(root: Path, *args: str, timeout: float | None = None) -> subprocess.Com
 
 def _changed_md(root: Path, spec: list[str]) -> list[str]:
     """Vault-relative .md paths from a `git diff --name-only` invocation."""
-    out = _git(root, "diff", "--name-only", *spec)
+    out = run_git(root, "diff", "--name-only", *spec)
     if out.returncode != 0:
         return []
     return [p for p in out.stdout.splitlines() if p.endswith(".md")]
@@ -86,25 +89,25 @@ def sync(
     problems; returns ok=False (with detail + quarantine list) when a
     conflict or push failure was left for the human."""
     root = vault.root
-    if _git(root, "rev-parse", "--git-dir").returncode != 0:
+    if run_git(root, "rev-parse", "--git-dir").returncode != 0:
         raise SyncError(f"vault is not a git repository: {root}")
 
     result = SyncResult()
 
     # Commit any working-tree changes first — captures don't commit, sync
     # owns the commit so notes actually travel.
-    porcelain = _git(root, "status", "--porcelain").stdout.strip()
+    porcelain = run_git(root, "status", "--porcelain").stdout.strip()
     if porcelain:
-        _git(root, "add", "-A")
+        run_git(root, "add", "-A")
         n = len(porcelain.splitlines())
-        commit = _git(
+        commit = run_git(
             root, "commit",
             "-m", f"claudron sync: {n} change(s) from {socket.gethostname()}",
         )
         result.committed = commit.returncode == 0
 
     if pull:
-        pulled = _git(root, "pull", "--rebase", "origin", "HEAD", timeout=timeout)
+        pulled = run_git(root, "pull", "--rebase", "origin", "HEAD", timeout=timeout)
         if pulled.returncode != 0:
             # Conflict (or no remote). The rebase stays stopped with markers
             # in the working tree — the standard resolve/--continue flow;
@@ -129,7 +132,7 @@ def sync(
         )
 
     if push:
-        pushed = _git(root, "push", "origin", "HEAD", timeout=timeout)
+        pushed = run_git(root, "push", "origin", "HEAD", timeout=timeout)
         result.pushed = pushed.returncode == 0
         if not result.pushed:
             result.detail = f"push failed: {pushed.stderr.strip()[:200]}"
