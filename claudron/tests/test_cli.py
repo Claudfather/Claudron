@@ -145,7 +145,12 @@ class TestVersion:
         assert rc == 0
         out = capsys.readouterr().out
         assert "claudron" in out
-        assert "0.1.0" in out
+        # Compare against the installed metadata — both sides read one
+        # source, so this is release-proof AND verifies the exact render
+        # contract (label + version), which a shape regex would miss.
+        from importlib.metadata import version
+
+        assert f"claudron {version('claudron')}" in out
 
 
 def _write_legacy_note(vault_dir: Path) -> Path:

@@ -1,6 +1,10 @@
 # Changelog
 
-## [Unreleased] — 0.2.0
+## 0.2.0 — 2026-07-09
+
+**The SD card release** (roadmap E1+E2, EPIC #14): the schema contract and
+the full personal session loop — recall at SessionStart, guarded capture,
+git sync across machines, quarantined conflicts, fail-open hooks.
 
 ### Added
 - `SCHEMA.md` — the ratified note schema (tri-repo SSOT): six types,
@@ -27,6 +31,29 @@
   fleet-registration guards on `--project`/`--fleet`. (#24)
 - `claudron init --adopt` backfills missing `updated` from file mtime —
   line-level insert, formatting preserved. (#24)
+- `claudron recall` — the session-start context brief: always-loaded
+  `CONVENTIONS.md`, project-tier notes (recency-first), shared matches
+  behind an abstention floor (weak matches inject nothing); hard token
+  budget; index-only on the implicit default. (#25)
+- `claudron capture` + the write engine (`engine.py`) — one guarded write
+  path (CLI, and E3's MCP door next): strict validation of the artifact,
+  index-backed dedup that routes (`suggest_update`/`suggest_supersede`)
+  instead of rejecting, `--update` addendums, `--stdin` JSON for bots;
+  the write path maintains the index (no rebuild-per-write). (#26)
+- `claudron sync` — commit → pull `--rebase` → push; conflicts left as
+  markers and **quarantined** (stateless: excluded from search until the
+  file is fixed); scan bounded to what the pull changed. (#27)
+- The hook pack — SessionStart (bounded pull → recall brief), PreCompact
+  (block-once capture prompt, clauDNA-aware), SessionEnd (bounded push);
+  **fail-open by contract** (a hook never breaks a session); `claudron
+  hooks install` prints or `--write`-merges the settings block
+  (self-replacing on executable moves). (#27)
+- `claudron init --personal` — the two-command bootstrap: vault + git repo
+  + a smoke-tested first note (capture → recall proven at bootstrap) +
+  machine-B one-liners. (#28)
+- Vault scaffold travels: `.gitkeep` per tier leaf + the CONVENTIONS.md
+  template at init (git drops empty dirs — a young vault's clone was
+  undetectable). (#27)
 
 ### Changed (breaking)
 - **Exit codes:** environment errors (no vault resolvable, no claudlobby
