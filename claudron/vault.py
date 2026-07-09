@@ -63,9 +63,18 @@ SCAFFOLD_TREE = _scaffold_leaves()
 
 def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
     """Create the shared tier tree under *base* (a `_shared/` or fleet
-    `shared/` mount point)."""
+    `shared/` mount point).
+
+    Each leaf gets a ``.gitkeep``: git doesn't track empty directories, so
+    without them a young vault's clone arrives with no ``_shared/`` at all
+    — undetectable as a vault, and the whole SD-card promise silently
+    fails on machine B (caught by the live loop verification)."""
     for name in SCAFFOLD_TREE:
-        (base / name).mkdir(parents=True, exist_ok=exist_ok)
+        leaf = base / name
+        leaf.mkdir(parents=True, exist_ok=exist_ok)
+        keep = leaf / ".gitkeep"
+        if not keep.exists():
+            keep.write_text("")
 
 # Status semantics live in schema.py (SCHEMA.md is the SSOT): staleness
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
@@ -93,6 +102,18 @@ _GITIGNORE_CONTENT = """\
 */runtime/
 */.env
 .claudron/
+"""
+
+# The always-loaded layer (SCHEMA.md §taxonomy; E1 deliverable that the
+# live loop verification found unshipped): injected unconditionally into
+# every session brief, budgeted ≤120 tokens.
+_CONVENTIONS_TEMPLATE = """\
+# Vault conventions
+
+- One file per topic; update or supersede, never duplicate.
+- Wikilink related notes at write time: `[[Title]]`.
+- Agent captures enter as `maturity: draft`; humans promote.
+- Stale? Set `superseded_by` and `status: superseded` — never delete.
 """
 
 # ── data model ────────────────────────────────────────────────────────
@@ -199,7 +220,14 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
         )
 
     scaffold_shared_tree(root / "_shared", exist_ok=True)
-    (root / "projects").mkdir(parents=True, exist_ok=True)
+    projects = root / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+    if not (projects / ".gitkeep").exists():
+        (projects / ".gitkeep").write_text("")
+
+    conventions = root / "_shared" / "CONVENTIONS.md"
+    if not conventions.exists():
+        conventions.write_text(_CONVENTIONS_TEMPLATE)
 
     gitignore = root / ".gitignore"
     if not gitignore.exists():

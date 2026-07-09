@@ -152,6 +152,61 @@ class TestConflictQuarantine:
         assert "Shared Note" in capsys.readouterr().out
 
 
+class TestScaffoldTravels:
+    def test_fresh_vault_clone_is_detectable(self, tmp_path: Path):
+        """Live-verification catch #2: git doesn't track empty dirs, so a
+        young vault's clone arrived with NO _shared/ — undetectable, and
+        every hook silently no-opped on machine B. The scaffold must
+        travel (.gitkeep + the CONVENTIONS template)."""
+        from claudron.vault import detect
+
+        remote = tmp_path / "remote.git"
+        remote.mkdir()
+        _git(remote, "init", "--bare", "--initial-branch=main")
+        a = tmp_path / "a"
+        _git(tmp_path, "clone", str(remote), str(a))
+        main(["init", str(a), "--adopt"])  # scaffold ONLY — no notes yet
+        _git(a, "add", "-A")
+        _git(a, "commit", "-m", "seed")
+        _git(a, "push", "origin", "main")
+
+        b = tmp_path / "b"
+        _git(tmp_path, "clone", str(remote), str(b))
+        vault = detect(b)
+        assert vault is not None, "empty-tier vault clone lost _shared/"
+        assert (b / "_shared" / "CONVENTIONS.md").is_file()  # E1 deliverable
+        assert (b / "projects" / ".gitkeep").is_file()
+
+
+class TestHookDrivenLoop:
+    def test_pull_born_project_reaches_the_brief(
+        self, synced_pair, tmp_path, capsys, monkeypatch
+    ):
+        """Live-verification catch: a project tier born on machine A must
+        be visible to machine B's FIRST hook-driven brief — the hook must
+        re-detect the vault after the pull (the pre-pull Vault snapshot
+        and any index built from it cannot see a new tier)."""
+        import io
+
+        a, b = synced_pair
+        # A: project-scoped capture + sync (project dir is born here)
+        assert main(["--vault", str(a), "capture", "--type", "knowledge",
+                     "--title", "Pool Exhaustion Fix",
+                     "--body", "Set pool_timeout=10.",
+                     "--project", "storydump", "--owner", "bot-a"]) == 0
+        assert main(["--vault", str(a), "sync"]) == 0
+        capsys.readouterr()
+        # B: session runs inside a storydump checkout; ONE hook invocation
+        work = tmp_path / "work" / "storydump" / "src"
+        work.mkdir(parents=True)
+        (tmp_path / "work" / "storydump" / ".git").mkdir()
+        monkeypatch.chdir(work)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(b))
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        assert main(["hook", "session-start"]) == 0
+        assert "Pool Exhaustion Fix" in capsys.readouterr().out
+
+
 class TestBoundedScan:
     def test_noop_pull_reads_no_notes(self, synced_pair, monkeypatch):
         """Gauntlet (efficiency b): the steady-state SessionStart — a no-op

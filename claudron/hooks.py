@@ -86,6 +86,12 @@ def session_start_brief(vault: Vault) -> str:
             )
     except SyncError as exc:
         _log(vault, "session-start", f"sync --pull skipped: {exc}")
+    # Re-detect after the pull: Vault is a frozen snapshot, and a pull can
+    # introduce whole tiers (a project dir first created on another
+    # machine) that the pre-pull snapshot — and any index built from it —
+    # cannot see. Caught live: machine B's first brief about a project
+    # born on machine A came back empty.
+    vault = detect(vault.root) or vault
     return render_brief(recall(vault, project=derive_project()))
 
 
