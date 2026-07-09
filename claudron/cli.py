@@ -141,6 +141,10 @@ def cmd_init(args) -> int:
     except VaultError as e:
         print(str(e), file=sys.stderr)
         return 2
+
+    if getattr(args, "personal", False):
+        return _init_personal(args, root)
+
     if args.json:
         _emit_json(
             "init",
@@ -151,6 +155,91 @@ def cmd_init(args) -> int:
     for name in SCAFFOLD_TREE:
         print(f"  _shared/{name}/")
     print("  projects/")
+    return 0
+
+
+def _init_personal(args, root: Path) -> int:
+    """The two-command bootstrap (E2): vault + git repo + a real first
+    note proving the loop, then the machine-B one-liners. The smoke test
+    is honest — a broken loop reports, it doesn't hide (verify mandate)."""
+    import subprocess
+    from datetime import date
+
+    from .vault import detect as _detect
+
+    # Git repo: init only when the vault isn't already inside one — never
+    # re-init or commit over user history (--adopt case).
+    in_repo = (
+        subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--git-dir"],
+            capture_output=True, text=True,
+        ).returncode
+        == 0
+    )
+    if not in_repo:
+        made = subprocess.run(
+            ["git", "-C", str(root), "init", "--initial-branch=main"],
+            capture_output=True, text=True,
+        )
+        if made.returncode != 0:
+            print(
+                f"git init failed: {made.stderr.strip()[:200]}", file=sys.stderr
+            )
+            return 3  # environment error — the SD card needs git
+
+    # Doctor-style smoke test as a REAL first note: capture through the
+    # engine, then prove recall serves it. Bootstraps trust in the loop.
+    vault = _detect(root)
+    try:
+        result = capture(
+            vault,
+            note_type="knowledge",
+            title="Vault Bootstrap",
+            body=(
+                f"Vault created {date.today().isoformat()} via "
+                "`claudron init --personal`. Captures land as maturity: "
+                "draft; promote what proves true."
+            ),
+            owner=_derive_owner(args),
+        )
+        smoke_ok = result.action == "created"
+        if smoke_ok:
+            data = recall(vault, project=None, query="vault bootstrap")
+            smoke_ok = any(
+                n["title"] == "Vault Bootstrap" for n in data["notes"]
+            )
+    except Exception as exc:
+        print(f"smoke test failed: {exc}", file=sys.stderr)
+        return 1
+    if not smoke_ok:
+        print(
+            "smoke test failed: bootstrap note not served by recall",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Commit the scaffold + bootstrap note so machine B's clone gets it.
+    subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-m", "claudron init --personal"],
+        capture_output=True, text=True,
+    )
+
+    if args.json:
+        _emit_json(
+            "init",
+            {"root": str(root), "personal": True, "smoke_test": "passed"},
+        )
+        return 0
+
+    print(f"personal vault ready at {root}")
+    print("smoke test: recall found the bootstrap note ✓")
+    print()
+    print("next steps:")
+    print(f"  1. install the session hooks:   claudron --vault {root} hooks install --write")
+    print(f"  2. add your private remote:     git -C {root} remote add origin <url> && git -C {root} push -u origin main")
+    print(f"  3. on your other machine:       git clone <url> && claudron hooks install --write")
+    print(f"  4. point sessions at the vault: export CLAUDRON_VAULT={root}")
     return 0
 
 
@@ -792,6 +881,12 @@ def main(argv=None) -> int:
     p_init.add_argument("path", help="Where to create the vault")
     p_init.add_argument(
         "--adopt", action="store_true", help="Adopt an existing non-empty directory"
+    )
+    p_init.add_argument(
+        "--personal",
+        action="store_true",
+        help="Bootstrap the SD card: vault + git repo + smoke-tested first "
+        "note + machine-B one-liners",
     )
 
     # status

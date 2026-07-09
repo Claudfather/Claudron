@@ -1,10 +1,36 @@
 # Claudron
 
-Markdown-based knowledge engine for Claude Code agent fleets.
+Markdown-based knowledge engine for Claude Code agent fleets — the portable
+"SD card" for your sessions' memory.
 
-A vault is a directory of markdown files with YAML frontmatter and wikilinks. Bots write findings, decisions, and gotchas into the vault during operation. An indexer maintains a fast lookup cache so bots can query context before starting tasks.
+A vault is a directory of markdown files with YAML frontmatter and wikilinks.
+Sessions and bots write findings, decisions, and gotchas into the vault as
+they work; every new session starts with a context brief recalled from it.
+Clone the vault on any machine and your accumulated knowledge travels with
+you: what you learn on machine A surfaces in machine B's next session.
 
 The substrate is plain markdown files in a git repo -- humans can browse with any editor, the data is portable, and everything is version-controlled.
+
+## The session loop (the SD card)
+
+```bash
+# One-command bootstrap: vault + git repo + smoke-tested first note
+claudron init ~/vault --personal
+
+# Wire it into Claude Code (SessionStart pull+brief, PreCompact capture
+# prompt, SessionEnd push) — prints the settings block; --write merges it
+claudron --vault ~/vault hooks install --write
+
+# That's it. Sessions now recall context at start and are prompted to
+# capture durable findings before compaction. To span machines:
+git -C ~/vault remote add origin <private-repo-url> && git -C ~/vault push -u origin main
+# ...and on the other machine:
+git clone <private-repo-url> ~/vault && claudron hooks install --write
+```
+
+The loop, end to end: `SessionStart → sync --pull → recall brief injected →
+work → PreCompact prompts claudron capture → SessionEnd → sync --push` —
+and the next machine's SessionStart picks it up.
 
 ## Install
 
@@ -53,10 +79,14 @@ Claudron works standalone as a knowledge engine. Commands marked with **(claudlo
 
 | Command | Purpose |
 |---------|---------|
-| `init` | Scaffold a new vault (`--adopt` converts + backfills an existing directory) |
+| `init` | Scaffold a new vault (`--adopt` converts + backfills; `--personal` bootstraps the full SD card) |
+| `recall` | Session-start context brief: conventions + project notes + relevant shared notes (stdout is the injectable payload) |
+| `capture` | Write a finding through the guarded engine — validated, dedup-routed (`suggest_update`/`suggest_supersede`), never silently dropped |
+| `sync` | Commit vault changes, pull `--rebase`, push; conflicts quarantined until a human resolves |
+| `hook` / `hooks install` | Claude Code lifecycle glue (SessionStart/PreCompact/SessionEnd), fail-open by contract |
 | `new` | Scaffold a schema-valid note in the right tier (passes `validate --strict`) |
 | `validate` | Lint notes against `SCHEMA.md` — lenient by default, `--strict` = the authoring/engine tier |
-| `status` | Vault contents and health summary |
+| `status` | Vault contents and health summary (incl. conflict quarantine) |
 | `lookup` | Search vault knowledge by title, tags, or content |
 | `index` | Build or rebuild the frontmatter index |
 | `version` | Print version |

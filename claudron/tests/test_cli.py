@@ -145,7 +145,12 @@ class TestVersion:
         assert rc == 0
         out = capsys.readouterr().out
         assert "claudron" in out
-        assert "0.1.0" in out
+        # Version from package metadata — assert semver shape, not a pin
+        # that breaks on every release (and reads stale metadata until
+        # `pip install -e` re-runs).
+        import re
+
+        assert re.search(r"claudron \d+\.\d+\.\d+", out)
 
 
 def _write_legacy_note(vault_dir: Path) -> Path:
