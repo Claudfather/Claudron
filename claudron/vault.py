@@ -14,7 +14,22 @@ from pathlib import Path
 
 import yaml
 
-from .schema import NON_NOTE_FILES, STALENESS_DONE, parse_note, split_fence
+from .schema import (
+    CONVENTIONS_TEMPLATE,
+    NON_NOTE_FILES,
+    STALENESS_DONE,
+    has_conflict_markers,
+    parse_note,
+    split_fence,
+)
+
+
+def _write_if_absent(path: Path, content: str) -> None:
+    """Idempotent scaffold write — the single home of the pattern (and of
+    the reason .gitkeep files exist: git drops empty directories, so a
+    young vault's clone would otherwise lose its whole scaffold)."""
+    if not path.exists():
+        path.write_text(content)
 
 
 # ── shared constants ─────────────────────────────────────────────────
@@ -57,9 +72,16 @@ SCAFFOLD_TREE = _scaffold_leaves()
 
 def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
     """Create the shared tier tree under *base* (a `_shared/` or fleet
-    `shared/` mount point)."""
+    `shared/` mount point).
+
+    Each leaf gets a ``.gitkeep``: git doesn't track empty directories, so
+    without them a young vault's clone arrives with no ``_shared/`` at all
+    — undetectable as a vault, and the whole SD-card promise silently
+    fails on machine B (caught by the live loop verification)."""
     for name in SCAFFOLD_TREE:
-        (base / name).mkdir(parents=True, exist_ok=exist_ok)
+        leaf = base / name
+        leaf.mkdir(parents=True, exist_ok=exist_ok)
+        _write_if_absent(leaf / ".gitkeep", "")
 
 # Status semantics live in schema.py (SCHEMA.md is the SSOT): staleness
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
@@ -193,11 +215,11 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
         )
 
     scaffold_shared_tree(root / "_shared", exist_ok=True)
-    (root / "projects").mkdir(parents=True, exist_ok=True)
-
-    gitignore = root / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text(_GITIGNORE_CONTENT)
+    projects = root / "projects"
+    projects.mkdir(parents=True, exist_ok=True)
+    _write_if_absent(projects / ".gitkeep", "")
+    _write_if_absent(root / "_shared" / "CONVENTIONS.md", CONVENTIONS_TEMPLATE)
+    _write_if_absent(root / ".gitignore", _GITIGNORE_CONTENT)
 
     if adopt:
         backfill_updated(root)
@@ -284,6 +306,15 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     if total_docs == 0:
         warnings.append("vault is empty — no knowledge docs found")
 
+    # Conflict quarantine: marker-bearing notes are excluded from search
+    # until a human resolves them — surface them here so they can't rot
+    # invisibly (detection is stateless; fixing the file clears it).
+    # Full-vault second read, accepted: status is an at-will command, not
+    # the SessionStart hot path (which scans changed files only).
+    quarantined = scan_quarantine(vault)
+    for path in quarantined:
+        warnings.append(f"quarantined (unresolved conflict markers): {path}")
+
     # Check index freshness
     index_path = vault.root / ".claudron" / "index.json"
     index_fresh = False
@@ -297,10 +328,36 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
         "total_stale": total_stale,
         "projects": list(vault.projects.keys()),
         "fleets": list(vault.fleets.keys()),
+        "quarantined": quarantined,
         "index_present": index_path.is_file(),
         "index_fresh": index_fresh,
         "warnings": warnings,
     }
+
+
+def scan_quarantine(vault: Vault, paths: list[str] | None = None) -> list[str]:
+    """Vault-relative paths of notes carrying unresolved conflict markers.
+
+    The single home of the quarantine scan. *paths* restricts the scan
+    (sync passes the pull's changed files so a no-op pull reads nothing);
+    None scans the whole vault (status). Deliberately covers files the
+    tier walker skips — a conflicted CONVENTIONS.md matters most, it is
+    the always-injected layer.
+    """
+    if paths is not None:
+        candidates = [vault.root / p for p in paths if p.endswith(".md")]
+    else:
+        candidates = [
+            md for md in sorted(vault.root.rglob("*.md")) if ".git" not in md.parts
+        ]
+    hits: list[str] = []
+    for md in candidates:
+        try:
+            if md.is_file() and has_conflict_markers(md.read_text()):
+                hits.append(str(md.relative_to(vault.root)))
+        except OSError:
+            continue
+    return hits
 
 
 def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:

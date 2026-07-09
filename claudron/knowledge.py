@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .schema import LOOKUP_EXCLUDED
+from .schema import LOOKUP_EXCLUDED, has_conflict_markers
 from .vault import (
     SCHEMA_VERSION,
     SHARED_SUBDIRS,
@@ -111,6 +111,8 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
         text = path.read_text()
     except OSError:
         return None
+    if has_conflict_markers(text):
+        return None  # quarantined until a human resolves (stateless)
     fm, body = parse_frontmatter(text)
     title = fm.get("title") or _derive_title(path.stem)
     tags = fm.get("tags") or []
@@ -185,6 +187,8 @@ def build_index(vault: "Vault") -> dict:
                 text = md.read_text()
             except OSError:
                 continue
+            if has_conflict_markers(text):
+                continue  # quarantined (see _parse_doc)
             fm, _ = parse_frontmatter(text)
             entries.append(index_entry(fm, md, tier, vault.root))
 
