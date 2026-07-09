@@ -141,6 +141,19 @@ class TestDocParity:
         assert LOOKUP_EXCLUDED < STALENESS_DONE
 
 
+class TestConventionsTemplate:
+    def test_shipped_template_fits_its_own_budget(self):
+        """The init default must satisfy the budget it lives beside —
+        SCHEMA.md would flag any vault it scaffolds otherwise."""
+        from claudron.schema import (
+            CONVENTIONS_BUDGET,
+            CONVENTIONS_TEMPLATE,
+            count_tokens,
+        )
+
+        assert count_tokens(CONVENTIONS_TEMPLATE) <= CONVENTIONS_BUDGET
+
+
 class TestParseNote:
     def test_no_frontmatter_is_empty_not_error(self):
         fm, body, err = parse_note("Just prose.\n")

@@ -15,12 +15,21 @@ from pathlib import Path
 import yaml
 
 from .schema import (
+    CONVENTIONS_TEMPLATE,
     NON_NOTE_FILES,
     STALENESS_DONE,
     has_conflict_markers,
     parse_note,
     split_fence,
 )
+
+
+def _write_if_absent(path: Path, content: str) -> None:
+    """Idempotent scaffold write — the single home of the pattern (and of
+    the reason .gitkeep files exist: git drops empty directories, so a
+    young vault's clone would otherwise lose its whole scaffold)."""
+    if not path.exists():
+        path.write_text(content)
 
 
 # ── shared constants ─────────────────────────────────────────────────
@@ -72,9 +81,7 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
     for name in SCAFFOLD_TREE:
         leaf = base / name
         leaf.mkdir(parents=True, exist_ok=exist_ok)
-        keep = leaf / ".gitkeep"
-        if not keep.exists():
-            keep.write_text("")
+        _write_if_absent(leaf / ".gitkeep", "")
 
 # Status semantics live in schema.py (SCHEMA.md is the SSOT): staleness
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
@@ -102,18 +109,6 @@ _GITIGNORE_CONTENT = """\
 */runtime/
 */.env
 .claudron/
-"""
-
-# The always-loaded layer (SCHEMA.md §taxonomy; E1 deliverable that the
-# live loop verification found unshipped): injected unconditionally into
-# every session brief, budgeted ≤120 tokens.
-_CONVENTIONS_TEMPLATE = """\
-# Vault conventions
-
-- One file per topic; update or supersede, never duplicate.
-- Wikilink related notes at write time: `[[Title]]`.
-- Agent captures enter as `maturity: draft`; humans promote.
-- Stale? Set `superseded_by` and `status: superseded` — never delete.
 """
 
 # ── data model ────────────────────────────────────────────────────────
@@ -222,16 +217,9 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
     scaffold_shared_tree(root / "_shared", exist_ok=True)
     projects = root / "projects"
     projects.mkdir(parents=True, exist_ok=True)
-    if not (projects / ".gitkeep").exists():
-        (projects / ".gitkeep").write_text("")
-
-    conventions = root / "_shared" / "CONVENTIONS.md"
-    if not conventions.exists():
-        conventions.write_text(_CONVENTIONS_TEMPLATE)
-
-    gitignore = root / ".gitignore"
-    if not gitignore.exists():
-        gitignore.write_text(_GITIGNORE_CONTENT)
+    _write_if_absent(projects / ".gitkeep", "")
+    _write_if_absent(root / "_shared" / "CONVENTIONS.md", CONVENTIONS_TEMPLATE)
+    _write_if_absent(root / ".gitignore", _GITIGNORE_CONTENT)
 
     if adopt:
         backfill_updated(root)

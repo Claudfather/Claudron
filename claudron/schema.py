@@ -167,6 +167,19 @@ DATE_FIELDS = ("created", "updated", "expires", "last_verified")
 CONVENTIONS_BUDGET = 120
 CONVENTIONS_BUDGET_HARD = 160
 
+# The shipped default for the always-loaded layer — lives beside the budget
+# it must satisfy (guarded by test). `init` writes it; the reference vault
+# carries a filled-in twin (adds the standing-facts example bullet) — keep
+# the shared bullets in sync when editing either.
+CONVENTIONS_TEMPLATE = """\
+# Vault conventions
+
+- One file per topic; update or supersede, never duplicate.
+- Wikilink related notes at write time: `[[Title]]`.
+- Agent captures enter as `maturity: draft`; humans promote.
+- Stale? Set `superseded_by` and `status: superseded` — never delete.
+"""
+
 
 _MARKER_OPEN_RE = re.compile(r"^<{7}(?: |$)", re.MULTILINE)
 _MARKER_CLOSE_RE = re.compile(r"^>{7}(?: |$)", re.MULTILINE)
