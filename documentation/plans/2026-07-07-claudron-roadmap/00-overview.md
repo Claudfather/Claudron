@@ -112,6 +112,16 @@ whichever gated epic ships first takes 0.3.0.
 everything after it. E3–E6 are *options the evidence exercises*, not
 commitments. Entry criteria, measured over ≥2 weeks of E2 dogfood:
 
+- **Dogfood scope (2026-07-09 refinement):** the ≥2-week dogfood runs the vault
+  on Chris's local machines **and** the Pi fleet, wired **CLI + git, not MCP**
+  (E2's shipped surface; the MCP server is E3, which this gate decides), with
+  **writes serialized** so the parked multi-writer claim (below) stays parked.
+  Success is read from **four pre-registered signals** — cross-boundary recall,
+  accumulation quality, resync robustness, hooks-fired-automatically — each
+  threshold fixed *before* the clock starts. Runbook + tracking checklist:
+  [`2026-07-09-g1-dogfood-protocol.md`](../2026-07-09-g1-dogfood-protocol.md).
+  This does not reverse D1 (local-first); it makes the human↔fleet half of the
+  wedge observable rather than only the personal half
 - **Pulse:** notes/week > 0 and trending up; recall briefs referenced in-session
 - **Continue personal-first** (E4 next if the vault is growing fast toward the
   F3 knee, E3 next otherwise) when pulse passes
