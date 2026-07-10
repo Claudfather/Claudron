@@ -145,9 +145,14 @@ Unit tests (`tests/test_structure.py`), each a tmp vault:
 - Both `_shared/` and `shared/` present → `S4` **warning**.
 - `--json`: structure findings appear in the envelope (proving `schema.Finding`
   reuse, not a divergent shape).
-- **Repo-level test** (`tests/test_docs_crosslink.py`, NOT the per-vault lens):
-  SCHEMA.md and VAULT-STRUCTURE.md exist and cross-reference each other (the F3
-  drift guard).
+- **Repo-level test** (NOT the per-vault lens): the F3 drift guard is two parts.
+  (a) **Tier-structure parity** — *already delivered early in P1* as
+  `TestDocParity::test_vault_structure_tree_matches_schema_tiers`: it asserts
+  every note-tier dir in `schema.py`'s `TYPE_DIRS` appears in *both* trees. This
+  is the assertion the original spec omitted — existence + a cross-link alone
+  would not catch a tier renamed in one tree. (b) **Cross-reference existence** —
+  that SCHEMA.md and VAULT-STRUCTURE.md exist and point at each other; add it to
+  the same `TestDocParity` class, not a separate `test_docs_crosslink.py`.
 - Reserved-name single-source: the user-facing set derives from `SKIP_DIRS` and
   excludes infra names.
 - Golden: `check_structure` on `examples/reference-vault/` returns `[]`, and

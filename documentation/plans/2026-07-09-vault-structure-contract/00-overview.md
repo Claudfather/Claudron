@@ -10,14 +10,17 @@ updated: 2026-07-09
 
 # Vault Structure Contract + enforcing `init`
 
-Claudron already owns the *note* contract (SCHEMA.md — frontmatter taxonomy).
-It does **not** yet own the *directory* contract: what top-level dirs a vault
-has, what belongs in `_shared/` vs `<fleet>/shared/`, and how consumers reach
-them. Today that shape is implicit — `init` scaffolds it, `_scan_vault`
-discovers it, but nothing **defines or enforces** it. This epic makes the
-folder structure a first-class, documented, `validate`-checked contract — the
-sibling of SCHEMA.md — so Claudlobby (and any tenant) can conform to a stated
-shape instead of reverse-engineering one.
+Claudron already owns the *note* contract (SCHEMA.md — frontmatter, and a
+`## Vault directory taxonomy` section that already sketches the note-tier tree).
+What it does **not** yet own is the *tenancy* half of the directory contract:
+who owns each top-level dir, what belongs in `_shared/` vs `<fleet>/shared/`,
+how consumers reach it — nor does anything **enforce** the shape. Today that
+tree is half-documented and unchecked — `init` scaffolds it, `_scan_vault`
+discovers it, SCHEMA.md sketches its tiers, but nothing states the full
+tenancy/consumption contract or validates a vault against it. This epic makes
+the folder structure a first-class, documented, `validate`-checked contract —
+the directory sibling of SCHEMA.md — so Claudlobby (and any tenant) can conform
+to a stated shape instead of reverse-engineering one.
 
 This is the Claudron-side counterpart to the Claudlobby "consumes Claudron"
 epic (Claudfather/Claudlobby #509, P1/P2). Division of labor, ratified with the
