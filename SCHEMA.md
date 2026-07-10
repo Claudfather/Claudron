@@ -169,10 +169,8 @@ deliberately reversing issue #4.
 (E2), so its body is budgeted at **≤120 tokens** (W105 above 160 — 33%
 grace). Everything else earns injection through relevance.
 
-**Tenancy, scope, and consumption** — who owns each tier, what belongs where,
-how agents reach it (`recall`/`lookup`, never a hardcoded path), and how notes
-are promoted between tiers — are specified in `VAULT-STRUCTURE.md`, this
-section's directory sibling. The two are cross-linked and parity-checked.
+**Tenancy, scope, consumption, and promotion** are specified in
+`VAULT-STRUCTURE.md`, this section's directory sibling.
 
 ## Validation
 
