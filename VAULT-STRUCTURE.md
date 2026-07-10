@@ -73,7 +73,8 @@ The tree is normative. Beyond what its comments state:
 - **Secrets never commit.** The vault-root `.gitignore`'s `.env` line ignores a
   `.env` at any depth — both each fleet's `<fleet>/.env` (also covered by the
   fleet's own `.gitignore`) and an optional vault-root `.env` for vault-wide
-  per-machine secrets. `init` and `fleet add` scaffold the per-fleet ones; a
+  per-machine secrets. `fleet add` scaffolds each fleet's `.env`+`.gitignore`;
+  `init` writes (or, on `--adopt`, augments) the vault-root `.gitignore`; a
   root `.env` is the operator's to create.
 
 This tree is the full tenant vault; `SCHEMA.md` §Vault directory taxonomy draws

@@ -107,10 +107,18 @@ class TestInit:
         assert (root / ".gitignore").is_file()
 
     def test_scaffolded_gitignore_ignores_env_at_any_depth(self, tmp_path: Path):
-        """Behavioral (the S1 fix): a vault-root .env AND a nested one are
-        actually git-ignored by the scaffolded gitignore. `*/.env` matched only
-        subdirs; a pattern-set check can't catch a plausible pattern that
-        silently fails to match root, so assert real `git check-ignore`."""
+        """Behavioral (the S1 fix): the scaffolded gitignore ignores a `.env`
+        at any depth — vault-root AND nested — and does NOT over-match
+        `.env.example`. `*/.env` matched only subdirs; a pattern-set check
+        can't catch a plausible pattern that silently fails to match root, so
+        assert real `git check-ignore`.
+
+        Hermetic: global/system/XDG ignore sources are neutralized so a
+        developer's own `core.excludesFile` (which `git check-ignore` honors)
+        can't mask a regressed pattern and make this false-pass. The negative
+        control re-checks the OLD `*/.env` pattern to prove the test actually
+        discriminates — it fails the root case exactly as the S1 bug did."""
+        import os
         import shutil
         import subprocess
 
@@ -118,14 +126,49 @@ class TestInit:
             pytest.skip("git not available")
         from claudron.vault import _GITIGNORE_CONTENT
 
-        subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+        env = {
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "HOME": str(tmp_path),
+            "XDG_CONFIG_HOME": str(tmp_path / "no-xdg"),
+        }
+
+        def ignored(rel: str) -> bool:
+            return (
+                subprocess.run(
+                    ["git", "-C", str(tmp_path), "check-ignore", rel], env=env
+                ).returncode
+                == 0
+            )
+
+        subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], env=env, check=True)
+
+        # The real scaffold: ignores .env at root and nested; leaves .env.example.
         (tmp_path / ".gitignore").write_text(_GITIGNORE_CONTENT)
-        (tmp_path / ".env").write_text("SECRET=1\n")
-        (tmp_path / "fleet1").mkdir()
-        (tmp_path / "fleet1" / ".env").write_text("SECRET=1\n")
-        for rel in (".env", "fleet1/.env"):
-            result = subprocess.run(["git", "-C", str(tmp_path), "check-ignore", rel])
-            assert result.returncode == 0, f"{rel} not ignored by scaffolded .gitignore"
+        assert ignored(".env"), "root .env not ignored by scaffolded .gitignore"
+        assert ignored("fleet1/.env"), "nested .env not ignored by scaffolded .gitignore"
+        assert not ignored(".env.example"), ".env.example must not be ignored"
+
+        # Negative control: the OLD `*/.env` pattern fails the root case.
+        (tmp_path / ".gitignore").write_text("*/.env\n")
+        assert not ignored(".env"), "regression guard: */.env must NOT match root .env"
+        assert ignored("fleet1/.env"), "*/.env still matches nested .env"
+
+    def test_adopt_merges_gitignore_secrets_rules(self, tmp_path: Path):
+        """`init --adopt` on a dir that already has a .gitignore APPENDS the
+        vault secrets rules instead of silently skipping them — the adopt-path
+        gap (`_write_if_absent` skips an existing file). The pre-existing rules
+        are preserved; `.env`/`.claudron/` end up present."""
+        target = tmp_path / "adopt-existing-gitignore"
+        target.mkdir()
+        (target / "existing.md").write_text("keep me")
+        (target / ".gitignore").write_text("node_modules/\n")  # pre-existing, no .env
+        init(target, adopt=True)
+        lines = (target / ".gitignore").read_text().splitlines()
+        assert "node_modules/" in lines  # preserved
+        assert ".env" in lines  # secrets rule now present
+        assert ".claudron/" in lines
 
     def test_init_existing_nonempty_errors(self, tmp_path: Path):
         target = tmp_path / "nonempty"

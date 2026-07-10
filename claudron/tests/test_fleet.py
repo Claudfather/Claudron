@@ -40,7 +40,7 @@ class TestFleetAdd:
         assert "already exists" in capsys.readouterr().err
 
     def test_rejects_reserved_names(self, vault_dir: Path, capsys):
-        for name in ("_shared", "projects"):
+        for name in ("_shared", "shared", "projects", "_packs"):
             rc = main(["--vault", str(vault_dir), "fleet", "add", name])
             assert rc == 2
             assert "reserved name" in capsys.readouterr().err

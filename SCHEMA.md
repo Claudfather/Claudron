@@ -160,8 +160,8 @@ within that shape.
   projects/<repo>/          # per-repo tier
   <fleet>/                  # fleet overlay (marked by fleet.yaml)
     shared/{knowledge,decisions,runbooks,planning/{active,completed}}
-  _packs/<name>/            # subscribed packs, read-only (E6)
-  .claudron/                # derived state — gitignored, disposable
+  _packs/<name>/            # subscribed packs (E6)
+  .claudron/                # derived index
 ```
 
 `planning/` is walked as one tier (`shared/planning`); the `status` field —
