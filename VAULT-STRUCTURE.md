@@ -40,7 +40,7 @@ If you are a human opening a vault for the first time:
                                #   the same repo lives on the operator's workstation.
   _shared/                     # vault-wide knowledge hub. "shared/" is also accepted.
     CONVENTIONS.md             #   always-injected standing facts (<=120 tokens — SCHEMA.md)
-    knowledge/                 #   the four note tiers (taxonomy owned by SCHEMA.md)
+    knowledge/                 #   the four note types (taxonomy owned by SCHEMA.md)
     decisions/
     runbooks/
     planning/
@@ -48,9 +48,9 @@ If you are a human opening a vault for the first time:
   projects/<repo>/             # the operator's personal, per-repo notes (roadmap D4)
   <fleet>/                     # a fleet — a flat, root-level dir marked by fleet.yaml
     fleet.yaml                 #   fleet config. Claudlobby writes it; Claudron never parses it.
-    .env  .gitignore           #   fleet secrets + fleet-local ignores (claudron fleet-new writes both; never committed)
+    .env  .gitignore           #   fleet secrets + fleet-local ignores (claudron fleet add writes both; never committed)
     library/  voices/          #   Claudlobby overlay content
-    shared/                    #   this fleet's knowledge — the same four tiers as _shared/
+    shared/                    #   this fleet's knowledge — the same four note types as _shared/
       knowledge/  decisions/  runbooks/  planning/{active,completed}/
     runtime/                   #   generated bot dirs — gitignored within the vault
   _packs/<name>/               # subscribed packs, read-only (E6)
