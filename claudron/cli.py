@@ -11,6 +11,7 @@ from pathlib import Path
 from . import __version__
 from .engine import ScopeError, append_addendum, capture, compose_note, resolve_target_dir
 from .schema import TYPES, Finding, slugify, validate_path
+from .structure import StructureError, check_structure, fix_structure, is_fixable
 from .vault import (
     SCAFFOLD_TREE,
     SKIP_DIRS,
@@ -155,6 +156,7 @@ def cmd_init(args) -> int:
     for name in SCAFFOLD_TREE:
         print(f"  _shared/{name}/")
     print("  projects/")
+    print("next: claudron validate   (audits the vault's structure)", file=sys.stderr)
     return 0
 
 
@@ -597,6 +599,8 @@ def cmd_hooks_install(args) -> int:
 
 def cmd_validate(args) -> int:
     strict = args.strict
+    fix = getattr(args, "fix", False)
+    vault = None
     if args.path:
         target = Path(args.path).expanduser().resolve()
         if not target.exists():
@@ -611,9 +615,33 @@ def cmd_validate(args) -> int:
         findings = validate_path(
             target, strict=strict, vault_root=anchor.root if anchor else probe
         )
+        # The structure lens is whole-vault, so only when the target IS a
+        # vault root — never for a single note or an inner subtree.
+        if anchor and target == anchor.root:
+            vault = anchor
     else:
         vault = _resolve_vault(args)
         findings = validate_path(vault.root, strict=strict, vault_root=vault.root)
+
+    findings = list(findings)
+    if vault is not None:
+        structure = check_structure(vault, strict=strict)
+        if fix:
+            try:
+                actions = fix_structure(vault, structure)
+            except StructureError as e:
+                print(f"--fix aborted: {e}", file=sys.stderr)
+                return 1
+            for action in actions:
+                print(action, file=sys.stderr)
+            structure = check_structure(vault, strict=strict)  # reflect repairs
+        findings += structure
+    elif fix:
+        print(
+            "--fix needs a whole vault — omit PATH or pass the vault root",
+            file=sys.stderr,
+        )
+        return 2
 
     errors = [f for f in findings if f.severity == "error"]
     warnings = [f for f in findings if f.severity == "warning"]
@@ -634,6 +662,14 @@ def cmd_validate(args) -> int:
         + (" [strict]" if strict else ""),
         file=sys.stderr,
     )
+    # No silent switch: name the --fix escape hatch when repairs are available.
+    if not fix:
+        fixable = [f for f in findings if is_fixable(f)]
+        if fixable:
+            print(
+                f"→ {len(fixable)} fixable — run: claudron validate --fix",
+                file=sys.stderr,
+            )
     return 1 if errors else 0
 
 
@@ -920,7 +956,7 @@ def main(argv=None) -> int:
     # validate
     p_validate = sub.add_parser(
         "validate",
-        help="Lint notes against SCHEMA.md (never mutates)",
+        help="Lint notes (SCHEMA.md) + vault structure (VAULT-STRUCTURE.md)",
         parents=[vault_parent, json_parent],
     )
     p_validate.add_argument(
@@ -933,6 +969,12 @@ def main(argv=None) -> int:
         "--strict",
         action="store_true",
         help="Authoring tier — what the engine/bot write paths enforce",
+    )
+    p_validate.add_argument(
+        "--fix",
+        action="store_true",
+        help="Create missing structure (fleet shared/ dirs); "
+        "creation-only, never moves or deletes",
     )
 
     # new

@@ -163,6 +163,15 @@ class TestDocParity:
             assert pat.search(schema_tree), f"{tier}/ absent from SCHEMA.md tree"
             assert pat.search(vault_tree), f"{tier}/ absent from VAULT-STRUCTURE.md tree"
 
+    def test_schema_and_vault_structure_cross_reference(self):
+        """The two SSOT docs must exist and point at each other — the human
+        half of the F3 drift guard (tree-parity above is the machine half). A
+        one-way or dangling pointer is the failure mode this catches."""
+        vault_structure = REPO_ROOT / "VAULT-STRUCTURE.md"
+        assert vault_structure.is_file(), "VAULT-STRUCTURE.md missing"
+        assert "VAULT-STRUCTURE.md" in (REPO_ROOT / "SCHEMA.md").read_text()
+        assert "SCHEMA.md" in vault_structure.read_text()
+
 
 class TestConventionsTemplate:
     def test_shipped_template_fits_its_own_budget(self):
