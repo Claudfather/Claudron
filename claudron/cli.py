@@ -599,7 +599,7 @@ def cmd_hooks_install(args) -> int:
 
 def cmd_validate(args) -> int:
     strict = args.strict
-    fix = getattr(args, "fix", False)
+    fix = args.fix
     vault = None
     if args.path:
         target = Path(args.path).expanduser().resolve()

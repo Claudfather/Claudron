@@ -23,6 +23,14 @@ def _codes(findings) -> list[str]:
     return [f.code for f in findings]
 
 
+def _make_fleet(root: Path, name: str = "myfleet") -> Path:
+    """A fleet dir with a fleet.yaml but no shared/ — so S1 fires. Returns it."""
+    fleet = root / name
+    fleet.mkdir()
+    (fleet / "fleet.yaml").write_text(f"fleet: {{name: {name}}}")
+    return fleet
+
+
 class TestConforming:
     def test_minimal_vault_is_clean(self, vault_dir: Path):
         assert check_structure(detect(vault_dir)) == []
@@ -44,9 +52,7 @@ class TestConforming:
 
 class TestS1FleetMissingShared:
     def _vault_with_bare_fleet(self, vault_dir: Path) -> Path:
-        fleet = vault_dir / "myfleet"
-        fleet.mkdir()
-        (fleet / "fleet.yaml").write_text("fleet: {name: myfleet}")
+        _make_fleet(vault_dir)
         return vault_dir
 
     def test_s1_warns(self, vault_dir: Path):
@@ -85,9 +91,7 @@ class TestFixContainment:
         the resolved target escapes root, so --fix aborts and creates nothing
         outside. (Replaces a 'git status clean' check, which can't see this.)"""
         outside = tmp_path / "escape-target"  # deliberately outside the vault
-        fleet = vault_dir / "evilfleet"
-        fleet.mkdir()
-        (fleet / "fleet.yaml").write_text("fleet: {name: evilfleet}")
+        fleet = _make_fleet(vault_dir, "evilfleet")
         # dangling symlink → outside: not is_dir(), so S1 fires and --fix runs.
         (fleet / "shared").symlink_to(outside)
 
@@ -100,9 +104,7 @@ class TestFixContainment:
 
     def test_fix_aborts_cleanly_via_cli(self, vault_dir: Path, tmp_path: Path, capsys):
         outside = tmp_path / "escape-target"
-        fleet = vault_dir / "evilfleet"
-        fleet.mkdir()
-        (fleet / "fleet.yaml").write_text("fleet: {name: evilfleet}")
+        fleet = _make_fleet(vault_dir, "evilfleet")
         (fleet / "shared").symlink_to(outside)
         rc = main(["--vault", str(vault_dir), "validate", "--fix"])
         assert rc == 1

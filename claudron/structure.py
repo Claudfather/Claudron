@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .schema import Finding
-from .vault import SKIP_DIRS, Vault
+from .vault import SKIP_DIRS, Vault, _dir_named
 
 # Infra names inside SKIP_DIRS that a human never collides with and must never
 # surface in a user-facing message. The user-facing reserved set is the
@@ -27,16 +27,14 @@ from .vault import SKIP_DIRS, Vault
 _INFRA_SKIP = frozenset({".git", ".github", ".claudron", "__pycache__"})
 USER_RESERVED = SKIP_DIRS - _INFRA_SKIP  # {_shared, shared, projects, _packs}
 
-# Per-code severity by tier, mirroring schema._tier's CATALOG so that
-# ``--strict`` gates a structure warning exactly like a frontmatter warning:
-# lenient (default) warnings do not change the exit code; strict promotes them
-# to errors. cmd_validate's `1 if errors else 0` then needs no special case.
-_STRUCTURE_CATALOG: dict[str, dict[str, str]] = {
-    "S1": {"lenient": "warning", "strict": "error"},
-    "S2": {"lenient": "error", "strict": "error"},
-    "S3": {"lenient": "warning", "strict": "error"},
-    "S4": {"lenient": "warning", "strict": "error"},
-}
+# Codes that are an error regardless of tier (S2 — a reserved-name collision is
+# always malformed). Every other structure code is a warning by default and an
+# error under --strict, exactly like a frontmatter warning, so cmd_validate's
+# `1 if errors else 0` gates structure findings with no special case. The rule
+# is small enough to state directly: a schema.CATALOG-shaped table here would be
+# a second severity SSOT bound to nothing (VAULT-STRUCTURE.md has no S-code
+# table and no parity test to pin it) — drift waiting to happen.
+_ALWAYS_ERROR = frozenset({"S2"})
 
 # Codes ``--fix`` can repair (creation-only). S1 alone: create a fleet's
 # missing shared/. S2/S3/S4 describe things --fix must never touch (a reserved
@@ -54,7 +52,7 @@ def is_fixable(finding: Finding) -> bool:
 
 
 def _severity(code: str, strict: bool) -> str:
-    return _STRUCTURE_CATALOG[code]["strict" if strict else "lenient"]
+    return "error" if strict or code in _ALWAYS_ERROR else "warning"
 
 
 def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
@@ -87,7 +85,11 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
             )
         )
 
-    known = set(vault.fleets) | SKIP_DIRS
+    # A child reaching the membership test below is already past the dot-dir
+    # skip and the USER_RESERVED continue, so the only non-fleet name that can
+    # still be "recognized" is a non-dot infra dir (__pycache__). _INFRA_SKIP
+    # names it without re-adding the reserved names that already continued out.
+    known = set(vault.fleets) | _INFRA_SKIP
     # Single root walk carries S2 (reserved dir + fleet.yaml) and S3 (unknown
     # dir). S2 raw-walks the root deliberately: vault.fleets pre-filters
     # reserved names out (vault._scan_vault), so this is the audit-time
@@ -127,7 +129,7 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
     # S4 — both markers present. _scan_vault prefers _shared/ and the index
     # skips shared/ as a SKIP_DIR, so the non-preferred tree is silently
     # dropped: a data-loss hazard nothing else catches.
-    if (root / "_shared").is_dir() and (root / "shared").is_dir():
+    if _dir_named(root, "_shared") and _dir_named(root, "shared"):
         emit(
             "S4",
             root / "shared",
@@ -142,16 +144,16 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
 def _rejects_escape(target: Path, root: Path) -> None:
     """Raise :class:`StructureError` unless *target* is safely inside *root*.
 
-    Two independent guards: (1) the fully symlink-resolved path must stay
-    within the resolved root (catches a symlink pointing *out*); (2) no
-    existing component from *target* up to *root* may itself be a symlink
-    (catches a symlinked component even if it happens to resolve inside).
+    *root* must already be ``resolve()``d (the sole caller does so once). Two
+    independent guards: (1) the fully symlink-resolved *target* must stay
+    within *root* (catches a symlink pointing *out*); (2) no existing component
+    from *target* up to *root* may itself be a symlink (catches a symlinked
+    component even if it happens to resolve inside).
     """
-    resolved_root = root.resolve()
-    if not target.resolve().is_relative_to(resolved_root):
+    if not target.resolve().is_relative_to(root):
         raise StructureError(f"refusing to create outside the vault: {target}")
     probe = target
-    while probe != resolved_root and probe.parent != probe:
+    while probe != root and probe.parent != probe:
         if probe.is_symlink():
             raise StructureError(f"refusing to follow a symlink at: {probe}")
         probe = probe.parent
