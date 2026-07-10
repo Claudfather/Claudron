@@ -118,7 +118,7 @@ obvious to the author is not obvious to the next reader.
 
 | Risk | Sev | Impact | Mitigation |
 |---|---|---|---|
-| `--fix` mutation escapes the vault | **High** | A symlinked `shared` lets `--fix` create dirs outside the repo — invisible to a "git status clean" check | P2: every created path `is_relative_to(vault.root)` (mirrors `engine.py:150`), symlink components rejected, creation-only, idempotent; a containment assertion **replaces** the git-clean test |
+| `--fix` mutation escapes the vault | **High** | A symlinked `shared` lets `--fix` create dirs outside the repo — invisible to a "git status clean" check | P2: every created path `is_relative_to(vault.root)` (mirrors `engine.py:152`), symlink components rejected, creation-only, idempotent; a containment assertion **replaces** the git-clean test |
 | VAULT-STRUCTURE.md drifts from SCHEMA.md (two SSOT docs, F3) | **Med** | Consumers follow contradictory contracts | Reciprocal cross-link + a **Claudron repo test** (`tests/`, not the per-vault lens — those docs never live in a vault) asserting both exist and reference each other. Honest limit: it checks existence, not semantic agreement |
 | Cross-repo tier-set drift | **Med** | `SHARED_TIERS` (`vault.py:48-53`) and Claudlobby `composer.py:1876-1882` hardcode the shared-tier subdirs twice; match today, nothing ties them | Named as a Claudlobby sibling issue (single-source the tier set); flagged, not silently assumed |
 | Both `_shared/` and `shared/` present drops a tree | **Med** | `_scan_vault` prefers `_shared`, the index skips `shared` — the non-preferred tree's knowledge silently vanishes | P2 `S4` warns on it (the only check that catches it) |
@@ -140,7 +140,9 @@ obvious to the author is not obvious to the next reader.
 ## Sibling-repo work this triggers (Claudlobby — filed as #509 children)
 
 Each is a first-class deliverable with an acceptance criterion, not a docs
-afterthought. Filed back to Claudfather/Claudlobby after this plan is reviewed.
+afterthought. **Filed and open** on Claudfather/Claudlobby: #560 (item 1) · #561
+(item 2) · #562 (item 3) · #563 (item 4), plus #564 (the cross-repo tier-set
+drift, from the ironclad review).
 
 1. **Overlay-path conformance** — confirm Claudlobby resolves flat
    `local/<fleet>/` against VAULT-STRUCTURE.md; adopt the reserved-name list
@@ -149,9 +151,13 @@ afterthought. Filed back to Claudfather/Claudlobby after this plan is reviewed.
 2. **Navigate-vs-query protocol** — a bot protocol doc: navigate the filesystem
    for *config*, query Claudron (`recall`/`lookup`) for *knowledge*; never
    hardcode the `_shared/` path (this is what makes F5's rename cheap).
-3. **`init` consumption / mount wiring** — `CLAUDRON_VAULT_PATH` → the hub;
-   dedup against Claudlobby's existing `claudron_vault_path` field
-   (`composer.py`) and the `[vault]` extra (pin to a released tag).
+3. **Vault consumption / mount wiring (both mechanisms)** — **(a)** the
+   **composition-time** bridge already ships: `_resolve_vault_fleet`
+   (`paths.py:104-130`, #300) reads the `.claudron` bridge file →
+   `claudron.vault.detect()`, currently **untested** — audit/test/document it,
+   don't rediscover it; **(b)** the **bot-runtime** `CLAUDRON_VAULT_PATH` → the
+   hub, dedup against the existing `claudron_vault_path` field (`composer.py`) +
+   the `[vault]` extra (pin to a released tag).
 4. **Pilot-fleet dogfood** — `git init` the deployment `local/` → `claudron
    init --adopt` in place → enable the interim query-before wedge (#528) on one
    fleet → clone to the operator's workstation. Note: `init --adopt` mass-mutates

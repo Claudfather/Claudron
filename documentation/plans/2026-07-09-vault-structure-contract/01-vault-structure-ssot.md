@@ -47,6 +47,15 @@ conforms to a stated contract.
   cheap.
 - **Claudlobby already knows `<fleet>/shared/`:** `paths.py:311`
   (`shared_docs = fleet_dir / "shared"`).
+- **Claudlobby already resolves fleets *through the vault* at composition
+  time.** `_resolve_vault_fleet` (`paths.py:104-130`, shipped 2026-05-19 via
+  #300 — ~7 weeks before this plan) reads a `.claudron` bridge file at the
+  Claudlobby root and, when the `[vault]` extra is installed
+  (`from claudron.vault import detect`, `paths.py:34-39`), calls
+  `claudron.vault.detect()` → `vault.fleets[fleet]`, falling back to plain
+  `local/<fleet>/`. This is **shipped but untested** and is a **distinct**
+  mechanism from the bot-runtime `CLAUDRON_VAULT_PATH` env var — the consumption
+  contract must name both so consumers audit it, not rediscover it.
 
 ## Implementation Plan
 
@@ -100,6 +109,14 @@ Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
    operator's own ventures**; the boundary for true separation (employer
    systems, another person's data) is a **separate vault**, not a dir inside
    this one.
+   Name the **two vault-resolution mechanisms** the contract governs, so
+   consumers audit rather than rediscover them: **(a) composition-time** —
+   Claudlobby's `_resolve_vault_fleet` reads the `.claudron` bridge file →
+   `claudron.vault.detect()` (`paths.py:104-130`, shipped #300, **untested**);
+   **(b) bot-runtime** — `CLAUDRON_VAULT_PATH` mounts the hub for a running bot.
+   The `.claudron` bridge file (Claudron's artifact, written by `plug`/`config`,
+   distinct from the in-vault `.claudron/` index dir) is part of the contract
+   and belongs in the directory section.
 5. **Promotion model (prose only).** Reproduce the E5 ladder
    (`memory/ → <fleet>/shared/ → _shared/ → pack`) as the *model*, link
    `05-lifecycle.md` for the *mechanism*, and state the **interim**: promotion
@@ -131,6 +148,9 @@ Doc-only, but falsifiable:
       new lifecycle rules.
 - [ ] SCHEMA.md ↔ VAULT-STRUCTURE.md cross-link both directions.
 - [ ] No `scope:`/`visibility:` field introduced (deferred, stated as such).
+- [ ] The consumption section names **both** vault-resolution mechanisms — the
+      composition-time `.claudron` bridge (`_resolve_vault_fleet`) and the
+      bot-runtime `CLAUDRON_VAULT_PATH`.
 
 ## What NOT To Do
 

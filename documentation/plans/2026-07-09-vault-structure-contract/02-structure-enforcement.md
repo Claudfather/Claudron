@@ -37,8 +37,9 @@ exactly the shape VAULT-STRUCTURE.md (P1) documents.
   Reuse it — a divergent shape (`severity:"warn"`, no `.line`/`.to_dict()`)
   vanishes from `--json` and throws `AttributeError` in the report path.
 - **Drift is silent only on the hand-created/adopted vector.** `_scan_vault`
-  tolerates unknown dirs as `other:` (`vault.py:163-184`); `init`/`fleet add`
-  scaffold (`vault.py:217,221`; `cli.py:726-749`). But `fleet add` **already**
+  tolerates unknown dirs (`vault.py:163-184`; the `other:` tag itself is applied
+  by the index in `knowledge.py`, not `_scan_vault`); `init`/`fleet add` scaffold
+  (`vault.py:217,221`; `cli.py:726-749`). But `fleet add` **already**
   rejects reserved names (`_RESERVED_FLEET_NAMES = SKIP_DIRS`, `cli.py:723,
   730-735`), so the enforcement gap is only the non-`fleet add` path.
 - **Reserved names are a *subset* of `SKIP_DIRS`.** The constant
@@ -98,7 +99,7 @@ exactly the shape VAULT-STRUCTURE.md (P1) documents.
 3. **Add `--fix` (opt-in, creation-only, contained).** Repairs only
    creation-safe findings (`S1` → create `<fleet>/shared/`; hub scaffolding
    stays in `init`). Hard guards: every target path must be
-   `is_relative_to(vault.root)` (mirror `resolve_target_dir`, `engine.py:150`),
+   `is_relative_to(vault.root)` (mirror `resolve_target_dir`, `engine.py:152`),
    reject symlinked path components (no escape), pin `exist_ok=True`, and be
    idempotent (re-run = no-op). Print each action; re-run the check and exit 0
    only if clean. **Never moves or deletes** — a stray dir/note is reported with
