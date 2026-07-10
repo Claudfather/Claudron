@@ -60,6 +60,7 @@ A hive mind any agent fleet can run locally and optionally federate.
 ## Requires approval
 
 - Note schema changes after v0.1 ships (highest-leverage and breaks downstream consumers)
+- Vault directory-structure contract changes (`VAULT-STRUCTURE.md`) after ratification — the directory shape is an SSOT consumers conform to
 - `pack.yaml` format changes
 - New required frontmatter fields on existing note types
 - Adding any hosted dependency to the default install path

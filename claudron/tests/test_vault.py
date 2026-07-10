@@ -71,12 +71,15 @@ class TestScan:
         assert "test-fleet" in vault.fleets
         assert vault.fleets["test-fleet"] == vault_with_fleet / "test-fleet"
 
-    def test_scan_ignores_dotdirs(self, vault_dir: Path):
-        git_dir = vault_dir / ".git"
-        git_dir.mkdir()
-        (git_dir / "fleet.yaml").write_text("fleet: {name: git}")
-        vault = detect(vault_dir)
-        assert ".git" not in vault.fleets
+    @pytest.mark.parametrize("reserved", [".git", "_packs"])
+    def test_scan_ignores_reserved_dir(self, vault_dir: Path, reserved: str):
+        """A SKIP_DIRS member carrying a fleet.yaml is never discovered as a
+        fleet (.git = infra dotdir; _packs = E6 pack container). Both short-
+        circuit at the same SKIP_DIRS gate in _scan_vault."""
+        d = vault_dir / reserved
+        d.mkdir()
+        (d / "fleet.yaml").write_text("fleet: {name: x}")
+        assert reserved not in detect(vault_dir).fleets
 
     def test_empty_vault_valid(self, empty_vault: Path):
         vault = detect(empty_vault)
@@ -102,6 +105,70 @@ class TestInit:
         assert (root / "_shared" / "planning" / "completed").is_dir()
         assert (root / "projects").is_dir()
         assert (root / ".gitignore").is_file()
+
+    def test_scaffolded_gitignore_ignores_env_at_any_depth(self, tmp_path: Path):
+        """Behavioral (the S1 fix): the scaffolded gitignore ignores a `.env`
+        at any depth — vault-root AND nested — and does NOT over-match
+        `.env.example`. `*/.env` matched only subdirs; a pattern-set check
+        can't catch a plausible pattern that silently fails to match root, so
+        assert real `git check-ignore`.
+
+        Hermetic: global/system/XDG ignore sources are neutralized so a
+        developer's own `core.excludesFile` (which `git check-ignore` honors)
+        can't mask a regressed pattern and make this false-pass. The negative
+        control re-checks the OLD `*/.env` pattern to prove the test actually
+        discriminates — it fails the root case exactly as the S1 bug did."""
+        import os
+        import shutil
+        import subprocess
+
+        if not shutil.which("git"):
+            pytest.skip("git not available")
+        from claudron.vault import _GITIGNORE_CONTENT
+
+        env = {
+            **os.environ,
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "HOME": str(tmp_path),
+            "XDG_CONFIG_HOME": str(tmp_path / "no-xdg"),
+        }
+
+        def ignored(rel: str) -> bool:
+            return (
+                subprocess.run(
+                    ["git", "-C", str(tmp_path), "check-ignore", rel], env=env
+                ).returncode
+                == 0
+            )
+
+        subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], env=env, check=True)
+
+        # The real scaffold: ignores .env at root and nested; leaves .env.example.
+        (tmp_path / ".gitignore").write_text(_GITIGNORE_CONTENT)
+        assert ignored(".env"), "root .env not ignored by scaffolded .gitignore"
+        assert ignored("fleet1/.env"), "nested .env not ignored by scaffolded .gitignore"
+        assert not ignored(".env.example"), ".env.example must not be ignored"
+
+        # Negative control: the OLD `*/.env` pattern fails the root case.
+        (tmp_path / ".gitignore").write_text("*/.env\n")
+        assert not ignored(".env"), "regression guard: */.env must NOT match root .env"
+        assert ignored("fleet1/.env"), "*/.env still matches nested .env"
+
+    def test_adopt_merges_gitignore_secrets_rules(self, tmp_path: Path):
+        """`init --adopt` on a dir that already has a .gitignore APPENDS the
+        vault secrets rules instead of silently skipping them — the adopt-path
+        gap (`_write_if_absent` skips an existing file). The pre-existing rules
+        are preserved; `.env`/`.claudron/` end up present."""
+        target = tmp_path / "adopt-existing-gitignore"
+        target.mkdir()
+        (target / "existing.md").write_text("keep me")
+        (target / ".gitignore").write_text("node_modules/\n")  # pre-existing, no .env
+        init(target, adopt=True)
+        lines = (target / ".gitignore").read_text().splitlines()
+        assert "node_modules/" in lines  # preserved
+        assert ".env" in lines  # secrets rule now present
+        assert ".claudron/" in lines
 
     def test_init_existing_nonempty_errors(self, tmp_path: Path):
         target = tmp_path / "nonempty"

@@ -35,7 +35,8 @@ def _write_if_absent(path: Path, content: str) -> None:
 # ── shared constants ─────────────────────────────────────────────────
 
 SKIP_DIRS = frozenset(
-    {"_shared", "shared", "projects", ".git", ".github", ".claudron", "__pycache__"}
+    {"_shared", "shared", "projects", "_packs", ".git", ".github", ".claudron",
+     "__pycache__"}
 )
 
 SHARED_MARKERS = ("_shared", "shared")
@@ -104,12 +105,46 @@ def iter_markdown_files(base: Path):
             yield md
 
 
+# `runtime/` stays fleet-scoped (`*/runtime/`) — it only ever lives at
+# `<fleet>/runtime/`; `.env` is any-depth (not `*/.env`) because secrets can
+# also sit at the vault root. Do not "fix" the asymmetry to match.
 _GITIGNORE_CONTENT = """\
 # claudron vault — gitignored runtime & secrets
 */runtime/
-*/.env
+.env
 .claudron/
 """
+
+
+def _ensure_gitignore(root: Path) -> None:
+    """Guarantee the vault's ignore rules are present at *root*/.gitignore.
+
+    A fresh vault gets the full template. An *adopted* vault that already has
+    a .gitignore gets only the missing rules appended — never a silent skip:
+    `_write_if_absent` would leave a pre-existing .gitignore untouched, so
+    `init --adopt` on a repo that already has one would never gain the `.env`
+    / `.claudron/` lines, defeating the secrets guarantee (VAULT-STRUCTURE.md
+    §Secrets never commit). Line-exact match errs toward re-appending an
+    already-covered rule (harmless) rather than skipping a missing one."""
+    gitignore = root / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(_GITIGNORE_CONTENT)
+        return
+    existing = gitignore.read_text()
+    have = {ln.strip() for ln in existing.splitlines()}
+    missing = [
+        ln
+        for ln in _GITIGNORE_CONTENT.splitlines()
+        if ln.strip() and not ln.startswith("#") and ln not in have
+    ]
+    if missing:
+        sep = "" if existing.endswith("\n") else "\n"
+        gitignore.write_text(
+            f"{existing}{sep}\n# claudron vault — added by `init --adopt`\n"
+            + "\n".join(missing)
+            + "\n"
+        )
+
 
 # ── data model ────────────────────────────────────────────────────────
 
@@ -219,7 +254,7 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
     projects.mkdir(parents=True, exist_ok=True)
     _write_if_absent(projects / ".gitkeep", "")
     _write_if_absent(root / "_shared" / "CONVENTIONS.md", CONVENTIONS_TEMPLATE)
-    _write_if_absent(root / ".gitignore", _GITIGNORE_CONTENT)
+    _ensure_gitignore(root)
 
     if adopt:
         backfill_updated(root)
