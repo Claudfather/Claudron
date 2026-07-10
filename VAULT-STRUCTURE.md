@@ -1,0 +1,168 @@
+# Claudron Vault Structure — v1
+
+**Status: draft · the vault's directory, tenancy, and consumption contract — the
+directory sibling of `SCHEMA.md` (P1 of Claudfather/Claudron#33).**
+
+A **vault** is one git repository holding a single tenant's knowledge — the
+operator's own ventures, personal and fleet alike. This document is normative for
+**tenancy** (who owns which directory), **scope** (what belongs in which tier),
+**consumption** (how agents reach it), and **promotion** (how knowledge rises),
+and draws the full tenant tree. `SCHEMA.md` is normative for note frontmatter and
+the note-filing taxonomy *within* each tier, and draws the knowledge tiers from
+that side.
+
+**Pending reconciliation.** `SCHEMA.md`'s normative-for line still names "the
+vault directory taxonomy"; scoping it to the note-filing layout — so this
+document becomes the sole directory-shape SSOT — is a tracked follow-up that
+re-ratifies `SCHEMA.md` (its "Requires approval" clause, `PROJECT_MISSION.md`).
+The two trees' note-tier structure is now parity-guarded (`TestDocParity` in
+`claudron/tests/test_schema.py`, tied to `schema.py`'s `TYPE_DIRS`); the
+remaining reconciliation is the SSOT-ownership item above. Changes to this
+contract after ratification likewise require approval.
+
+## Start here
+
+If you are a human opening a vault for the first time:
+
+- **Vault-wide knowledge** — anything true across your whole operation — lives
+  in `_shared/`. That is the hub; start there.
+- **Personal per-repo notes** about a codebase you work on live in
+  `projects/<repo>/`.
+- **A fleet's own knowledge** lives under that fleet's `<fleet>/shared/`.
+- To **drop a note by hand**, add a markdown file with frontmatter (see
+  `SCHEMA.md`) to the right tier's `knowledge/`, `decisions/`, `runbooks/`, or
+  `planning/` subdir — or let a bot file it with `claudron capture`.
+
+## Directory contract
+
+```
+<vault>/                       # ONE git repo per tenant. On a Claudlobby deployment
+                               #   the vault IS the gitignored local/ dir; a clone of
+                               #   the same repo lives on the operator's workstation.
+  _shared/                     # vault-wide knowledge hub. "shared/" is also accepted.
+    CONVENTIONS.md             #   always-injected standing facts (<=120 tokens — SCHEMA.md)
+    knowledge/                 #   the four note types (taxonomy owned by SCHEMA.md)
+    decisions/
+    runbooks/
+    planning/
+      active/  completed/      #   human filing split
+  projects/<repo>/             # the operator's personal, per-repo notes (roadmap D4)
+  <fleet>/                     # a fleet — a flat, root-level dir marked by fleet.yaml
+    fleet.yaml                 #   fleet config. Claudlobby writes it; Claudron never parses it.
+    .env  .gitignore           #   fleet secrets + fleet-local ignores (claudron fleet add writes both; never committed)
+    library/  voices/          #   Claudlobby overlay content
+    shared/                    #   this fleet's knowledge — the same four note types as _shared/
+      knowledge/  decisions/  runbooks/  planning/{active,completed}/
+    runtime/                   #   generated bot dirs — gitignored within the vault
+  _packs/<name>/               # subscribed packs, read-only (E6)
+  .claudron/                   # Claudron's derived index — gitignored, disposable, never hand-edited
+  .gitignore                   # vault-root ignores: */runtime/, */.env, .claudron/ (claudron init writes this)
+```
+
+The tree is normative. Beyond what its comments state:
+
+- **One git repository per tenant vault** — self-contained. A second tenant (an
+  employer's systems, another person's data) is a **separate vault**, never a
+  directory inside this one.
+- **`_shared/` (or legacy `shared/`) is the vault marker** — `detect()` keys on
+  its presence at the root.
+- **Fleets are discovered structurally** — `_scan_vault` treats any root-level
+  dir containing a `fleet.yaml` as a fleet. There is no `fleets/` nesting layer.
+- **Bridge file.** A `.claudron` *file* (distinct from the `.claudron/` index
+  *dir*) may sit at a consumer's root: `claudron plug` writes it there (and
+  `claudron config` reads it) to point the consumer's checkout at the vault — a
+  resolution artifact, not vault structure (see Consumption).
+- **Secrets are per-fleet.** Each fleet's `.env` lives at `<fleet>/.env`, ignored
+  by both the vault-root `.gitignore` (`*/.env`) and the fleet's own `.gitignore`.
+  The vault root has no scaffolded `.env` — `*/.env` would not match one — so do
+  not place secrets there; a vault-wide per-machine `.env` needs a root-anchored
+  ignore added to `init`'s gitignore first.
+
+This tree is the full tenant vault; `SCHEMA.md` §Vault directory taxonomy draws
+the same knowledge tiers from the note-filing side. The Claudlobby-injected
+config (`fleet.yaml`, `library/`, `voices/`, `runtime/`) is this document's.
+
+## Reserved names
+
+The top-level names **`_shared`, `shared`, and `projects`** are vault-internal:
+a fleet may not take any of them (a fleet named `projects` would collide with the
+personal tier). These are the user-facing subset of `SKIP_DIRS`
+(`claudron/vault.py`) — the names a human could collide with; `SKIP_DIRS` also
+reserves infrastructure names (`.git` and friends). Read `SKIP_DIRS` for the full
+set: it is the single source, and enforcement (P2) derives the reserved subset
+from it — never a hand-copied second list.
+
+The tree's `_packs/` container (E6) is **not** yet reserved — it is absent from
+`SKIP_DIRS`, so until packs land a root dir named `_packs` carrying a `fleet.yaml`
+would be discovered as a fleet. `SKIP_DIRS` needs `_packs` added before E6.
+
+## Content contract — the knowledge tiers
+
+What *kind* of knowledge belongs where:
+
+| Tier | Where | Holds |
+|---|---|---|
+| bot memory | a bot's private `memory/` | a single bot's private, unshared working state |
+| project | `projects/<repo>/` | the operator's personal, per-repo notes (ranked highest in a query) |
+| fleet | `<fleet>/shared/` | knowledge scoped to one fleet's mission |
+| vault-wide | `_shared/` | knowledge true across the whole tenant (cross-fleet) |
+
+- **Scope is chosen by location** — the directory you write to *is* the
+  visibility declaration; there is deliberately no `scope:` / `visibility:`
+  frontmatter field in v1.
+- **The note taxonomy is identical across tiers** —
+  `knowledge/decisions/runbooks/planning` mean the same thing everywhere
+  (`SCHEMA.md`).
+- **Knowledge rises, never sideways** — a finding is promoted up when it earns
+  broader visibility (see Promotion); it is never copied between fleets.
+
+## Consumption contract
+
+- **Navigate for config, query for knowledge.** An agent reads *configuration*
+  (its `fleet.yaml`, its overlay files) by walking the filesystem. It reaches
+  *knowledge* by asking Claudron — `claudron recall` / `lookup` — never by opening
+  tier files by hand.
+- **Never hardcode the `_shared/` path.** Consumers reach the hub through
+  Claudron's resolution (`Vault.shared`), not a literal path — which is what keeps
+  the hub's name cheap to change.
+- **Merge + precedence.** A query returns the union of `_shared/`, the operator's
+  `projects/` notes, and fleet notes, ranked by tier priority (`tier_priority`,
+  function-local in `lookup()`, `claudron/knowledge.py`) — the top three
+  `project > fleet > shared` of the precedence `SCHEMA.md` §Wikilinks applies to
+  link ambiguity.
+- **Single-tenant pooling is intended.** Because one vault = one tenant, a query
+  pools across fleets and can surface the operator's personal `projects/` notes —
+  recall is fleet-blind today. That is the desired "one hub" behavior, not a leak;
+  true separation is a separate vault (see the directory contract). Fleet-scoped
+  recall, should a fleet ever need isolation, is specced conditionally in P3.
+
+Two mechanisms resolve a vault; the contract governs both:
+
+- **(a) Composition-time** — Claudlobby's `_resolve_vault_fleet` reads the
+  `.claudron` bridge file at its root and, when the `[vault]` extra is installed,
+  calls `claudron.vault.detect()` → `vault.fleets[fleet]`; its caller then falls
+  back to a plain `local/<fleet>/` overlay when no vault resolves.
+- **(b) Bot-runtime** — the composed `CLAUDRON_VAULT_PATH` env var (emitted by
+  Claudlobby's `composer.py`) points a running bot's Claudron CLI/MCP at the vault.
+
+## Promotion
+
+Knowledge rises on the ladder E5 designs (`05-lifecycle.md`):
+
+```
+bot memory/  ->  <fleet>/shared/  ->  _shared/  ->  pack (E6)
+```
+
+Reproduced here as the *model*; `05-lifecycle.md` owns the *mechanism* and the
+ladder's canonical form. **Interim:** until E5's `claudron promote` ships,
+promotion is manual — `claudron capture --fleet <name>` to file at a tier, or
+`git mv` to move a note up.
+
+## Related
+
+- **`SCHEMA.md`** — note frontmatter, types, status/maturity, and the note-filing
+  taxonomy within each tier.
+- **`documentation/plans/2026-07-07-claudron-roadmap/05-lifecycle.md`** — the E5
+  promotion mechanism.
+- **Claudfather/Claudlobby #509** — the consumption epic: how Claudlobby conforms
+  to this contract.

@@ -169,6 +169,9 @@ deliberately reversing issue #4.
 (E2), so its body is budgeted at **≤120 tokens** (W105 above 160 — 33%
 grace). Everything else earns injection through relevance.
 
+**Tenancy, scope, consumption, and promotion** are specified in
+`VAULT-STRUCTURE.md`, this section's directory sibling.
+
 ## Validation
 
 `claudron validate [PATH]` — no arg: detected vault; directory: that
