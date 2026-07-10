@@ -78,6 +78,15 @@ class TestScan:
         vault = detect(vault_dir)
         assert ".git" not in vault.fleets
 
+    def test_scan_ignores_packs_container(self, vault_dir: Path):
+        """_packs/ is a system container (E6), not a fleet — even carrying a
+        fleet.yaml it must not be discovered as one (SKIP_DIRS)."""
+        packs = vault_dir / "_packs"
+        packs.mkdir()
+        (packs / "fleet.yaml").write_text("fleet: {name: packs}")
+        vault = detect(vault_dir)
+        assert "_packs" not in vault.fleets
+
     def test_empty_vault_valid(self, empty_vault: Path):
         vault = detect(empty_vault)
         assert vault is not None
@@ -102,6 +111,20 @@ class TestInit:
         assert (root / "_shared" / "planning" / "completed").is_dir()
         assert (root / "projects").is_dir()
         assert (root / ".gitignore").is_file()
+
+    def test_root_env_ignored_by_scaffolded_gitignore(self):
+        """`*/.env` cannot match a vault-root .env (the S1 fix); the scaffolded
+        gitignore must carry a pattern that ignores a root-level .env."""
+        from claudron.vault import _GITIGNORE_CONTENT
+
+        patterns = {
+            line.strip()
+            for line in _GITIGNORE_CONTENT.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        assert {".env", "/.env", "**/.env"} & patterns, (
+            f"no root-.env pattern in scaffolded gitignore: {sorted(patterns)}"
+        )
 
     def test_init_existing_nonempty_errors(self, tmp_path: Path):
         target = tmp_path / "nonempty"

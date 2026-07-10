@@ -1,7 +1,7 @@
 # Claudron Vault Structure — v1
 
-**Status: draft · the vault's directory, tenancy, and consumption contract — the
-directory sibling of `SCHEMA.md` (P1 of Claudfather/Claudron#33).**
+**Status: ratified · the vault's directory, tenancy, and consumption contract —
+the directory sibling of `SCHEMA.md` (P1 of Claudfather/Claudron#33).**
 
 A **vault** is one git repository holding a single tenant's knowledge — the
 operator's own ventures, personal and fleet alike. This document is normative for
@@ -11,14 +11,12 @@ and draws the full tenant tree. `SCHEMA.md` is normative for note frontmatter an
 the note-filing taxonomy *within* each tier, and draws the knowledge tiers from
 that side.
 
-**Pending reconciliation.** `SCHEMA.md`'s normative-for line still names "the
-vault directory taxonomy"; scoping it to the note-filing layout — so this
-document becomes the sole directory-shape SSOT — is a tracked follow-up that
-re-ratifies `SCHEMA.md` (its "Requires approval" clause, `PROJECT_MISSION.md`).
-The two trees' note-tier structure is now parity-guarded (`TestDocParity` in
-`claudron/tests/test_schema.py`, tied to `schema.py`'s `TYPE_DIRS`); the
-remaining reconciliation is the SSOT-ownership item above. Changes to this
-contract after ratification likewise require approval.
+**Authority.** This document is the sole SSOT for the vault's directory shape
+and tenancy. `SCHEMA.md` scopes its own normative claim to the per-tier
+note-filing layout and points here for the shape; the two trees' note-tier
+structure is parity-guarded (`TestDocParity` in `claudron/tests/test_schema.py`,
+tied to `schema.py`'s `TYPE_DIRS`). Changes to this contract after ratification
+require approval (`PROJECT_MISSION.md`, "Requires approval").
 
 ## Start here
 
@@ -56,7 +54,7 @@ If you are a human opening a vault for the first time:
     runtime/                   #   generated bot dirs — gitignored within the vault
   _packs/<name>/               # subscribed packs, read-only (E6)
   .claudron/                   # Claudron's derived index — gitignored, disposable, never hand-edited
-  .gitignore                   # vault-root ignores: */runtime/, */.env, .claudron/ (claudron init writes this)
+  .gitignore                   # vault-root ignores: */runtime/, .env, .claudron/ (claudron init writes this)
 ```
 
 The tree is normative. Beyond what its comments state:
@@ -72,11 +70,11 @@ The tree is normative. Beyond what its comments state:
   *dir*) may sit at a consumer's root: `claudron plug` writes it there (and
   `claudron config` reads it) to point the consumer's checkout at the vault — a
   resolution artifact, not vault structure (see Consumption).
-- **Secrets are per-fleet.** Each fleet's `.env` lives at `<fleet>/.env`, ignored
-  by both the vault-root `.gitignore` (`*/.env`) and the fleet's own `.gitignore`.
-  The vault root has no scaffolded `.env` — `*/.env` would not match one — so do
-  not place secrets there; a vault-wide per-machine `.env` needs a root-anchored
-  ignore added to `init`'s gitignore first.
+- **Secrets never commit.** The vault-root `.gitignore`'s `.env` line ignores a
+  `.env` at any depth — both each fleet's `<fleet>/.env` (also covered by the
+  fleet's own `.gitignore`) and an optional vault-root `.env` for vault-wide
+  per-machine secrets. `init` and `fleet add` scaffold the per-fleet ones; a
+  root `.env` is the operator's to create.
 
 This tree is the full tenant vault; `SCHEMA.md` §Vault directory taxonomy draws
 the same knowledge tiers from the note-filing side. The Claudlobby-injected
@@ -84,17 +82,14 @@ config (`fleet.yaml`, `library/`, `voices/`, `runtime/`) is this document's.
 
 ## Reserved names
 
-The top-level names **`_shared`, `shared`, and `projects`** are vault-internal:
-a fleet may not take any of them (a fleet named `projects` would collide with the
-personal tier). These are the user-facing subset of `SKIP_DIRS`
+The top-level names **`_shared`, `shared`, `projects`, and `_packs`** are
+vault-internal: a fleet may not take any of them (a fleet named `projects` would
+collide with the personal tier; `_packs` is the E6 pack container, reserved
+ahead of packs landing). These are the user-facing subset of `SKIP_DIRS`
 (`claudron/vault.py`) — the names a human could collide with; `SKIP_DIRS` also
 reserves infrastructure names (`.git` and friends). Read `SKIP_DIRS` for the full
 set: it is the single source, and enforcement (P2) derives the reserved subset
 from it — never a hand-copied second list.
-
-The tree's `_packs/` container (E6) is **not** yet reserved — it is absent from
-`SKIP_DIRS`, so until packs land a root dir named `_packs` carrying a `fleet.yaml`
-would be discovered as a fleet. `SKIP_DIRS` needs `_packs` added before E6.
 
 ## Content contract — the knowledge tiers
 

@@ -8,7 +8,8 @@ approval"). Sibling schema changes must PR Claudron first.
 
 A **note** is a markdown file with YAML frontmatter in a Claudron vault.
 This document is normative for: note types, frontmatter fields, status and
-maturity vocabularies, wikilink resolution, the vault directory taxonomy,
+maturity vocabularies, wikilink resolution, the per-tier note-filing layout
+(the vault's directory *shape* and tenancy are `VAULT-STRUCTURE.md`'s),
 validation error codes, and the `pack.yaml` v0 reservation. The tables in
 §Status vocabulary and §Error catalog are **machine-checked** against
 `claudron/schema.py` by a doc-parity test — edits here and there move
@@ -141,6 +142,10 @@ reported (`claudron links`, E4), never errored. Literal `[[` inside code
 fences or inline code is not a wikilink.
 
 ## Vault directory taxonomy
+
+`VAULT-STRUCTURE.md` is the SSOT for the vault's directory *shape* and tenancy;
+this section draws only the note-filing view — where each note *type* lives
+within that shape.
 
 ```
 <vault>/

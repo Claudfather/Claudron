@@ -35,7 +35,8 @@ def _write_if_absent(path: Path, content: str) -> None:
 # ── shared constants ─────────────────────────────────────────────────
 
 SKIP_DIRS = frozenset(
-    {"_shared", "shared", "projects", ".git", ".github", ".claudron", "__pycache__"}
+    {"_shared", "shared", "projects", "_packs", ".git", ".github", ".claudron",
+     "__pycache__"}
 )
 
 SHARED_MARKERS = ("_shared", "shared")
@@ -107,7 +108,7 @@ def iter_markdown_files(base: Path):
 _GITIGNORE_CONTENT = """\
 # claudron vault — gitignored runtime & secrets
 */runtime/
-*/.env
+.env
 .claudron/
 """
 
