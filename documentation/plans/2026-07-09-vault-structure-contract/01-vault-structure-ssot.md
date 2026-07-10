@@ -53,9 +53,11 @@ conforms to a stated contract.
   Claudlobby root and, when the `[vault]` extra is installed
   (`from claudron.vault import detect`, `paths.py:34-39`), calls
   `claudron.vault.detect()` → `vault.fleets[fleet]`, falling back to plain
-  `local/<fleet>/`. This is **shipped but untested** and is a **distinct**
-  mechanism from the bot-runtime `CLAUDRON_VAULT_PATH` env var — the consumption
-  contract must name both so consumers audit it, not rediscover it.
+  `local/<fleet>/`. It is shipped; the `.claudron`-fallback branch + `vault_root`
+  are covered by `test_paths_integration.py`, but the **claudron-installed
+  branch** (`paths.py:120-124`) is untested. It is a **distinct** mechanism from
+  the bot-runtime `CLAUDRON_VAULT_PATH` env var — the consumption contract must
+  name both so consumers audit it, not rediscover it.
 
 ## Implementation Plan
 
@@ -112,8 +114,10 @@ Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
    Name the **two vault-resolution mechanisms** the contract governs, so
    consumers audit rather than rediscover them: **(a) composition-time** —
    Claudlobby's `_resolve_vault_fleet` reads the `.claudron` bridge file →
-   `claudron.vault.detect()` (`paths.py:104-130`, shipped #300, **untested**);
-   **(b) bot-runtime** — `CLAUDRON_VAULT_PATH` mounts the hub for a running bot.
+   `claudron.vault.detect()` (`paths.py:104-130`, shipped #300; the
+   claudron-installed branch `paths.py:120-124` is untested);
+   **(b) bot-runtime** — `CLAUDRON_VAULT_PATH` mounts the hub for a running bot
+   (emission `composer.py:502-508`, also untested).
    The `.claudron` bridge file (Claudron's artifact, written by `plug`/`config`,
    distinct from the in-vault `.claudron/` index dir) is part of the contract
    and belongs in the directory section.

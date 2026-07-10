@@ -154,10 +154,14 @@ drift, from the ironclad review).
 3. **Vault consumption / mount wiring (both mechanisms)** — **(a)** the
    **composition-time** bridge already ships: `_resolve_vault_fleet`
    (`paths.py:104-130`, #300) reads the `.claudron` bridge file →
-   `claudron.vault.detect()`, currently **untested** — audit/test/document it,
-   don't rediscover it; **(b)** the **bot-runtime** `CLAUDRON_VAULT_PATH` → the
-   hub, dedup against the existing `claudron_vault_path` field (`composer.py`) +
-   the `[vault]` extra (pin to a released tag).
+   `claudron.vault.detect()`. Its `.claudron`-fallback branch + `vault_root` are
+   covered by `test_paths_integration.py`; only the **claudron-installed branch**
+   (`paths.py:120-124`) is untested — add a stubbed-`detect` test for that branch,
+   don't re-cover the fallback or rediscover the mechanism; **(b)** the
+   **bot-runtime** `CLAUDRON_VAULT_PATH` → the hub (emission at
+   `composer.py:502-508` is **untested**), dedup against the `claudron_vault_path`
+   field (`config.py:364`); the `[vault]` extra is **already pinned** to `@v0.2.0`
+   (`pyproject.toml:21`) — keep it pinned, bump deliberately.
 4. **Pilot-fleet dogfood** — `git init` the deployment `local/` → `claudron
    init --adopt` in place → enable the interim query-before wedge (#528) on one
    fleet → clone to the operator's workstation. Note: `init --adopt` mass-mutates
