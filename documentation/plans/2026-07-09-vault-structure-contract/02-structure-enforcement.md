@@ -43,7 +43,7 @@ exactly the shape VAULT-STRUCTURE.md (P1) documents.
   rejects reserved names (`_RESERVED_FLEET_NAMES = SKIP_DIRS`, `cli.py:723,
   730-735`), so the enforcement gap is only the non-`fleet add` path.
 - **Reserved names are a *subset* of `SKIP_DIRS`.** The constant
-  (`vault.py:37-41`) holds 7 entries incl. infra (`.git`, `__pycache__`); the
+  (`vault.py:37-39`) holds 7 entries incl. infra (`.git`, `__pycache__`); the
   *user-facing* reserved names are `_shared`/`shared`/`projects`. Derive the
   subset; never re-list.
 - **Hub name hardcoded, but consumers use `Vault.shared`** — so the check keys

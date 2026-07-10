@@ -98,7 +98,7 @@ obvious to the author is not obvious to the next reader.
 | **F1** | Vault residence vs Claudlobby's `local/` | in-place (`local/` **is** the vault) · separate vault + `migrate` | **In-place** | Converges Claudlobby's vault-resolution with its overlay path — both read `local/<fleet>/fleet.yaml` (`paths.py:416-427`). `migrate` stays for importing a legacy install into a fresh vault. |
 | **F2** | Structure enforcement posture | audit-only + `--fix` opt-in · audit + auto-repair | **Audit-only; `--fix` opt-in** | Detect and mutate are separate verbs (mirrors Claudlobby `diff`→`promote`); a check that rewrites the operator's git repo is surprising. |
 | **F3** | Where the directory contract is documented | extend SCHEMA.md · new VAULT-STRUCTURE.md | **New VAULT-STRUCTURE.md** | Keeps note-schema and directory-layout as distinct concerns; two SSOT docs, cross-linked, with a drift check. |
-| **F4** | Fleet layout | flat `<fleet>/` at root · nested `fleets/<fleet>/` | **Flat** | Both `paths.py:422` **and** Claudron's `_scan_vault` (`vault.py:178-183`) already discover fleets as root-level `fleet.yaml` dirs; nested would break both plus ~14 un-centralized Claudlobby bash sites. |
+| **F4** | Fleet layout | flat `<fleet>/` at root · nested `fleets/<fleet>/` | **Flat** | Claudlobby already lays fleets flat under `local/<fleet>/` (`paths.py:422`) and Claudron's `_scan_vault` already discovers fleets as root-level `fleet.yaml` dirs (`vault.py:178-183`) — the two agree on flat today; nested would break both plus ~14 un-centralized Claudlobby bash sites. |
 | **F5** | Hub name | pick a human name now · keep `_shared/`, defer | **Keep `_shared/`, defer** | Rename cost is flat (no config field either way — ~10 hardcoded sites, insulated by the `vault.shared` abstraction), so deferring costs nothing extra; the name stays cheap to change **because** bots consume by query, not hardcoded path. `knowledge/` is out — collides with the reserved per-tier subdir. |
 | **F6** | Fleet-scoped consumption | build isolation now · document + conditional | **Document; build only if dogfood needs it** | Tier-A cross-fleet pooling is the operator's *accepted* "one hub" behavior, not a bug; the real gap (fleet-blind `recall`) may not block a solo dogfood. |
 | **F7** | Promotion (memory→fleet→vault-wide) | author here · align to E5 | **Align to E5** | The full ladder is already designed (`05-lifecycle.md:61-73`); interim promotion is manual (`capture --fleet` / `git mv`), the wedge habit. Build no promotion code here. |
@@ -112,7 +112,10 @@ obvious to the author is not obvious to the next reader.
   mechanism. P1's content contract *documents* E5's tier ladder; it implements
   none of it.
 - **Claudfather/Claudlobby #509** (consumption epic): the conforming-consumer
-  side. The placeholder issues below are its P1/P2 children.
+  side — plan doc `documentation/plans/2026-07-07-claudron-consumption.md` in that
+  repo. The placeholder issues below are its P1/P2 children. Note: that plan also
+  numbers its forks F1–F7, but they cover *consumption* decisions (pin, install,
+  graduation…), distinct from this plan's *structure* forks above.
 
 ## Risks
 
@@ -158,9 +161,10 @@ drift, from the ironclad review).
    covered by `test_paths_integration.py`; only the **claudron-installed branch**
    (`paths.py:120-124`) is untested — add a stubbed-`detect` test for that branch,
    don't re-cover the fallback or rediscover the mechanism; **(b)** the
-   **bot-runtime** `CLAUDRON_VAULT_PATH` → the hub (emission at
-   `composer.py:502-508` is **untested**), dedup against the `claudron_vault_path`
-   field (`config.py:364`); the `[vault]` extra is **already pinned** to `@v0.2.0`
+   **bot-runtime** `CLAUDRON_VAULT_PATH` → the hub (the bot.conf export emission
+   at `composer.py:502-508` has no direct test — #532's `provided_by` tests
+   exercise the adjacent collect/scaffold path, not the emission), dedup against
+   the `claudron_vault_path` field (`config.py:364`); the `[vault]` extra is **already pinned** to `@v0.2.0`
    (`pyproject.toml:21`) — keep it pinned, bump deliberately.
 4. **Pilot-fleet dogfood** — `git init` the deployment `local/` → `claudron
    init --adopt` in place → enable the interim query-before wedge (#528) on one

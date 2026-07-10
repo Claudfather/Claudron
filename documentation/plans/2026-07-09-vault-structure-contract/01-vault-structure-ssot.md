@@ -26,7 +26,7 @@ conforms to a stated contract.
 - **The shape exists but is undocumented.** `init` scaffolds `_shared/` +
   `CONVENTIONS.md` (`vault.py:217,221`); `_scan_vault` discovers fleets as
   root-level dirs containing `fleet.yaml` (`vault.py:178-183`); `SKIP_DIRS`
-  (`vault.py:37-41`, 7 entries incl. infra like `.git`/`__pycache__`) reserves
+  (`vault.py:37-39`, 7 entries incl. infra like `.git`/`__pycache__`) reserves
   top-level names — the *user-facing* subset being `_shared`/`shared`/`projects`;
   the vault-wide hub is a first-class field, `Vault.shared` (`vault.py:117-124`).
   No doc states any of this.
@@ -85,7 +85,7 @@ Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
    with a `fleet.yaml`; `runtime/` and `.env` are gitignored within the vault.
 2. **Reserved names.** State that the user-facing reserved top-level names —
    `_shared`, `shared`, `projects` — are vault-internal and a fleet may not take
-   them. These are the **subset** of `SKIP_DIRS` (`vault.py:37-41`) a human would
+   them. These are the **subset** of `SKIP_DIRS` (`vault.py:37-39`) a human would
    collide with; the constant also holds infra names (`.git`, `__pycache__`)
    that never belong in a user-facing message. **Point at `SKIP_DIRS` as the
    source** — P2 derives the subset from it, no second list.
@@ -117,7 +117,8 @@ Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
    `claudron.vault.detect()` (`paths.py:104-130`, shipped #300; the
    claudron-installed branch `paths.py:120-124` is untested);
    **(b) bot-runtime** — `CLAUDRON_VAULT_PATH` mounts the hub for a running bot
-   (emission `composer.py:502-508`, also untested).
+   (emission `composer.py:502-508`; the bot.conf export line has no direct test —
+   #532's `provided_by` tests cover the adjacent collect/scaffold path).
    The `.claudron` bridge file (Claudron's artifact, written by `plug`/`config`,
    distinct from the in-vault `.claudron/` index dir) is part of the contract
    and belongs in the directory section.
@@ -147,7 +148,7 @@ Doc-only, but falsifiable:
 - [ ] `documentation/VAULT-STRUCTURE.md` exists with all six sections, opening
       with a human "start here" on-ramp.
 - [ ] User-facing reserved names are the subset `{_shared, shared, projects}`
-      derived from `SKIP_DIRS` (`vault.py:37-41`); infra names excluded.
+      derived from `SKIP_DIRS` (`vault.py:37-39`); infra names excluded.
 - [ ] Promotion section links E5 and states "manual interim"; contains **no**
       new lifecycle rules.
 - [ ] SCHEMA.md ↔ VAULT-STRUCTURE.md cross-link both directions.
