@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- `claudron validate` gained a **directory-structure lens** beside its
+  frontmatter lens: it audits a vault's shape against `VAULT-STRUCTURE.md`
+  (codes `S1`–`S4`) through the existing `error`/`warning` model, so structure
+  warnings honor `--strict` and appear in `--json` exactly like frontmatter
+  findings. (P2, #33)
+- `claudron validate --fix` — opt-in, **creation-only** structure repair
+  (creates a fleet's missing `shared/`), contained inside the vault root
+  (`is_relative_to` + symlink-escape rejection); never moves or deletes, and is
+  idempotent. (P2, #33)
+- `claudron/structure.py` — the pure `check_structure(vault)` audit + the
+  guarded `fix_structure`; user-facing reserved names derive from
+  `vault.SKIP_DIRS` (no second list), and the SCHEMA↔VAULT-STRUCTURE
+  cross-reference is guarded by `TestDocParity`.
+
+### Changed
+- `claudron init` prints a `next: claudron validate` pointer; a fresh `init`
+  then `validate` is a clean no-op.
+
 ## 0.2.0 — 2026-07-09
 
 **The SD card release** (roadmap E1+E2, EPIC #14): the schema contract and

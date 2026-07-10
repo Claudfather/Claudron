@@ -76,9 +76,16 @@ One shape, every command:
 ## Command-specific contracts
 
 - `validate [PATH]` — no arg: detected vault; directory: that subtree; file:
-  that single note. `--strict` applies the authoring tier (SCHEMA.md). Never
-  mutates. Tip for humans: `validate --strict` previews exactly what the
-  engine/bot write paths will accept.
+  that single note. Lints note frontmatter (SCHEMA.md) and, when the target is
+  a whole vault, its directory structure (VAULT-STRUCTURE.md — codes `S1`–`S4`,
+  same `error`/`warning` model, so `--strict` gates structure warnings too).
+  `--strict` applies the authoring tier. The default path never mutates; the
+  opt-in **`--fix`** performs creation-only structure repairs (e.g. a fleet's
+  missing `shared/`) strictly inside the vault root — it never moves, deletes,
+  or follows a symlink out. Tip for humans: `validate --strict` previews
+  exactly what the engine/bot write paths will accept. The `--json` envelope
+  carries structure findings but no per-finding fixability flag; a machine
+  consumer derives it from the code (`S1` is the fixable structure code).
 - `new <type> "<title>"` — output always passes `validate --strict`. `owner`
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision
   errors (never silently overwrites); `--force` overrides. `--edit` without
