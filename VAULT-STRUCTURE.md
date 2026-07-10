@@ -15,9 +15,10 @@ that side.
 vault directory taxonomy"; scoping it to the note-filing layout — so this
 document becomes the sole directory-shape SSOT — is a tracked follow-up that
 re-ratifies `SCHEMA.md` (its "Requires approval" clause, `PROJECT_MISSION.md`).
-No test guards the two trees today either — the `schema.py` doc-parity test
-covers only the status/error tables — so a tree-parity check is P2's to add.
-Changes to this contract after ratification likewise require approval.
+The two trees' note-tier structure is now parity-guarded (`TestDocParity` in
+`claudron/tests/test_schema.py`, tied to `schema.py`'s `TYPE_DIRS`); the
+remaining reconciliation is the SSOT-ownership item above. Changes to this
+contract after ratification likewise require approval.
 
 ## Start here
 

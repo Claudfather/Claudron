@@ -14,6 +14,7 @@ from claudron.schema import (
     LOOKUP_EXCLUDED,
     STALENESS_DONE,
     STATUS_VOCAB,
+    TYPE_DIRS,
     Finding,
     parse_note,
     validate_note,
@@ -104,6 +105,13 @@ def _values(cell: str) -> tuple[str, ...]:
     return tuple(re.findall(r"`([^`]+)`", cell))
 
 
+def _tree_block(doc: str, header: str) -> str:
+    """The first fenced code block under a '## <header>' line in *doc*."""
+    text = (REPO_ROOT / doc).read_text()
+    after = text.split(f"## {header}", 1)[1]
+    return after.split("```", 2)[1]
+
+
 class TestDocParity:
     """SCHEMA.md's normative tables and schema.py cannot drift (devex
     major: the SSOT epic must not re-create doc-vs-code drift internally).
@@ -139,6 +147,21 @@ class TestDocParity:
         assert "ratified" in STALENESS_DONE
         assert "ratified" not in LOOKUP_EXCLUDED
         assert LOOKUP_EXCLUDED < STALENESS_DONE
+
+    def test_vault_structure_tree_matches_schema_tiers(self):
+        """SCHEMA.md's taxonomy tree and VAULT-STRUCTURE.md's directory tree
+        cannot silently diverge: both must draw every note-tier dir schema.py's
+        TYPE_DIRS defines. Closes the gap VAULT-STRUCTURE.md discloses (the two
+        trees were previously unguarded — only the tables above were)."""
+        tiers = {d.split("/", 1)[0] for d in TYPE_DIRS.values()}
+        schema_tree = _tree_block("SCHEMA.md", "Vault directory taxonomy")
+        vault_tree = _tree_block("VAULT-STRUCTURE.md", "Directory contract")
+        for tier in tiers:
+            # whole dir entry, not a loose substring: `x_runbooks/` must not
+            # satisfy `runbooks/` (a lookbehind rejects a leading name char).
+            pat = re.compile(rf"(?<![\w-]){re.escape(tier)}/")
+            assert pat.search(schema_tree), f"{tier}/ absent from SCHEMA.md tree"
+            assert pat.search(vault_tree), f"{tier}/ absent from VAULT-STRUCTURE.md tree"
 
 
 class TestConventionsTemplate:
