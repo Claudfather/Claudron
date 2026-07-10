@@ -71,21 +71,15 @@ class TestScan:
         assert "test-fleet" in vault.fleets
         assert vault.fleets["test-fleet"] == vault_with_fleet / "test-fleet"
 
-    def test_scan_ignores_dotdirs(self, vault_dir: Path):
-        git_dir = vault_dir / ".git"
-        git_dir.mkdir()
-        (git_dir / "fleet.yaml").write_text("fleet: {name: git}")
-        vault = detect(vault_dir)
-        assert ".git" not in vault.fleets
-
-    def test_scan_ignores_packs_container(self, vault_dir: Path):
-        """_packs/ is a system container (E6), not a fleet — even carrying a
-        fleet.yaml it must not be discovered as one (SKIP_DIRS)."""
-        packs = vault_dir / "_packs"
-        packs.mkdir()
-        (packs / "fleet.yaml").write_text("fleet: {name: packs}")
-        vault = detect(vault_dir)
-        assert "_packs" not in vault.fleets
+    @pytest.mark.parametrize("reserved", [".git", "_packs"])
+    def test_scan_ignores_reserved_dir(self, vault_dir: Path, reserved: str):
+        """A SKIP_DIRS member carrying a fleet.yaml is never discovered as a
+        fleet (.git = infra dotdir; _packs = E6 pack container). Both short-
+        circuit at the same SKIP_DIRS gate in _scan_vault."""
+        d = vault_dir / reserved
+        d.mkdir()
+        (d / "fleet.yaml").write_text("fleet: {name: x}")
+        assert reserved not in detect(vault_dir).fleets
 
     def test_empty_vault_valid(self, empty_vault: Path):
         vault = detect(empty_vault)
@@ -112,19 +106,26 @@ class TestInit:
         assert (root / "projects").is_dir()
         assert (root / ".gitignore").is_file()
 
-    def test_root_env_ignored_by_scaffolded_gitignore(self):
-        """`*/.env` cannot match a vault-root .env (the S1 fix); the scaffolded
-        gitignore must carry a pattern that ignores a root-level .env."""
+    def test_scaffolded_gitignore_ignores_env_at_any_depth(self, tmp_path: Path):
+        """Behavioral (the S1 fix): a vault-root .env AND a nested one are
+        actually git-ignored by the scaffolded gitignore. `*/.env` matched only
+        subdirs; a pattern-set check can't catch a plausible pattern that
+        silently fails to match root, so assert real `git check-ignore`."""
+        import shutil
+        import subprocess
+
+        if not shutil.which("git"):
+            pytest.skip("git not available")
         from claudron.vault import _GITIGNORE_CONTENT
 
-        patterns = {
-            line.strip()
-            for line in _GITIGNORE_CONTENT.splitlines()
-            if line.strip() and not line.lstrip().startswith("#")
-        }
-        assert {".env", "/.env", "**/.env"} & patterns, (
-            f"no root-.env pattern in scaffolded gitignore: {sorted(patterns)}"
-        )
+        subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+        (tmp_path / ".gitignore").write_text(_GITIGNORE_CONTENT)
+        (tmp_path / ".env").write_text("SECRET=1\n")
+        (tmp_path / "fleet1").mkdir()
+        (tmp_path / "fleet1" / ".env").write_text("SECRET=1\n")
+        for rel in (".env", "fleet1/.env"):
+            result = subprocess.run(["git", "-C", str(tmp_path), "check-ignore", rel])
+            assert result.returncode == 0, f"{rel} not ignored by scaffolded .gitignore"
 
     def test_init_existing_nonempty_errors(self, tmp_path: Path):
         target = tmp_path / "nonempty"

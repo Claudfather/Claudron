@@ -105,6 +105,9 @@ def iter_markdown_files(base: Path):
             yield md
 
 
+# `runtime/` stays fleet-scoped (`*/runtime/`) — it only ever lives at
+# `<fleet>/runtime/`; `.env` is any-depth (not `*/.env`) because secrets can
+# also sit at the vault root. Do not "fix" the asymmetry to match.
 _GITIGNORE_CONTENT = """\
 # claudron vault — gitignored runtime & secrets
 */runtime/

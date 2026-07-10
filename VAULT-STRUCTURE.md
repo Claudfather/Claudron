@@ -11,12 +11,12 @@ and draws the full tenant tree. `SCHEMA.md` is normative for note frontmatter an
 the note-filing taxonomy *within* each tier, and draws the knowledge tiers from
 that side.
 
-**Authority.** This document is the sole SSOT for the vault's directory shape
-and tenancy. `SCHEMA.md` scopes its own normative claim to the per-tier
-note-filing layout and points here for the shape; the two trees' note-tier
-structure is parity-guarded (`TestDocParity` in `claudron/tests/test_schema.py`,
-tied to `schema.py`'s `TYPE_DIRS`). Changes to this contract after ratification
-require approval (`PROJECT_MISSION.md`, "Requires approval").
+**Authority.** This document is the **sole** SSOT for the vault's directory
+shape — `SCHEMA.md` (above) keeps only the note-filing layout and points here.
+The two trees' note-tier structure is parity-guarded (`TestDocParity` in
+`claudron/tests/test_schema.py`, tied to `schema.py`'s `TYPE_DIRS`); changes to
+this contract after ratification require approval (`PROJECT_MISSION.md`,
+"Requires approval").
 
 ## Start here
 
