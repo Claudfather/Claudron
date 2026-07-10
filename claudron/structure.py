@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .schema import Finding
-from .vault import SKIP_DIRS, Vault, _dir_named
+from .vault import SKIP_DIRS, Vault, _dir_named, scaffold_shared_tree
 
 # Infra names inside SKIP_DIRS that a human never collides with and must never
 # surface in a user-facing message. The user-facing reserved set is the
@@ -53,6 +53,26 @@ def is_fixable(finding: Finding) -> bool:
 
 def _severity(code: str, strict: bool) -> str:
     return "error" if strict or code in _ALWAYS_ERROR else "warning"
+
+
+def _reserved_slot(root: Path, child: Path) -> bool:
+    """True if *child* occupies a reserved top-level slot.
+
+    Case-insensitive *on a case-insensitive filesystem* — where ``Projects/``
+    and ``projects/`` are one directory, exactly as ``_scan_vault``/``detect``
+    resolve the tiers via ``is_dir()``. ``samefile`` compares inodes, so this
+    is the filesystem's own truth: on a case-sensitive FS a differently-cased
+    dir is genuinely distinct and is *not* reserved. A raw
+    ``child.name in USER_RESERVED`` instead would miss ``Projects/`` on macOS —
+    a false S3, and under ``--strict`` a false failure, on a fine vault."""
+    for name in USER_RESERVED:
+        slot = root / name
+        try:
+            if slot.is_dir() and slot.samefile(child):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
@@ -97,7 +117,7 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
     for child in sorted(root.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
             continue
-        if child.name in USER_RESERVED:
+        if _reserved_slot(root, child):
             if (child / "fleet.yaml").is_file():
                 emit(
                     "S2",
@@ -160,12 +180,16 @@ def _rejects_escape(target: Path, root: Path) -> None:
 
 
 def fix_structure(vault: Vault, findings: list[Finding]) -> list[str]:
-    """Apply creation-only, contained repairs; return one line per action.
+    """Apply creation-only, contained repairs; return one line per fixable
+    finding (``created …`` or ``skipped … — <reason>``).
 
-    Repairs only fixable findings (S1 → create ``<fleet>/shared/``). Every
-    target is contained by :func:`_rejects_escape` (inside root, no symlinked
-    component), created with ``exist_ok=True`` so a re-run is a no-op. NEVER
-    moves or deletes — a non-fixable finding is left for the operator.
+    Repairs only fixable findings (S1 → scaffold ``<fleet>/shared/``). An escape
+    attempt (symlinked component / out-of-root target) hard-aborts via
+    :func:`_rejects_escape` — a security boundary. A per-target OS failure (a
+    pre-existing non-dir at the target, an unwritable parent) is reported as a
+    skip, never a traceback, and never aborts the *other* fleets' repairs (so a
+    multi-fleet batch neither crashes on one bad fleet nor discards the
+    already-created siblings' audit lines). NEVER moves or deletes.
     """
     root = vault.root.resolve()
     actions: list[str] = []
@@ -173,7 +197,18 @@ def fix_structure(vault: Vault, findings: list[Finding]) -> list[str]:
         if not is_fixable(finding):
             continue
         target = Path(finding.path)
-        _rejects_escape(target, root)
-        target.mkdir(parents=True, exist_ok=True)
-        actions.append(f"created {target.resolve().relative_to(root)}/")
+        _rejects_escape(target, root)  # escape → StructureError (hard abort)
+        if target.exists() and not target.is_dir():
+            actions.append(f"skipped {target.relative_to(root)} — exists, not a directory")
+            continue
+        try:
+            # scaffold_shared_tree, not a bare mkdir: it writes the tier subdirs
+            # + .gitkeep so git tracks shared/ and the repair survives a clone
+            # (a bare empty dir vanishes → S1 recurs on machine B). Matches what
+            # `fleet add` scaffolds.
+            scaffold_shared_tree(target, exist_ok=True)
+        except OSError as e:
+            actions.append(f"skipped {target.relative_to(root)} — {e.strerror or e}")
+            continue
+        actions.append(f"created {target.relative_to(root)}/")
     return actions

@@ -83,7 +83,9 @@ One shape, every command:
   opt-in **`--fix`** performs creation-only structure repairs (e.g. a fleet's
   missing `shared/`) strictly inside the vault root — it never moves, deletes,
   or follows a symlink out. Tip for humans: `validate --strict` previews
-  exactly what the engine/bot write paths will accept.
+  exactly what the engine/bot write paths will accept. The `--json` envelope
+  carries structure findings but no per-finding fixability flag; a machine
+  consumer derives it from the code (`S1` is the fixable structure code).
 - `new <type> "<title>"` — output always passes `validate --strict`. `owner`
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision
   errors (never silently overwrites); `--force` overrides. `--edit` without

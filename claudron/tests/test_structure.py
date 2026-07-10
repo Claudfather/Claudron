@@ -49,6 +49,13 @@ class TestConforming:
     def test_validate_exits_zero(self, vault_dir: Path, capsys):
         assert main(["--vault", str(vault_dir), "validate"]) == 0
 
+    def test_reference_vault_validates_clean_via_cli(
+        self, reference_vault: Path, capsys
+    ):
+        """The golden no-op through the CLI (not just check_structure): the
+        shipped exemplar passes `validate` end-to-end, exit 0."""
+        assert main(["--vault", str(reference_vault), "validate"]) == 0
+
 
 class TestS1FleetMissingShared:
     def _vault_with_bare_fleet(self, vault_dir: Path) -> Path:
@@ -74,6 +81,10 @@ class TestS1FleetMissingShared:
         created = vault_dir / "myfleet" / "shared"
         assert created.is_dir()
         assert created.resolve().is_relative_to(vault_dir.resolve())
+        # Durable: scaffolds the tier tree + .gitkeep so git tracks it (a bare
+        # empty shared/ would vanish on clone → S1 recurs on machine B).
+        assert (created / "knowledge").is_dir()
+        assert (created / "knowledge" / ".gitkeep").is_file()
         # Idempotent: a second --fix is a clean no-op, still 0.
         assert main(["--vault", str(vault_dir), "validate", "--fix"]) == 0
         assert check_structure(detect(vault_dir)) == []
@@ -110,6 +121,23 @@ class TestFixContainment:
         assert rc == 1
         assert "aborted" in capsys.readouterr().err
         assert not outside.exists()
+
+    def test_non_directory_shared_is_skipped_not_crashed(
+        self, vault_dir: Path, capsys
+    ):
+        """A fleet whose `shared` is a regular file: S1 fires, but --fix must
+        skip it cleanly (reporting why) and still repair the OTHER fleets —
+        never a raw FileExistsError traceback, never a silent partial batch.
+        (general + structural + adversarial consensus Major.)"""
+        _make_fleet(vault_dir, "goodfleet")
+        bad = _make_fleet(vault_dir, "badfleet")
+        (bad / "shared").write_text("a file, not a dir")
+        rc = main(["--vault", str(vault_dir), "validate", "--fix"])
+        assert rc == 0  # a clean return, not an uncaught exception
+        assert (vault_dir / "goodfleet" / "shared").is_dir()  # sibling repaired
+        assert (vault_dir / "badfleet" / "shared").is_file()  # untouched
+        err = capsys.readouterr().err
+        assert "skipped" in err and "badfleet" in err
 
 
 class TestS2ReservedCollision:
@@ -181,3 +209,45 @@ class TestInitValidateNoOp:
         root = init(tmp_path / "fresh")
         assert check_structure(detect(root)) == []
         assert main(["--vault", str(root), "validate"]) == 0
+
+
+class TestCaseInsensitiveReserved:
+    def test_capitalized_reserved_dir_not_flagged_unknown(self, tmp_path: Path):
+        """On a case-insensitive FS a capitalized reserved dir (Projects/) IS
+        the reserved tier, not an unknown dir — no false S3 (adversarial F1).
+        On a case-sensitive FS it is a genuinely distinct dir, so the collision
+        the fix targets does not exist there; skip."""
+        root = tmp_path / "vault"
+        (root / "_shared" / "knowledge").mkdir(parents=True)
+        (root / "Projects").mkdir()  # a capitalized real directory
+        if not (root / "projects").is_dir():
+            pytest.skip("case-sensitive FS: Projects/ is a distinct dir, no collision")
+        findings = check_structure(detect(root))
+        assert "S3" not in _codes(findings)
+
+
+class TestPathBranch:
+    """The positional-PATH branch of cmd_validate (works today; these lock the
+    wiring most likely to regress silently under refactor)."""
+
+    def test_path_at_vault_root_runs_structure_lens(self, vault_dir: Path, capsys):
+        _make_fleet(vault_dir)  # bare fleet → S1 (warning)
+        rc = main(["validate", str(vault_dir), "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert any(f["code"] == "S1" for f in env["warnings"])
+        assert rc == 0  # a lone warning does not gate
+
+    def test_path_inner_subtree_skips_structure_lens(self, vault_dir: Path, capsys):
+        _make_fleet(vault_dir)  # would be S1 at the root
+        inner = vault_dir / "_shared" / "knowledge"
+        rc = main(["validate", str(inner), "--json"])
+        env = json.loads(capsys.readouterr().out)
+        findings = env["errors"] + env["warnings"]
+        assert not any(f["code"].startswith("S") for f in findings)
+        assert rc == 0
+
+    def test_fix_on_single_file_errors(self, vault_dir: Path, capsys):
+        note = vault_dir / "_shared" / "knowledge" / "auth-patterns.md"
+        rc = main(["validate", str(note), "--fix"])
+        assert rc == 2
+        assert "needs a whole vault" in capsys.readouterr().err
