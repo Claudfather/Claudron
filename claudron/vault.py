@@ -8,6 +8,7 @@ for ``.git/``).
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -262,6 +263,28 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
     return root
 
 
+def note_tiers(vault: Vault) -> Iterator[tuple[Path, str]]:
+    """(base dir, tier tag) for every note tier in *vault* — the single scope
+    shared by ``build_index`` and adopt-backfill so they cannot diverge.
+    Mirrors the indexer's walk: each shared subdir, every project, each fleet's
+    ``shared/``, and any unrecognized root dir (the ``other:`` hatch). It
+    deliberately never descends a fleet's ``library/``/``voices/``/``runtime/``
+    — those are Claudlobby overlay content, not notes (a plain ``root.rglob``
+    would wrongly sweep them in, which is the bug this enumerator exists to
+    prevent)."""
+    for subdir in SHARED_SUBDIRS:
+        yield vault.shared / subdir, "shared"
+    for name, proj_path in vault.projects.items():
+        yield proj_path, f"project:{name}"
+    for name, fleet_path in vault.fleets.items():
+        yield fleet_path / "shared", f"fleet:{name}"
+    fleet_names = set(vault.fleets)
+    for d in sorted(vault.root.iterdir()):
+        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
+            if d.name not in fleet_names:
+                yield d, f"other:{d.name}"
+
+
 def backfill_updated(root: Path) -> int:
     """Backfill missing ``updated`` from file mtime across adopted notes.
 
@@ -269,31 +292,35 @@ def backfill_updated(root: Path) -> int:
     only — it is the remedy for the W101 wall a legacy docs tree would
     otherwise produce. Line-level insert after ``created:`` (or at the
     fence top); never re-serializes YAML, so user formatting is preserved.
-    Returns the number of files touched.
+    Scoped to the note tiers (:func:`note_tiers`), never a bare
+    ``root.rglob`` — else it would rewrite a fleet's library/voices/runtime
+    overlay content, which are not notes. Returns the number of files touched.
     """
+    vault = detect(root)
+    if vault is None:  # not a vault yet (init scaffolds _shared before calling)
+        return 0
     touched = 0
-    for md in root.rglob("*.md"):
-        if md.name in _SKIP_NAMES:
-            continue
-        text = md.read_text()
-        fm, _, err = parse_note(text)
-        if err is not None or not fm or "updated" in fm:
-            continue
-        stamp = datetime.fromtimestamp(md.stat().st_mtime).date().isoformat()
-        lines = text.splitlines(keepends=True)
-        insert_at = None
-        for i, line in enumerate(lines[1:], start=1):
-            if line.rstrip("\r\n") == "---":
-                insert_at = i  # fence end — fallback position
-                break
-            if line.split(":", 1)[0].strip() == "created":
-                insert_at = i + 1
-                break
-        if insert_at is None:
-            continue
-        lines.insert(insert_at, f"updated: {stamp}\n")
-        md.write_text("".join(lines))
-        touched += 1
+    for base, _tier in note_tiers(vault):
+        for md in iter_markdown_files(base):
+            text = md.read_text()
+            fm, _, err = parse_note(text)
+            if err is not None or not fm or "updated" in fm:
+                continue
+            stamp = datetime.fromtimestamp(md.stat().st_mtime).date().isoformat()
+            lines = text.splitlines(keepends=True)
+            insert_at = None
+            for i, line in enumerate(lines[1:], start=1):
+                if line.rstrip("\r\n") == "---":
+                    insert_at = i  # fence end — fallback position
+                    break
+                if line.split(":", 1)[0].strip() == "created":
+                    insert_at = i + 1
+                    break
+            if insert_at is None:
+                continue
+            lines.insert(insert_at, f"updated: {stamp}\n")
+            md.write_text("".join(lines))
+            touched += 1
     return touched
 
 
