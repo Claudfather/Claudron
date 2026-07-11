@@ -19,6 +19,7 @@ from .vault import (
     VaultError,
     detect,
     init,
+    is_within_root,
     scaffold_shared_tree,
     status,
 )
@@ -427,8 +428,8 @@ def cmd_capture(args) -> int:
     vault = _resolve_vault(args)
 
     if args.update:
-        note_path = (vault.root / args.update).resolve()
-        if not note_path.is_relative_to(vault.root.resolve()) or not note_path.is_file():
+        note_path = vault.root / args.update
+        if not is_within_root(note_path, vault.root) or not note_path.is_file():
             print(f"no such note in vault: {args.update}", file=sys.stderr)
             return 2
         if not args.body:

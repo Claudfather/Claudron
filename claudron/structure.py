@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .schema import Finding
-from .vault import SKIP_DIRS, Vault, _dir_named, scaffold_shared_tree
+from .vault import SKIP_DIRS, Vault, _dir_named, is_within_root, scaffold_shared_tree
 
 # Infra names inside SKIP_DIRS that a human never collides with and must never
 # surface in a user-facing message. The user-facing reserved set is the
@@ -164,19 +164,14 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
 def _rejects_escape(target: Path, root: Path) -> None:
     """Raise :class:`StructureError` unless *target* is safely inside *root*.
 
-    *root* must already be ``resolve()``d (the sole caller does so once). Two
-    independent guards: (1) the fully symlink-resolved *target* must stay
-    within *root* (catches a symlink pointing *out*); (2) no existing component
-    from *target* up to *root* may itself be a symlink (catches a symlinked
-    component even if it happens to resolve inside).
-    """
-    if not target.resolve().is_relative_to(root):
-        raise StructureError(f"refusing to create outside the vault: {target}")
-    probe = target
-    while probe != root and probe.parent != probe:
-        if probe.is_symlink():
-            raise StructureError(f"refusing to follow a symlink at: {probe}")
-        probe = probe.parent
+    Thin wrapper over :func:`claudron.vault.is_within_root` (the shared
+    containment primitive) mapping a refusal to StructureError → a clean
+    ``--fix`` abort. Pass *target* unresolved so the symlink-component guard
+    applies."""
+    if not is_within_root(target, root):
+        raise StructureError(
+            f"refusing to create outside the vault (or via a symlink): {target}"
+        )
 
 
 def fix_structure(vault: Vault, findings: list[Finding]) -> list[str]:

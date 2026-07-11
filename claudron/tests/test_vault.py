@@ -7,7 +7,7 @@ from textwrap import dedent
 
 import pytest
 
-from claudron.vault import VaultError, detect, init, status
+from claudron.vault import VaultError, detect, init, is_within_root, status
 
 
 class TestDetect:
@@ -242,3 +242,53 @@ class TestStatus:
         info = status(vault)
         assert info["total_docs"] == 1
         assert info["tiers"]["shared/knowledge"]["docs"] == 1
+
+
+class TestContainment:
+    """is_within_root — the shared containment primitive behind engine writes,
+    capture --update, and validate --fix."""
+
+    def test_inside_path_ok(self, tmp_path: Path):
+        assert is_within_root(tmp_path / "a" / "b", tmp_path)
+
+    def test_nonexistent_target_inside_ok(self, tmp_path: Path):
+        # a to-be-created path with no symlinked component is fine
+        assert is_within_root(tmp_path / "does" / "not" / "exist", tmp_path)
+
+    def test_parent_escape_rejected(self, tmp_path: Path):
+        assert not is_within_root(tmp_path / ".." / "evil", tmp_path)
+
+    def test_symlink_pointing_out_rejected(self, tmp_path: Path):
+        root = tmp_path / "vault"
+        root.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (root / "link").symlink_to(outside)
+        assert not is_within_root(root / "link" / "note.md", root)  # guard 1
+
+    def test_symlink_pointing_in_rejected(self, tmp_path: Path):
+        """Guard 2: a symlinked component that resolves BACK inside is still
+        rejected — a write must not be redirected through any symlink."""
+        root = tmp_path / "vault"
+        (root / "real").mkdir(parents=True)
+        (root / "link").symlink_to(root / "real")
+        # it DOES resolve inside...
+        assert (root / "link").resolve().is_relative_to(root.resolve())
+        # ...yet the symlinked component is refused
+        assert not is_within_root(root / "link" / "note.md", root)
+
+    def test_engine_write_path_rejects_symlinked_tier(self, vault_with_fleet: Path):
+        """Integration: the shared primitive means the ENGINE write path now
+        refuses a symlinked tier too (not just validate --fix) — the old
+        is_relative_to-only guard allowed an inside-pointing symlink."""
+        import shutil
+
+        from claudron.engine import ScopeError, resolve_target_dir
+
+        fleet_dir = vault_with_fleet / "test-fleet"
+        shutil.rmtree(fleet_dir / "shared")
+        (vault_with_fleet / "realshared").mkdir()
+        (fleet_dir / "shared").symlink_to(vault_with_fleet / "realshared")
+        vault = detect(vault_with_fleet)
+        with pytest.raises(ScopeError):
+            resolve_target_dir(vault, "decision", fleet="test-fleet")
