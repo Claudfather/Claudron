@@ -20,6 +20,15 @@
 ### Changed
 - `claudron init` prints a `next: claudron validate` pointer; a fresh `init`
   then `validate` is a clean no-op.
+- **PreCompact hook now defers to clauDNA when it is installed.** Both plugins
+  register a PreCompact hook, and Claude Code fires all of them — so with
+  clauDNA present the event was double-prompted for capture. `hook_pre_compact`
+  now returns silently (exit 0, no block) when `_claudna_installed()`, letting
+  clauDNA's hook own the single capture prompt (a bare `/claudna:capture`
+  distills the session). Claudron-only installs are unchanged — they keep the
+  prompt. This also drops the stale `/reflect` wording the clauDNA-aware branch
+  carried (clauDNA retired `/reflect` into `/capture`), so no prompt references
+  a skill that no longer exists.
 
 ## 0.2.0 — 2026-07-09
 

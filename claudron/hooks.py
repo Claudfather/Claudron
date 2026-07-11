@@ -9,9 +9,9 @@ user's temp dir when no vault resolves), and exits 0.
   the recall brief on stdout. Pull precedes recall or machine B briefs
   stale.
 - PreCompact → block-and-instruct once per session: prompt the agent to
-  distill durable findings through ``claudron capture`` (clauDNA's
-  precompact-reflect is the pattern; when claudna is installed the prompt
-  folds capture into its reflect step instead of double-prompting).
+  distill durable findings through ``claudron capture``. When clauDNA is
+  installed it owns the PreCompact capture prompt (a bare ``/claudna:capture``
+  distills the session), so this hook defers — one prompt per event.
 - SessionEnd → ``sync --push`` (fail open; nothing to inject).
 """
 
@@ -108,9 +108,17 @@ def hook_session_start(vault: Vault | None) -> int:
 
 
 def hook_pre_compact(vault: Vault | None) -> int:
-    """Block the first compaction with the capture prompt; pass afterwards."""
+    """Block the first compaction with the capture prompt; pass afterwards.
+
+    Defer when clauDNA is installed: its PreCompact hook owns the single
+    capture prompt (a bare ``/claudna:capture`` distills the session), and two
+    block-prompts on one event would double up. Claudron-only installs keep
+    the prompt.
+    """
     payload = _stdin_payload()
     if vault is None:
+        return 0
+    if _claudna_installed():
         return 0
     session_id = str(payload.get("session_id") or "unknown")
     marker = Path(tempfile.gettempdir()) / f"claudron-precompact-{session_id}"
@@ -120,19 +128,14 @@ def hook_pre_compact(vault: Vault | None) -> int:
         marker.touch()
     except OSError:
         pass
-    combined = (
-        " Fold this into the /reflect pass: for each durable finding, run"
-        if _claudna_installed()
-        else " For each durable finding, run"
-    )
     print(
         json.dumps(
             {
                 "decision": "block",
                 "reason": (
                     "Before compacting: distill this session's durable findings "
-                    "into the vault." + combined + " `claudron capture --type "
-                    "knowledge --title \"...\" --body \"...\"` (dedup will route "
+                    "into the vault. For each durable finding, run `claudron capture "
+                    "--type knowledge --title \"...\" --body \"...\"` (dedup will route "
                     "updates to existing notes). Then retry the compaction."
                 ),
             }
