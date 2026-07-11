@@ -40,7 +40,7 @@ from .schema import (
     slugify,
     validate_note,
 )
-from .vault import Vault
+from .vault import Vault, is_within_root
 
 
 class ScopeError(Exception):
@@ -148,10 +148,9 @@ def resolve_target_dir(
     else:
         base = vault.shared / TYPE_DIRS[note_type]
 
-    base = base.resolve()
-    if not base.is_relative_to(vault.root.resolve()):
+    if not is_within_root(base, vault.root):
         raise ScopeError(f"scope {(project or fleet)!r} escapes the vault root")
-    return base
+    return base.resolve()
 
 
 def find_duplicate(entries: list[dict], title: str) -> tuple[str, str, str] | None:
@@ -284,9 +283,9 @@ def append_addendum(vault: Vault, note_path: Path, body: str) -> WriteResult:
     existing, possibly adopted/legacy notes, which strict would wrongly
     block. A corrupting addendum is reported, and reverted, not silently
     "updated"."""
-    note_path = note_path.resolve()
-    if not note_path.is_relative_to(vault.root.resolve()):
+    if not is_within_root(note_path, vault.root):
         raise ScopeError(f"path {str(note_path)!r} escapes the vault root")
+    note_path = note_path.resolve()
 
     # Fresh index BEFORE the write (writing first would stale it and force
     # a full rebuild — the pattern this module exists to avoid).

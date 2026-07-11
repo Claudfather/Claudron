@@ -179,6 +179,29 @@ def _dir_named(parent: Path, name: str) -> bool:
         return False
 
 
+def is_within_root(path: Path, root: Path) -> bool:
+    """True iff *path* is safely contained by *root*.
+
+    The single containment primitive for every write/repair path (engine's
+    ``resolve_target_dir`` + ``append_addendum``, ``capture --update``,
+    ``validate --fix``). Two independent guards: (1) the fully symlink-resolved
+    *path* stays inside the resolved *root* — catches a component pointing
+    *out*; (2) no existing component from *path* up to *root* is itself a
+    symlink — rejects a symlinked tier/fleet dir outright, so a write cannot be
+    redirected through one even if it happens to resolve back inside. Pass
+    *path* **unresolved** — a pre-resolved path has already lost its symlinks
+    and defeats guard 2. Works on a not-yet-created target."""
+    root = root.resolve()
+    if not path.resolve().is_relative_to(root):
+        return False
+    probe = path
+    while probe != root and probe.parent != probe:
+        if probe.is_symlink():
+            return False
+        probe = probe.parent
+    return True
+
+
 def detect(path: Path | None = None) -> Vault | None:
     """Walk up from *path* looking for ``_shared/`` or ``shared/``.
 
