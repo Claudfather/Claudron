@@ -25,6 +25,7 @@ from .vault import (
     Vault,
     index_is_stale,
     iter_markdown_files,
+    note_tiers,
     parse_frontmatter,
 )
 
@@ -192,22 +193,10 @@ def build_index(vault: "Vault") -> dict:
             fm, _ = parse_frontmatter(text)
             entries.append(index_entry(fm, md, tier, vault.root))
 
-    # Walk all tiers
-    for subdir in SHARED_SUBDIRS:
-        _index_tier(vault.shared / subdir, "shared")
-    for name, proj_path in vault.projects.items():
-        _index_tier(proj_path, f"project:{name}")
-    for name, fleet_path in vault.fleets.items():
-        fleet_shared = fleet_path / "shared"
-        if fleet_shared.is_dir():
-            _index_tier(fleet_shared, f"fleet:{name}")
-
-    # Also index unrecognized root dirs
-    fleet_names = set(vault.fleets.keys())
-    for d in sorted(vault.root.iterdir()):
-        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
-            if d.name not in fleet_names:
-                _index_tier(d, f"other:{d.name}")
+    # Walk all note tiers — the shared enumerator adopt-backfill also uses, so
+    # the indexed set and the backfilled set cannot drift apart.
+    for base, tier in note_tiers(vault):
+        _index_tier(base, tier)
 
     index = {"schema_version": SCHEMA_VERSION, "entries": entries}
     write_index(vault, index)

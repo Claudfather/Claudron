@@ -193,6 +193,31 @@ class TestInit:
         assert (root / "_shared" / "knowledge").is_dir()
         assert (root / "existing.md").is_file()  # preserved
 
+    def test_adopt_backfill_scoped_to_note_tiers(self, tmp_path: Path):
+        """`init --adopt` backfills `updated:` into note-tier files ONLY — never
+        a fleet's library/voices/runtime overlay content. A plain root.rglob
+        would rewrite Claudlobby files; backfill must share the indexer's tier
+        scope (note_tiers). Reproduces + guards the adopt-scope bug."""
+        root = tmp_path / "legacy-local"
+        (root / "myfleet" / "library" / "skills").mkdir(parents=True)
+        (root / "myfleet" / "shared" / "knowledge").mkdir(parents=True)
+        (root / "myfleet" / "runtime" / "bots" / "bot1").mkdir(parents=True)
+        (root / "myfleet" / "fleet.yaml").write_text("fleet: {name: myfleet}")
+        note = root / "myfleet" / "shared" / "knowledge" / "note.md"
+        note.write_text(
+            "---\ntitle: N\ntype: knowledge\nstatus: current\nowner: c\n"
+            "created: 2026-01-01\n---\n\n# N\n"
+        )
+        skill = root / "myfleet" / "library" / "skills" / "s.md"
+        skill.write_text("---\ntitle: S\ndescription: d\n---\n\n# S\n")
+        botmd = root / "myfleet" / "runtime" / "bots" / "bot1" / "CLAUDE.md"
+        botmd.write_text("---\ntitle: B\n---\n\n# B\n")
+
+        init(root, adopt=True)
+        assert "updated:" in note.read_text()  # note tier — backfilled
+        assert "updated:" not in skill.read_text()  # overlay — untouched
+        assert "updated:" not in botmd.read_text()  # generated — untouched
+
 
 class TestStatus:
     def test_status_counts_docs(self, vault_dir: Path):
