@@ -54,6 +54,8 @@ class TestPreCompactHook:
 
         # Unique per run: the marker lives in the process-global tmp dir
         # (tempfile caches gettempdir, so TMPDIR monkeypatching is inert)
+        # Claudron-only install: clauDNA absent, so Claudron owns the prompt.
+        monkeypatch.setattr("claudron.hooks._claudna_installed", lambda: False)
         payload = json.dumps({"session_id": f"sess-{uuid.uuid4()}"})
         monkeypatch.setattr("sys.stdin", io.StringIO(payload))
         rc = main(["--vault", str(vault_dir), "hook", "pre-compact"])
@@ -61,6 +63,7 @@ class TestPreCompactHook:
         out = json.loads(capsys.readouterr().out)
         assert out["decision"] == "block"
         assert "claudron capture" in out["reason"]
+        assert "/reflect" not in out["reason"]  # retired skill, never referenced
 
     def test_second_compaction_passes(
         self, vault_dir: Path, capsys, monkeypatch, tmp_path
@@ -68,6 +71,7 @@ class TestPreCompactHook:
         import uuid
 
         session = f"sess-{uuid.uuid4()}"  # marker dir is process-global tmp
+        monkeypatch.setattr("claudron.hooks._claudna_installed", lambda: False)
         monkeypatch.setattr(
             "sys.stdin", io.StringIO(json.dumps({"session_id": session}))
         )
@@ -78,6 +82,22 @@ class TestPreCompactHook:
         )
         assert main(["--vault", str(vault_dir), "hook", "pre-compact"]) == 0
         assert capsys.readouterr().out == ""  # second: pass silently
+
+    def test_defers_when_claudna_installed(
+        self, vault_dir: Path, capsys, monkeypatch
+    ):
+        """clauDNA installed: it owns the single PreCompact capture prompt, so
+        Claudron defers (exit 0, no block) — the event isn't double-prompted."""
+        import uuid
+
+        monkeypatch.setattr("claudron.hooks._claudna_installed", lambda: True)
+        monkeypatch.setattr(
+            "sys.stdin",
+            io.StringIO(json.dumps({"session_id": f"sess-{uuid.uuid4()}"})),
+        )
+        rc = main(["--vault", str(vault_dir), "hook", "pre-compact"])
+        assert rc == 0
+        assert capsys.readouterr().out == ""  # deferred, no block emitted
 
     def test_fail_open_without_vault(self, tmp_path: Path, capsys, monkeypatch):
         monkeypatch.chdir(tmp_path)
