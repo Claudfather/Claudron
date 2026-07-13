@@ -133,6 +133,29 @@ def vault_with_fleet(vault_dir: Path) -> Path:
 
 
 @pytest.fixture
+def nested_system_vault(tmp_path: Path) -> Path:
+    """Vault with an opt-in ``.claudron-system`` container holding a nested fleet.
+
+    Exercises the P1 nested-tolerant scanner (Claudlobby#602). Layout::
+
+        vault/_shared/knowledge/            — global shared tier (the true root)
+        vault/sys1/.claudron-system         — the opt-in marker (empty file)
+        vault/sys1/shared/knowledge/        — the system's knowledge bucket
+        vault/sys1/fleetA/fleet.yaml        — a fleet nested one level down
+        vault/sys1/fleetA/shared/knowledge/ — the nested fleet's knowledge tier
+    """
+    root = tmp_path / "vault"
+    (root / "_shared" / "knowledge").mkdir(parents=True)
+    sys1 = root / "sys1"
+    (sys1 / "shared" / "knowledge").mkdir(parents=True)
+    (sys1 / ".claudron-system").write_text("")  # opt-in marker (empty file)
+    fleet = sys1 / "fleetA"
+    (fleet / "shared" / "knowledge").mkdir(parents=True)
+    (fleet / "fleet.yaml").write_text("fleet: {name: fleetA}")
+    return root
+
+
+@pytest.fixture
 def empty_vault(tmp_path: Path) -> Path:
     """Vault with _shared/ but no docs."""
     root = tmp_path / "empty-vault"

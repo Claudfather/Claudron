@@ -453,11 +453,17 @@ def _collect_all_docs(
     for subdir in SHARED_SUBDIRS:
         docs.extend(walk_knowledge_tier(vault.shared / subdir, "shared"))
 
-    # Unrecognized root dirs
-    fleet_names = set(vault.fleets.keys())
+    # Unrecognized root dirs (the `other:` hatch). A `.claudron-system` container
+    # is a recognized tier, not `other:` — exclude it so its nested fleets and
+    # shared/ bucket are not over-swept here. Its shared/ is classified `system:`
+    # by note_tiers and indexed for Tier-A recall; P1 deliberately does NOT add
+    # it to this Tier-B general union (recall-union policy deferred to #601/#47).
+    # Flat vaults have no systems, so `known` == the fleet set and this is
+    # byte-identical to before.
+    known = set(vault.fleets) | set(vault.systems)
     for d in sorted(vault.root.iterdir()):
         if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
-            if d.name not in fleet_names:
+            if d.name not in known:
                 docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
 
     return docs

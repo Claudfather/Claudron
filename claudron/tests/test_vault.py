@@ -7,7 +7,14 @@ from textwrap import dedent
 
 import pytest
 
-from claudron.vault import VaultError, detect, init, is_within_root, status
+from claudron.vault import (
+    VaultError,
+    detect,
+    init,
+    is_within_root,
+    note_tiers,
+    status,
+)
 
 
 class TestDetect:
@@ -64,6 +71,23 @@ class TestDetect:
         assert vault is not None
         assert vault.shared == root / "_shared"
 
+    def test_detect_from_nested_fleet_binds_true_root(self, nested_system_vault: Path):
+        """B2: a system container's `shared/` must NOT bind as the vault root —
+        detect keeps walking up past the `.claudron-system` container to the
+        true global root (the `_shared/` dir), else the global _shared/ is lost."""
+        deep = nested_system_vault / "sys1" / "fleetA"
+        vault = detect(deep)
+        assert vault is not None
+        assert vault.root == nested_system_vault
+        assert vault.shared == nested_system_vault / "_shared"
+
+    def test_detect_from_system_shared_binds_true_root(self, nested_system_vault: Path):
+        """Starting *inside* the container's own `shared/` still resolves to the
+        global root, not the container."""
+        vault = detect(nested_system_vault / "sys1" / "shared")
+        assert vault is not None
+        assert vault.root == nested_system_vault
+
 
 class TestScan:
     def test_scan_discovers_fleets(self, vault_with_fleet: Path):
@@ -90,6 +114,50 @@ class TestScan:
     def test_scan_discovers_projects(self, vault_with_projects: Path):
         vault = detect(vault_with_projects)
         assert "storydump" in vault.projects
+
+
+class TestNestedSystemScan:
+    """P1 nested-tolerant scanner: opt-in ``.claudron-system`` containers hold
+    nested fleets + a ``shared/`` bucket, while flat vaults stay byte-identical
+    (Claudlobby#602)."""
+
+    def test_nested_fleet_and_system_discovered(self, nested_system_vault: Path):
+        vault = detect(nested_system_vault)
+        assert vault is not None
+        # nested fleet is discovered under its BARE name (F5 global-unique key)
+        assert "fleetA" in vault.fleets
+        assert vault.fleets["fleetA"] == nested_system_vault / "sys1" / "fleetA"
+        # the container is recorded as a system, never as a flat fleet
+        assert "sys1" in vault.systems
+        assert vault.systems["sys1"] == nested_system_vault / "sys1"
+        assert "sys1" not in vault.fleets
+
+    def test_flat_vault_has_empty_systems(self, vault_with_fleet: Path):
+        """Backwards-compat: a vault with NO marker is flat — `systems` is
+        explicitly empty and flat fleet discovery is unchanged."""
+        vault = detect(vault_with_fleet)
+        assert "test-fleet" in vault.fleets
+        assert vault.systems == {}
+
+    def test_note_tiers_classifies_system(self, nested_system_vault: Path):
+        """The container's shared/ is a `system:` tier (parallels `fleet:`); the
+        nested fleet flows through the fleet: loop; nothing is mis-pooled as the
+        `other:` hatch."""
+        vault = detect(nested_system_vault)
+        pairs = list(note_tiers(vault))
+        tags = [tier for _base, tier in pairs]
+        assert (nested_system_vault / "sys1" / "shared", "system:sys1") in pairs
+        assert (
+            nested_system_vault / "sys1" / "fleetA" / "shared",
+            "fleet:fleetA",
+        ) in pairs
+        assert not any(t.startswith("other:") for t in tags)  # no other:sys1
+
+    def test_note_tiers_flat_vault_unchanged(self, vault_with_fleet: Path):
+        """Backwards-compat: no `system:` tier appears for a flat vault."""
+        tags = [tier for _base, tier in note_tiers(detect(vault_with_fleet))]
+        assert not any(t.startswith("system:") for t in tags)
+        assert "fleet:test-fleet" in tags
 
 
 class TestInit:

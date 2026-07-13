@@ -9,7 +9,37 @@ from textwrap import dedent
 
 
 from claudron.vault import SCHEMA_VERSION, clear_stale_cache, detect
-from claudron.knowledge import build_index, load_index, lookup
+from claudron.knowledge import _collect_all_docs, build_index, load_index, lookup
+
+_NOTE = (
+    "---\ntitle: {title}\ntype: knowledge\nstatus: current\nowner: c\n"
+    "created: 2026-01-01\n---\n\n# {title}\n"
+)
+
+
+class TestNestedSystemUnion:
+    """P1: a `.claudron-system` container is a recognized tier, never mis-pooled
+    into the Tier-B `other:` union (Claudlobby#602)."""
+
+    def test_system_not_mispooled_as_other(self, nested_system_vault: Path):
+        (
+            nested_system_vault / "sys1" / "shared" / "knowledge" / "sysnote.md"
+        ).write_text(_NOTE.format(title="Sys Note"))
+        docs = _collect_all_docs(detect(nested_system_vault))
+        # never surfaces via the `other:` hatch ...
+        assert not any(d.tier.startswith("other:") for d in docs)
+        # ... and P1 does NOT add the system tier to this Tier-B union —
+        # recall-union membership is deferred to #601/#47.
+        assert not any(d.tier.startswith("system:") for d in docs)
+
+    def test_genuinely_unknown_dir_still_other(self, nested_system_vault: Path):
+        """The `other:` hatch still fires for a real unknown top-level dir — the
+        system exclusion is targeted, not a blanket removal."""
+        unknown = nested_system_vault / "experiments"
+        unknown.mkdir()
+        (unknown / "note.md").write_text(_NOTE.format(title="X"))
+        docs = _collect_all_docs(detect(nested_system_vault))
+        assert any(d.tier == "other:experiments" for d in docs)
 
 
 class TestScoring:
