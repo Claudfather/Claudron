@@ -21,8 +21,8 @@ from .schema import LOOKUP_EXCLUDED, has_conflict_markers
 from .vault import (
     SCHEMA_VERSION,
     SHARED_SUBDIRS,
-    SKIP_DIRS,
     Vault,
+    _child_dirs,
     index_is_stale,
     iter_markdown_files,
     note_tiers,
@@ -460,10 +460,8 @@ def _collect_all_docs(
     # it to this Tier-B general union (recall-union policy deferred to #601/#47).
     # Flat vaults have no systems, so `known` == the fleet set and this is
     # byte-identical to before.
-    known = set(vault.fleets) | set(vault.systems)
-    for d in sorted(vault.root.iterdir()):
-        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
-            if d.name not in known:
-                docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
+    for d in _child_dirs(vault.root):
+        if d.name not in vault.recognized_top_level:
+            docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
 
     return docs

@@ -166,6 +166,12 @@ class Vault:
     fleets: dict[str, Path]  # {name: fleet_dir} — flat AND nested, bare-name key
     systems: dict[str, Path]  # {name: root / name} — .claudron-system containers
 
+    @property
+    def recognized_top_level(self) -> set[str]:
+        """Top-level names that are NOT the ``other:`` hatch — fleets + system
+        containers. The single set the other:/S3 consumers exclude by."""
+        return set(self.fleets) | set(self.systems)
+
 
 # ── detection ─────────────────────────────────────────────────────────
 
@@ -185,6 +191,14 @@ def _dir_named(parent: Path, name: str) -> bool:
         return name in os.listdir(parent)
     except OSError:
         return False
+
+
+def _child_dirs(parent: Path) -> Iterator[Path]:
+    """Yield *parent*'s eligible child dirs — sorted, skipping SKIP_DIRS and
+    dotfiles. The single definition of a "scannable" vault directory."""
+    for d in sorted(parent.iterdir()):
+        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
+            yield d
 
 
 def is_within_root(path: Path, root: Path) -> bool:
@@ -254,21 +268,14 @@ def _scan_vault(root: Path) -> Vault:
     # empty and this is byte-identical to the pre-P1 flat-fleet loop.
     fleets: dict[str, Path] = {}
     systems: dict[str, Path] = {}
-    for d in sorted(root.iterdir()):
-        if not (d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith(".")):
-            continue
+    for d in _child_dirs(root):
         if (d / SYSTEM_MARKER).is_file():
             # System container: record it, then fold its nested fleets into the
             # SAME fleets dict under their BARE names (F5 global-unique keys —
             # never namespaced). The container itself is never a flat fleet.
             systems[d.name] = d
-            for sub in sorted(d.iterdir()):
-                if (
-                    sub.is_dir()
-                    and sub.name not in SKIP_DIRS
-                    and not sub.name.startswith(".")
-                    and (sub / "fleet.yaml").is_file()
-                ):
+            for sub in _child_dirs(d):
+                if (sub / "fleet.yaml").is_file():
                     fleets[sub.name] = sub
             continue
         if (d / "fleet.yaml").is_file():
@@ -345,11 +352,9 @@ def note_tiers(vault: Vault) -> Iterator[tuple[Path, str]]:
         yield sys_path / "shared", f"system:{name}"
     # The `other:` hatch — unrecognized root dirs. Fleets AND system containers
     # are recognized tiers, so a system container is never mis-pooled as other:.
-    known = set(vault.fleets) | set(vault.systems)
-    for d in sorted(vault.root.iterdir()):
-        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
-            if d.name not in known:
-                yield d, f"other:{d.name}"
+    for d in _child_dirs(vault.root):
+        if d.name not in vault.recognized_top_level:
+            yield d, f"other:{d.name}"
 
 
 def backfill_updated(root: Path) -> int:

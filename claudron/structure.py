@@ -112,7 +112,7 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
     # out; and an opt-in `.claudron-system` container (P1) — a valid top-level
     # dir, never an S3. Its nested fleets live one level down, so this top-level
     # walk never reaches them (they cannot be a false S3 either).
-    known = set(vault.fleets) | set(vault.systems) | _INFRA_SKIP
+    known = vault.recognized_top_level | _INFRA_SKIP
     # Single root walk carries S2 (reserved dir + fleet.yaml) and S3 (unknown
     # dir). S2 raw-walks the root deliberately: vault.fleets pre-filters
     # reserved names out (vault._scan_vault), so this is the audit-time
