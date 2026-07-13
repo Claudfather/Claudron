@@ -458,10 +458,12 @@ def _collect_all_docs(
     # shared/ bucket are not over-swept here. Its shared/ is classified `system:`
     # by note_tiers and indexed for Tier-A recall; P1 deliberately does NOT add
     # it to this Tier-B general union (recall-union policy deferred to #601/#47).
-    # Flat vaults have no systems, so `known` == the fleet set and this is
-    # byte-identical to before.
+    # Flat vaults have no systems, so `recognized` == the flat-fleet set and
+    # this is byte-identical to before. Hoist the property once — it rebuilds a
+    # set on every access (O(n²) if read in-loop).
+    recognized = vault.recognized_top_level
     for d in _child_dirs(vault.root):
-        if d.name not in vault.recognized_top_level:
+        if d.name not in recognized:
             docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
 
     return docs

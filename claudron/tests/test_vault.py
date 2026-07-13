@@ -160,6 +160,47 @@ class TestNestedSystemScan:
         assert "fleet:test-fleet" in tags
 
 
+class TestNestedFleetNameShadow:
+    """Claudlobby#602 review: `recognized_top_level` is PATH-aware — a nested
+    fleet's bare name must never shadow a same-named TOP-LEVEL dir out of the
+    ``other:``/S3 hatch. A name-based union folded nested fleet names in, so a
+    genuine top-level dir sharing that name silently vanished (data loss)."""
+
+    def test_recognized_top_level_excludes_nested_fleet_name(
+        self, nested_fleet_shadow_vault: Path
+    ):
+        vault = detect(nested_fleet_shadow_vault)
+        # The nested fleet is still discovered under its bare name (F5 key) ...
+        assert "experiments" in vault.fleets
+        assert (
+            vault.fleets["experiments"]
+            == nested_fleet_shadow_vault / "sys1" / "experiments"
+        )
+        # ... but recognized_top_level holds only TOP-LEVEL dir names: the
+        # system container, NOT the nested fleet's bare name.
+        assert vault.recognized_top_level == {"sys1"}
+
+    def test_note_tiers_top_level_dir_not_shadowed(
+        self, nested_fleet_shadow_vault: Path
+    ):
+        vault = detect(nested_fleet_shadow_vault)
+        pairs = list(note_tiers(vault))
+        tags = [tier for _base, tier in pairs]
+        # The unrelated top-level experiments/ dir is STILL the other: hatch
+        # (the collateral shadow the fix removes) ...
+        assert (
+            nested_fleet_shadow_vault / "experiments",
+            "other:experiments",
+        ) in pairs
+        # ... while the nested fleet's own shared/ is still a fleet: tier, and
+        # the container is still a system: tier — recognition is untouched.
+        assert (
+            nested_fleet_shadow_vault / "sys1" / "experiments" / "shared",
+            "fleet:experiments",
+        ) in pairs
+        assert "system:sys1" in tags
+
+
 class TestInit:
     def test_init_creates_structure(self, tmp_path: Path):
         target = tmp_path / "new-vault"

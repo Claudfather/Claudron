@@ -156,6 +156,57 @@ def nested_system_vault(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def nested_fleet_shadow_vault(tmp_path: Path) -> Path:
+    """Vault where a NESTED fleet's bare name collides with an unrelated
+    TOP-LEVEL dir — the collateral-shadow regression (Claudlobby#602 review).
+
+    Layout::
+
+        vault/_shared/knowledge/                 — global shared tier (true root)
+        vault/experiments/note.md                — a genuine top-level other: dir
+        vault/sys1/.claudron-system              — the opt-in system marker
+        vault/sys1/experiments/fleet.yaml        — a NESTED fleet, bare name
+                                                   `experiments` (collides above)
+        vault/sys1/experiments/shared/knowledge/ — the nested fleet's tier
+
+    The nested fleet folds into ``vault.fleets`` under the bare name
+    ``experiments``. A *name-based* ``recognized_top_level`` would then shadow
+    the unrelated top-level ``experiments/`` out of the ``other:``/S3 hatch —
+    silent data loss. Only ONE fleet is named ``experiments``, so this is not an
+    F5 global-unique collision: it is pure collateral shadow.
+    """
+    root = tmp_path / "vault"
+    (root / "_shared" / "knowledge").mkdir(parents=True)
+    # A genuine top-level `other:` dir carrying a real note.
+    exp = root / "experiments"
+    exp.mkdir()
+    (exp / "note.md").write_text(
+        dedent("""\
+        ---
+        title: Experiment Log
+        type: knowledge
+        status: current
+        owner: c
+        created: 2026-05-01
+        updated: 2026-05-01
+        ---
+
+        # Experiment Log
+
+        Findings from the top-level experiments dir.
+    """)
+    )
+    # System container whose nested fleet's bare name is `experiments`.
+    sys1 = root / "sys1"
+    (sys1 / "shared" / "knowledge").mkdir(parents=True)
+    (sys1 / ".claudron-system").write_text("")  # opt-in marker (empty file)
+    nested = sys1 / "experiments"
+    (nested / "shared" / "knowledge").mkdir(parents=True)
+    (nested / "fleet.yaml").write_text("fleet: {name: experiments}")
+    return root
+
+
+@pytest.fixture
 def empty_vault(tmp_path: Path) -> Path:
     """Vault with _shared/ but no docs."""
     root = tmp_path / "empty-vault"

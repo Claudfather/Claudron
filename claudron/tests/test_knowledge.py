@@ -41,6 +41,16 @@ class TestNestedSystemUnion:
         docs = _collect_all_docs(detect(nested_system_vault))
         assert any(d.tier == "other:experiments" for d in docs)
 
+    def test_nested_fleet_name_does_not_shadow_top_level_other(
+        self, nested_fleet_shadow_vault: Path
+    ):
+        """Claudlobby#602 review: a nested fleet's bare name (`experiments`,
+        folded into vault.fleets) must not shadow the unrelated TOP-LEVEL
+        `experiments/` out of the Tier-B `other:` union — else its note
+        silently vanishes from recall."""
+        docs = _collect_all_docs(detect(nested_fleet_shadow_vault))
+        assert any(d.tier == "other:experiments" for d in docs)
+
 
 class TestScoring:
     def test_lookup_exact_title(self, vault_dir: Path):

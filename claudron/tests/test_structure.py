@@ -195,6 +195,19 @@ class TestSystemContainer:
         (nested_system_vault / "experiments").mkdir()
         assert "S3" in _codes(check_structure(detect(nested_system_vault)))
 
+    def test_nested_fleet_name_does_not_suppress_top_level_s3(
+        self, nested_fleet_shadow_vault: Path
+    ):
+        """Claudlobby#602 review: a nested fleet's bare name must not shadow a
+        same-named TOP-LEVEL dir out of the S3 walk. The top-level
+        `experiments/` (no fleet.yaml) is genuinely unrecognized, so S3 fires —
+        the nested `sys1/experiments` fleet must not wrongly suppress it."""
+        findings = check_structure(detect(nested_fleet_shadow_vault))
+        s3 = [f for f in findings if f.code == "S3"]
+        assert [f.path for f in s3] == [
+            str(nested_fleet_shadow_vault / "experiments")
+        ]
+
 
 class TestS4DualHub:
     def test_both_markers_warn(self, vault_dir: Path):

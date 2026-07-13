@@ -168,9 +168,21 @@ class Vault:
 
     @property
     def recognized_top_level(self) -> set[str]:
-        """Top-level names that are NOT the ``other:`` hatch — fleets + system
-        containers. The single set the other:/S3 consumers exclude by."""
-        return set(self.fleets) | set(self.systems)
+        """Top-level dir names that are NOT the ``other:`` hatch — TOP-LEVEL
+        (flat) fleets + system containers. The single set the other:/S3
+        consumers exclude by, and every one of them does a *top-level* walk.
+
+        Nested fleet names are deliberately excluded: ``_scan_vault`` folds a
+        nested fleet into ``fleets`` under its BARE name, but that name is not a
+        top-level dir. Including it would shadow an unrelated same-named
+        top-level dir out of the other:/S3 hatch — silent data loss
+        (Claudlobby#602 review). A flat fleet's dir is ``root/<name>`` (parent
+        IS the root); a nested fleet's is ``root/<system>/<name>`` (parent is
+        the system dir), so ``path.parent == self.root`` selects flat fleets."""
+        flat_fleets = {
+            name for name, path in self.fleets.items() if path.parent == self.root
+        }
+        return flat_fleets | set(self.systems)
 
 
 # ── detection ─────────────────────────────────────────────────────────
@@ -276,6 +288,13 @@ def _scan_vault(root: Path) -> Vault:
             systems[d.name] = d
             for sub in _child_dirs(d):
                 if (sub / "fleet.yaml").is_file():
+                    # Bare-name key (F5 global-unique — never namespaced). A
+                    # duplicate bare fleet name across depths (a flat fleet + a
+                    # nested one, or two systems' nested fleets) silently
+                    # last-wins here — an F5 violation Claudlobby's
+                    # _find_fleet_dir raises on. Claudron's validate flagging it
+                    # via a new S-code is a tracked follow-up (parity with the
+                    # recall-union deferral); the clobber is left as-is for now.
                     fleets[sub.name] = sub
             continue
         if (d / "fleet.yaml").is_file():
@@ -352,8 +371,10 @@ def note_tiers(vault: Vault) -> Iterator[tuple[Path, str]]:
         yield sys_path / "shared", f"system:{name}"
     # The `other:` hatch — unrecognized root dirs. Fleets AND system containers
     # are recognized tiers, so a system container is never mis-pooled as other:.
+    # Hoist the property once: it rebuilds a set on every access (O(n²) in-loop).
+    recognized = vault.recognized_top_level
     for d in _child_dirs(vault.root):
-        if d.name not in vault.recognized_top_level:
+        if d.name not in recognized:
             yield d, f"other:{d.name}"
 
 
