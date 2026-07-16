@@ -475,3 +475,22 @@ class TestUnicode:
         results = lookup("\U0001f511", vault, limit=10)
         matching = [r for r in results if r.doc.title == "Security Key Guide"]
         assert len(matching) >= 1
+
+
+class TestGhostEntries:
+    def test_deleted_note_drops_from_index_no_ghost(self, vault_dir: Path):
+        """A note removed from disk must not linger as a ghost index entry
+        (mtime-forward staleness never sees a deletion)."""
+        from claudron.knowledge import build_index, ensure_index
+        from claudron.vault import clear_stale_cache, detect
+
+        vault = detect(vault_dir)
+        build_index(vault)
+        victim = vault_dir / "_shared" / "knowledge" / "deploy-checklist.md"
+        rel = str(victim.relative_to(vault.root))
+        victim.unlink()
+
+        clear_stale_cache()
+        index = ensure_index(vault)
+        paths = [e["path"] for e in index["entries"]]
+        assert rel not in paths, f"ghost entry survived deletion: {rel}"

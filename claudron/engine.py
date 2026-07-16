@@ -35,6 +35,7 @@ from .schema import (
     TYPES,
     Finding,
     claimed_names,
+    content_fingerprint,
     parse_note,
     set_frontmatter_field,
     slugify,
@@ -153,9 +154,18 @@ def resolve_target_dir(
     return base.resolve()
 
 
-def find_duplicate(entries: list[dict], title: str) -> tuple[str, str, str] | None:
+def find_duplicate(
+    entries: list[dict], title: str, body: str = ""
+) -> tuple[str, str, str] | None:
     """Dedup against index entries: (path, status, matched-name) for a live
-    note whose title/alias/slug collides with *title*; None when clear.
+    note whose title/alias/slug OR body content collides; None when clear.
+
+    Two signals, either sufficient: the title/alias/slug name set
+    (:func:`claimed_names`), and a title-independent body fingerprint
+    (:func:`content_fingerprint`) — so byte-identical content re-sent under
+    a different or mangled title is caught, never silently twinned. An empty
+    fingerprint (stub note, no body) yields no content signal and falls back
+    to the name set.
 
     Detection is deliberately tier-blind (a cross-tier twin is exactly the
     W104 wikilink ambiguity dedup exists to prevent) and skips only
@@ -166,10 +176,13 @@ def find_duplicate(entries: list[dict], title: str) -> tuple[str, str, str] | No
     """
     wanted = title.lower()
     slug = slugify(title)
+    fingerprint = content_fingerprint(body)
     for entry in entries:
         if entry.get("status", "") in DEDUP_EXEMPT:
             continue
-        if wanted in claimed_names(entry) or entry.get("filename", "") == slug:
+        name_hit = wanted in claimed_names(entry) or entry.get("filename", "") == slug
+        content_hit = bool(fingerprint) and entry.get("content_hash") == fingerprint
+        if name_hit or content_hit:
             matched = entry.get("title") or entry.get("filename", "")
             return entry["path"], str(entry.get("status", "")), str(matched)
     return None
@@ -241,7 +254,7 @@ def capture(
     index = ensure_index(vault)
 
     if not force:
-        dup = find_duplicate(index.get("entries", []), title)
+        dup = find_duplicate(index.get("entries", []), title, note_body)
         if dup is not None:
             dup_path, dup_status, matched = dup
             action = "suggest_supersede" if dup_status == "stale" else "suggest_update"
@@ -263,7 +276,7 @@ def capture(
     # Maintain the index: append the entry, write index.json last so its
     # mtime ≥ the note's — the next write loads instead of rebuilding.
     index["entries"].append(
-        index_entry(fm, target, _tier_label(project, fleet), vault.root)
+        index_entry(fm, note_body, target, _tier_label(project, fleet), vault.root)
     )
     write_index(vault, index)
 
@@ -311,6 +324,7 @@ def append_addendum(vault: Vault, note_path: Path, body: str) -> WriteResult:
     for entry in index.get("entries", []):
         if entry.get("path") == rel:
             entry["updated"] = today
+            entry["content_hash"] = content_fingerprint(note_body)
             break
     write_index(vault, index)
 

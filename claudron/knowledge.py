@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .schema import LOOKUP_EXCLUDED, has_conflict_markers
+from .schema import LOOKUP_EXCLUDED, content_fingerprint, has_conflict_markers
 from .vault import (
     SCHEMA_VERSION,
     SHARED_SUBDIRS,
@@ -136,10 +136,11 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
 # ── index (Tier A) ───────────────────────────────────────────────────
 
 
-def index_entry(fm: dict, md: Path, tier: str, vault_root: Path) -> dict:
-    """One index entry from parsed frontmatter — the single home of the
-    entry shape (build_index and the write engine's incremental update
-    both construct entries through this)."""
+def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> dict:
+    """One index entry from parsed frontmatter + body — the single home of
+    the entry shape (build_index and the write engine's incremental update
+    both construct entries through this). ``content_hash`` is the
+    title-independent body fingerprint dedup keys on alongside the title."""
     return {
         "title": fm.get("title") or _derive_title(md.stem),
         "tags": fm.get("tags") or [],
@@ -147,6 +148,7 @@ def index_entry(fm: dict, md: Path, tier: str, vault_root: Path) -> dict:
         "status": fm.get("status", "active"),
         "updated": _stamp(fm),
         "expires": str(fm.get("expires", "")),
+        "content_hash": content_fingerprint(body),
         "filename": md.stem,
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
@@ -190,8 +192,8 @@ def build_index(vault: "Vault") -> dict:
                 continue
             if has_conflict_markers(text):
                 continue  # quarantined (see _parse_doc)
-            fm, _ = parse_frontmatter(text)
-            entries.append(index_entry(fm, md, tier, vault.root))
+            fm, body = parse_frontmatter(text)
+            entries.append(index_entry(fm, body, md, tier, vault.root))
 
     # Walk all note tiers — the shared enumerator adopt-backfill also uses, so
     # the indexed set and the backfilled set cannot drift apart.
@@ -204,7 +206,13 @@ def build_index(vault: "Vault") -> dict:
 
 
 def load_index(vault: Vault) -> dict | None:
-    """Load index if it exists and is fresh. Returns None if stale or missing."""
+    """Load index if it exists and is fresh. Returns None if stale or missing.
+
+    Prunes ghost entries — index rows whose note has since been deleted from
+    disk — before returning, rewriting the index when it does. mtime-forward
+    staleness cannot see a deletion (a removed file leaves nothing newer), so
+    without this a deleted note would linger in dedup and lookup until the
+    next full rebuild."""
     index_path = vault.root / ".claudron" / "index.json"
     if not index_path.is_file():
         return None
@@ -212,13 +220,18 @@ def load_index(vault: Vault) -> dict | None:
         return None
     try:
         data = json.loads(index_path.read_text())
-        if isinstance(data, dict) and "entries" in data:
-            if data.get("schema_version") != SCHEMA_VERSION:
-                return None  # stale schema — trigger rebuild
-            return data
     except (json.JSONDecodeError, OSError):
-        pass
-    return None
+        return None
+    if not (isinstance(data, dict) and "entries" in data):
+        return None
+    if data.get("schema_version") != SCHEMA_VERSION:
+        return None  # stale schema — trigger rebuild
+    entries = data["entries"]
+    live = [e for e in entries if (vault.root / e.get("path", "")).exists()]
+    if len(live) != len(entries):
+        data["entries"] = live
+        write_index(vault, data)  # drop the ghosts from disk, not just in memory
+    return data
 
 
 # ── scoring ──────────────────────────────────────────────────────────
