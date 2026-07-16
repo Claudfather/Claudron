@@ -89,7 +89,7 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
 # LOOKUP_EXCLUDED — ratified is done-not-hidden, so the sets differ.
 
-SCHEMA_VERSION = 1  # bump when index.json structure changes
+SCHEMA_VERSION = 2  # bump when index.json entry shape changes (mismatch forces rebuild)
 
 # CONVENTIONS.md is the always-loaded layer (injected, not retrieved) —
 # never indexed/searched as a note; validate budget-checks it separately
@@ -525,21 +525,25 @@ def clear_stale_cache() -> None:
 
 
 def index_is_stale(vault: Vault, index_path: Path) -> bool:
-    """True if any .md under vault root is newer than the index.
+    """True if any indexed-tier note is newer than the index.
+
+    Walks only :func:`note_tiers` — the same scope ``build_index`` indexes —
+    never a bare ``root.rglob``, which would sweep in a fleet's
+    ``runtime``/``library``/``voices`` overlay content and hold the index
+    perpetually 'stale' against thousands of files it never indexes anyway.
 
     Caches the result per (path, index_mtime) so repeated lookups in the
-    same process skip the O(n) stat walk.
+    same process skip the stat walk.
     """
     index_mtime = index_path.stat().st_mtime
     cache_key = (str(index_path), index_mtime)
     cached = _stale_cache.get(cache_key)
     if cached is not None:
         return cached
-    for md in vault.root.rglob("*.md"):
-        if md.name.startswith("."):
-            continue
-        if md.stat().st_mtime > index_mtime:
-            _stale_cache[cache_key] = True
-            return True
+    for base, _tier in note_tiers(vault):
+        for md in iter_markdown_files(base):
+            if md.stat().st_mtime > index_mtime:
+                _stale_cache[cache_key] = True
+                return True
     _stale_cache[cache_key] = False
     return False

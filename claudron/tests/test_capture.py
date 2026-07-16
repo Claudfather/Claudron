@@ -232,3 +232,33 @@ class TestCaptureValidation:
         assert rc == 2
         assert "escapes the vault root" in capsys.readouterr().err
         assert not (vault_dir.parent / "escaped").exists()
+
+
+class TestContentAwareDedup:
+    def test_identical_content_under_a_different_title_is_not_silently_created(
+        self, vault_dir: Path
+    ):
+        """Byte-identical body under a new title must route to dedup, not
+        silently create a twin (the content-blind-dedup regression)."""
+        from claudron.engine import capture
+        from claudron.vault import clear_stale_cache, detect
+
+        vault = detect(vault_dir)
+        body = "One exact body, captured twice under two unrelated titles."
+        first = capture(
+            vault, note_type="knowledge", title="Alpha One", body=body, owner="tester"
+        )
+        assert first.action == "created"
+
+        clear_stale_cache()
+        second = capture(
+            vault,
+            note_type="knowledge",
+            title="Beta Two Unrelated",
+            body=body,
+            owner="tester",
+        )
+        assert (
+            second.action != "created"
+        ), f"identical content under a new title silently duplicated: {second.action}"
+        assert second.action in ("suggest_update", "suggest_supersede")

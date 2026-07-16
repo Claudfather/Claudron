@@ -30,6 +30,26 @@
   carried (clauDNA retired `/reflect` into `/capture`), so no prompt references
   a skill that no longer exists.
 
+### Fixed
+- **Dedup is now content-aware, not title-only.** `find_duplicate` keyed solely
+  on title/alias/slug, so byte-identical content re-captured under a different
+  (or copy-mangled) title was silently written as a duplicate. Index entries now
+  carry a title-independent body `content_hash` (`schema.content_fingerprint`),
+  and dedup matches on it alongside the name set; an empty body yields no content
+  signal and falls back to the name set. `index.json` schema bumps to `2` (a
+  mismatch forces one rebuild). (#52)
+- **Deleted notes no longer linger as ghost index entries.** mtime-forward
+  staleness cannot see a deletion (a removed file leaves nothing newer), so a
+  deleted note kept matching in dedup and lookup until the next `index --full`.
+  `load_index` now prunes entries whose note is gone from disk and rewrites the
+  index. (#52)
+- **Index staleness is scoped to note tiers, not the whole vault tree.**
+  `index_is_stale` walked `root.rglob("*.md")`, sweeping in a fleet's
+  `runtime`/`library`/`voices` overlays — tens of thousands of never-indexed
+  files — which held the index perpetually "stale" and forced a re-walk on every
+  capture/lookup. It now walks only `note_tiers`, the same scope `build_index`
+  indexes. (#52)
+
 ## 0.2.0 — 2026-07-09
 
 **The SD card release** (roadmap E1+E2, EPIC #14): the schema contract and

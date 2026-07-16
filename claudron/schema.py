@@ -11,6 +11,7 @@ vault.py / knowledge.py / cli.py can all build on it.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -129,6 +130,25 @@ def claimed_names(mapping: dict) -> list[str]:
     and validate's W104 collision check)."""
     names = [mapping.get("title")] + list(mapping.get("aliases") or [])
     return [str(n).lower() for n in names if n]
+
+
+def content_fingerprint(body: str) -> str:
+    """A title-independent hash of a note's CONTENT, so byte-identical
+    bodies collide for dedup even under a different (or mangled) title.
+
+    Drops a leading H1 (``compose_note`` prepends ``# <title>``) and
+    normalizes trailing whitespace, so the fingerprint keys on the content
+    a human wrote — not the title heading or incidental spacing. Returns
+    ``""`` for empty/whitespace-only content: too thin to dedup on (stub
+    notes share an empty body), so callers skip content-matching then.
+    """
+    lines = body.strip().splitlines()
+    if lines and lines[0].lstrip().startswith("# "):
+        lines = lines[1:]
+    normalized = "\n".join(line.rstrip() for line in lines).strip()
+    if not normalized:
+        return ""
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 def set_frontmatter_field(text: str, field: str, value: str) -> str:

@@ -317,3 +317,39 @@ class TestContainment:
         vault = detect(vault_with_fleet)
         with pytest.raises(ScopeError):
             resolve_target_dir(vault, "decision", fleet="test-fleet")
+
+
+class TestScopedStaleness:
+    def test_overlay_file_outside_note_tiers_does_not_stale_index(
+        self, vault_with_fleet: Path
+    ):
+        """A newer file under a fleet's runtime/ (Claudlobby overlay, never
+        indexed) must not perpetually stale the index; a newer real note in
+        an indexed tier still must (the whole-tree-rglob regression)."""
+        import os
+
+        from claudron.knowledge import build_index
+        from claudron.vault import clear_stale_cache, detect, index_is_stale
+
+        vault = detect(vault_with_fleet)
+        index_path = vault.root / ".claudron" / "index.json"
+        build_index(vault)
+        idx_mtime = index_path.stat().st_mtime
+
+        # Non-eligible overlay content (fleet runtime), made newer than the index.
+        overlay = vault.root / "test-fleet" / "runtime" / "bots" / "memory.md"
+        overlay.parent.mkdir(parents=True, exist_ok=True)
+        overlay.write_text("# a bot memory, not a vault note\n")
+        os.utime(overlay, (idx_mtime + 100, idx_mtime + 100))
+        clear_stale_cache()
+        assert index_is_stale(vault, index_path) is False
+
+        # Control: a newer real note in an indexed tier still stales the index.
+        note = vault.root / "_shared" / "knowledge" / "brand-new.md"
+        note.write_text(
+            "---\ntitle: Brand New\ntype: knowledge\nstatus: current\n"
+            "owner: t\ncreated: 2026-01-01\n---\n\n# Brand New\n\nbody\n"
+        )
+        os.utime(note, (idx_mtime + 200, idx_mtime + 200))
+        clear_stale_cache()
+        assert index_is_stale(vault, index_path) is True
