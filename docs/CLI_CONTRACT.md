@@ -66,7 +66,7 @@ One shape, every command:
 | Group | Commands |
 |---|---|
 | vault | `init`, `status`, `validate`, `index` |
-| notes | `new`, `lookup` |
+| notes | `new`, `lookup`, `related`, `links` |
 | session | `recall`, `capture`, `sync`, `hooks` *(E2)* |
 | fleet | `fleet add`, `fleet list` |
 | integration | `plug`, `unplug`, `config`, `migrate` |

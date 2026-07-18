@@ -7,10 +7,12 @@ first-class), over the existing index — no SQLite (that's the deferred scale b
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from claudron import resolve_wikilinks
-from claudron.knowledge import wikilink_targets
+from claudron.cli import main
+from claudron.knowledge import link_report, related, wikilink_targets
 from claudron.vault import detect
 
 
@@ -147,3 +149,61 @@ class TestResolveWikilinks:
         r = resolve_wikilinks("[[Retry Strategy]]", detect(v))
         # api < web by path → the api note wins, stably
         assert "projects/api" in r["[[Retry Strategy]]"]["path"]
+
+
+class TestRelatedAndLinks:
+    def _graph_vault(self, tmp_path: Path):
+        v = tmp_path / "v"
+        d = v / "_shared" / "knowledge"
+        d.mkdir(parents=True)
+
+        def note(fn: str, title: str, body: str) -> None:
+            (d / fn).write_text(
+                f"---\ntitle: {title}\ntype: knowledge\nstatus: current\n"
+                f"owner: t\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n"
+                f"# {title}\n\n{body}\n"
+            )
+
+        note("a.md", "Note A", "links to [[Note B]] and [[Missing Thing]]")
+        note("b.md", "Note B", "links to [[Note C]]")
+        note("c.md", "Note C", "no links here")
+        note("d.md", "Note D", "orphan, no links")
+        return v
+
+    def test_related_direct_direction(self, tmp_path: Path):
+        vault = detect(self._graph_vault(tmp_path))
+        out = related(vault, "_shared/knowledge/a.md", hops=1)
+        assert {r["path"] for r in out} == {"_shared/knowledge/b.md"}
+        assert out[0]["direction"] == "out"
+        b = {r["path"]: r["direction"]
+             for r in related(vault, "_shared/knowledge/b.md", hops=1)}
+        assert b["_shared/knowledge/a.md"] == "in"    # A links to B
+        assert b["_shared/knowledge/c.md"] == "out"   # B links to C
+
+    def test_related_two_hops(self, tmp_path: Path):
+        vault = detect(self._graph_vault(tmp_path))
+        by_hops = {r["path"]: r["hops"]
+                   for r in related(vault, "_shared/knowledge/a.md", hops=2)}
+        assert by_hops["_shared/knowledge/b.md"] == 1
+        assert by_hops["_shared/knowledge/c.md"] == 2  # A→B→C
+
+    def test_link_report_broken_and_orphans(self, tmp_path: Path):
+        rep = link_report(detect(self._graph_vault(tmp_path)))
+        assert {"src": "_shared/knowledge/a.md", "target": "Missing Thing"} in rep["broken"]
+        assert "_shared/knowledge/d.md" in rep["orphans"]  # nothing links to D
+        assert "_shared/knowledge/b.md" not in rep["orphans"]  # A links to B
+
+    def test_cli_related_resolves_by_title(self, tmp_path: Path, capsys):
+        vault_dir = self._graph_vault(tmp_path)
+        rc = main(["--vault", str(vault_dir), "related", "Note A", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert env["command"] == "related"
+        assert any(r["path"] == "_shared/knowledge/b.md" for r in env["data"]["related"])
+
+    def test_cli_links_reports_broken(self, tmp_path: Path, capsys):
+        vault_dir = self._graph_vault(tmp_path)
+        rc = main(["--vault", str(vault_dir), "links", "--broken", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert any(b["target"] == "Missing Thing" for b in env["data"]["broken"])
