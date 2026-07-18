@@ -32,13 +32,11 @@ from .hooks import (
 )
 from .knowledge import (
     build_index,
-    build_resolution_index,
-    ensure_index,
     link_report,
     load_index,
     lookup,
     related,
-    resolve_target,
+    resolve_note_ref,
 )
 from .session import derive_project, recall, render_brief
 from .sync import SyncError, run_git, sync
@@ -348,20 +346,9 @@ def cmd_lookup(args) -> int:
     return 0
 
 
-def _resolve_note_ref(vault, ref: str) -> str | None:
-    """A `related`/graph note reference → its vault-relative path. Accepts a
-    title/alias/slug (resolved like a wikilink) or an already-relative path."""
-    entries = ensure_index(vault).get("entries", [])
-    hit = resolve_target(ref, build_resolution_index(entries))
-    if hit is not None:
-        return str(hit.get("path"))
-    ref_norm = ref.replace("\\", "/")
-    return ref_norm if any(str(e.get("path")) == ref_norm for e in entries) else None
-
-
 def cmd_related(args) -> int:
     vault = _resolve_vault(args)
-    path = _resolve_note_ref(vault, args.note)
+    path = resolve_note_ref(vault, args.note)
     if path is None:
         if args.json:
             _emit_json("related", {"note": args.note, "related": []})
@@ -384,9 +371,10 @@ def cmd_related(args) -> int:
 def cmd_links(args) -> int:
     vault = _resolve_vault(args)
     report = link_report(vault)
-    # No flags → show both. Otherwise show only what's asked.
-    show_broken = args.broken or not args.orphans
-    show_orphans = args.orphans or not args.broken
+    # Show what was asked; with no flags, show both.
+    neither = not (args.broken or args.orphans)
+    show_broken = args.broken or neither
+    show_orphans = args.orphans or neither
     if args.json:
         data = {}
         if show_broken:

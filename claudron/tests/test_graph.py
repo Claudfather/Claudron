@@ -12,7 +12,12 @@ from pathlib import Path
 
 from claudron import resolve_wikilinks
 from claudron.cli import main
-from claudron.knowledge import link_report, related, wikilink_targets
+from claudron.knowledge import (
+    link_report,
+    related,
+    resolve_note_ref,
+    wikilink_targets,
+)
 from claudron.vault import detect
 
 
@@ -207,3 +212,11 @@ class TestRelatedAndLinks:
         assert rc == 0
         env = json.loads(capsys.readouterr().out)
         assert any(b["target"] == "Missing Thing" for b in env["data"]["broken"])
+
+    def test_resolve_note_ref_by_title_and_path(self, tmp_path: Path):
+        """The engine ref-resolver (public, shared by CLI + future MCP): a title
+        or an already vault-relative path both resolve; a miss is None."""
+        vault = detect(self._graph_vault(tmp_path))
+        assert resolve_note_ref(vault, "Note A") == "_shared/knowledge/a.md"
+        assert resolve_note_ref(vault, "_shared/knowledge/a.md") == "_shared/knowledge/a.md"
+        assert resolve_note_ref(vault, "No Such Note") is None

@@ -690,6 +690,20 @@ def resolve_wikilinks(text: str, vault: "Vault") -> dict[str, dict]:
     return resolved
 
 
+def resolve_note_ref(vault: "Vault", ref: str) -> str | None:
+    """A graph note reference → its vault-relative path, or ``None``. Accepts a
+    title/alias/slug (resolved exactly like a wikilink, via
+    :func:`resolve_target`) or an already vault-relative path. The engine home so
+    every caller — ``claudron related``, a future MCP ``related`` — shares one
+    ref-resolution rule instead of re-deriving it."""
+    entries = ensure_index(vault).get("entries", [])
+    hit = resolve_target(ref, build_resolution_index(entries))
+    if hit is not None:
+        return str(hit.get("path"))
+    ref_norm = ref.replace("\\", "/")
+    return ref_norm if any(str(e.get("path")) == ref_norm for e in entries) else None
+
+
 def _note_body(vault: "Vault", rel_path: str) -> str:
     """Body of a vault-relative note, or ``""`` on any read error / quarantine.
     Quarantined (conflict-marker) notes are not part of the graph, matching the
@@ -704,10 +718,13 @@ def _note_body(vault: "Vault", rel_path: str) -> str:
     return body
 
 
-def build_edges(vault: "Vault") -> list[tuple[str, str, str | None]]:
-    """Every wikilink edge in the vault as ``(src, target, dst)`` — src/dst are
-    vault-relative note paths, target is the raw ``[[text]]``, dst is ``None`` for
-    an unresolved link (a wanted-but-unwritten note).
+def build_edges(vault: "Vault") -> tuple[list[tuple[str, str, str | None]], list[dict]]:
+    """Every wikilink edge in the vault as ``(src, target, dst)``, plus the index
+    entries the edges were built from — returned together so a caller
+    (``related``, ``link_report``) reuses one ``ensure_index`` snapshot instead of
+    loading the index twice. src/dst are vault-relative note paths, target is the
+    raw ``[[text]]``, dst is ``None`` for an unresolved link (a wanted-but-unwritten
+    note).
 
     Reads each indexed note's body once and resolves against a single shared
     resolution index — O(N), which is the exact work the deferred SQLite ``edges``
@@ -720,7 +737,7 @@ def build_edges(vault: "Vault") -> list[tuple[str, str, str | None]]:
         for target in wikilink_targets(_note_body(vault, rel)):
             best = resolve_target(target, index)
             edges.append((rel, target, best.get("path") if best else None))
-    return edges
+    return edges, entries
 
 
 def related(vault: "Vault", note_path: str, *, hops: int = 1) -> list[dict]:
@@ -732,19 +749,24 @@ def related(vault: "Vault", note_path: str, *, hops: int = 1) -> list[dict]:
     Traversal is undirected so a 2-hop reaches a neighbor's neighbor either way.
     """
     rel = str(note_path)
-    edges = build_edges(vault)
-    entries = {str(e.get("path")): e for e in ensure_index(vault).get("entries", [])}
+    edges, entry_list = build_edges(vault)
+    entries = {str(e.get("path")): e for e in entry_list}
 
+    # BFS needs full undirected adjacency; direction is only reported for rel's
+    # own direct neighbors, so accumulate just those two sets, not a whole-graph
+    # directed index.
     adj: dict[str, set[str]] = {}
-    out_of: dict[str, set[str]] = {}
-    in_to: dict[str, set[str]] = {}
+    out_of_rel: set[str] = set()
+    in_to_rel: set[str] = set()
     for src, _t, dst in edges:
         if dst is None:
             continue
         adj.setdefault(src, set()).add(dst)
         adj.setdefault(dst, set()).add(src)
-        out_of.setdefault(src, set()).add(dst)
-        in_to.setdefault(dst, set()).add(src)
+        if src == rel:
+            out_of_rel.add(dst)
+        if dst == rel:
+            in_to_rel.add(src)
 
     depth_of = {rel: 0}
     frontier = [rel]
@@ -763,8 +785,7 @@ def related(vault: "Vault", note_path: str, *, hops: int = 1) -> list[dict]:
             continue
         e = entries.get(path, {})
         if depth == 1:
-            out = path in out_of.get(rel, ())
-            inn = path in in_to.get(rel, ())
+            out, inn = path in out_of_rel, path in in_to_rel
             direction = "both" if out and inn else ("out" if out else "in")
         else:
             direction = f"{depth}-hop"
@@ -783,8 +804,7 @@ def link_report(vault: "Vault") -> dict:
     ``broken``: ``[{src, target}]``; ``orphans``: ``[path]``. Both sorted. An
     orphan is a candidate to link from a hub or to prune; a broken link is a
     prompt to write the wanted note or fix the reference."""
-    edges = build_edges(vault)
-    entries = ensure_index(vault).get("entries", [])
+    edges, entries = build_edges(vault)
     broken = sorted(
         ({"src": s, "target": t} for s, t, dst in edges if dst is None),
         key=lambda b: (b["src"], b["target"].lower()),
