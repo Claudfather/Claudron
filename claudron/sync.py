@@ -51,6 +51,12 @@ class SyncResult:
         }
 
 
+# Default per-git-op bound when a caller passes no timeout. The hooks pass their
+# own tight budgets (SessionStart pull, SessionEnd push); this is the floor for a
+# manual `claudron sync` so a hung git can't pin the vault write-lock forever.
+DEFAULT_GIT_TIMEOUT = 30.0
+
+
 class SyncError(Exception):
     """Environment problems (not a git repo, no git binary) — the CLI maps
     these to exit 3; conflicts are NOT errors, they are reported results."""
@@ -90,9 +96,17 @@ def sync(
 ) -> SyncResult:
     """Commit → pull --rebase → push. Raises SyncError for environment
     problems; returns ok=False (with detail + quarantine list) when a
-    conflict or push failure was left for the human."""
+    conflict or push failure was left for the human.
+
+    Every git op is bounded (``timeout`` or :data:`DEFAULT_GIT_TIMEOUT`): sync
+    holds the vault write-lock across the whole critical section, and the lock
+    can only be reclaimed when the holder exits — so a git that *hangs* (a gpg
+    passphrase prompt on commit, a credential prompt or network stall on
+    pull/push) rather than crashes must be forced to fail, or it would pin the
+    lock and deadlock every concurrent capture on the machine."""
     root = vault.root
-    if run_git(root, "rev-parse", "--git-dir").returncode != 0:
+    t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
+    if run_git(root, "rev-parse", "--git-dir", timeout=t).returncode != 0:
         raise SyncError(f"vault is not a git repository: {root}")
 
     result = SyncResult()
@@ -104,19 +118,21 @@ def sync(
     # serialization still happens at the git layer below).
     with vault_write_lock(vault):
         # Commit any working-tree changes first — captures don't commit, sync
-        # owns the commit so notes actually travel.
-        porcelain = run_git(root, "status", "--porcelain").stdout.strip()
+        # owns the commit so notes actually travel. Every call is bounded by t
+        # so a wedged git releases the lock instead of holding it forever.
+        porcelain = run_git(root, "status", "--porcelain", timeout=t).stdout.strip()
         if porcelain:
-            run_git(root, "add", "-A")
+            run_git(root, "add", "-A", timeout=t)
             n = len(porcelain.splitlines())
             commit = run_git(
                 root, "commit",
                 "-m", f"claudron sync: {n} change(s) from {socket.gethostname()}",
+                timeout=t,
             )
             result.committed = commit.returncode == 0
 
         if pull:
-            pulled = run_git(root, "pull", "--rebase", "origin", "HEAD", timeout=timeout)
+            pulled = run_git(root, "pull", "--rebase", "origin", "HEAD", timeout=t)
             if pulled.returncode != 0:
                 # Conflict (or no remote). The rebase stays stopped with markers
                 # in the working tree — the standard resolve/--continue flow;
@@ -141,7 +157,7 @@ def sync(
             )
 
         if push:
-            pushed = run_git(root, "push", "origin", "HEAD", timeout=timeout)
+            pushed = run_git(root, "push", "origin", "HEAD", timeout=t)
             result.pushed = pushed.returncode == 0
             if not result.pushed:
                 result.detail = f"push failed: {pushed.stderr.strip()[:200]}"

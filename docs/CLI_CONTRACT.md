@@ -101,7 +101,9 @@ One shape, every command:
     written nothing (the human/agent is asked to `--update` or `--force`). A
     consumer that treats exit 0 / `ok:true` as "captured" silently drops the
     finding — branch on `written`. `rejected` (validation failure) is the only
-    write outcome that exits 1.
+    write outcome that exits 1. (This `written` signal is specific to
+    dedup-routed `capture`; the authoring door `new` always writes-or-errors —
+    exit 0 means the note landed — so it carries no `written` field.)
   - **Programmatic writers MUST pass content via `--stdin` JSON, never `--body`
     string interpolation.** Note bodies are free text (quotes, newlines,
     `$(...)`, backticks); building a `--body "…"` shell argument truncates the

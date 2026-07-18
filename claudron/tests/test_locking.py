@@ -30,6 +30,38 @@ def test_atomic_write_replaces_and_leaves_no_temp(tmp_path: Path):
     assert [p.name for p in target.parent.iterdir()] == ["f.txt"]
 
 
+def test_atomic_write_preserves_permissions(tmp_path: Path):
+    """Review fix: mkstemp makes the temp 0600; without copying the target's
+    mode every rewrite would silently narrow a note/index to owner-only and
+    break cross-UID reads on a shared-host fleet."""
+    import os
+
+    # New file honors umask (not 0600) — group/other read bit survives.
+    new = tmp_path / "new.md"
+    atomic_write_text(new, "x")
+    assert new.stat().st_mode & 0o044, "new file lost group/other read"
+
+    # Existing group-readable file keeps its mode across an atomic rewrite.
+    existing = tmp_path / "existing.md"
+    existing.write_text("v1")
+    os.chmod(existing, 0o664)
+    atomic_write_text(existing, "v2")
+    assert existing.stat().st_mode & 0o777 == 0o664
+    assert existing.read_text() == "v2"
+
+
+def test_write_lock_is_reentrant(vault_dir: Path):
+    """Review fix: the read-path index rebuild is now locked, so a mutator that
+    already holds the lock (capture → ensure_index → build_index) re-acquires it.
+    A non-reentrant lock would self-deadlock; this must return promptly."""
+    pytest.importorskip("fcntl")
+    vault = detect(vault_dir)
+    with vault_write_lock(vault):
+        with vault_write_lock(vault):  # nested acquire on the same thread
+            marker = True
+    assert marker  # reached without hanging
+
+
 def test_write_lock_is_exclusive(vault_dir: Path):
     """vault_write_lock serializes across holders (flock LOCK_EX): a second
     non-blocking acquire on the same lock file fails while the first is held."""

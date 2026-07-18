@@ -495,13 +495,12 @@ def _emit_write_result(args, result) -> int:
     succeeds having written nothing. A programmatic caller (a clauDNA skill
     wrapping the CLI) must branch on ``written`` / ``action``, never on the exit
     code, or it silently drops the deduped finding (docs/CLI_CONTRACT.md)."""
-    written = result.action in ("created", "updated")
     if result.action == "rejected":
         if args.json:
             _emit_json(
                 "capture",
                 {"action": result.action, "path": result.path,
-                 "reason": result.reason, "written": False},
+                 "reason": result.reason, "written": result.written},
                 result.errors,
             )
         else:
@@ -513,7 +512,7 @@ def _emit_write_result(args, result) -> int:
         _emit_json(
             "capture",
             {"action": result.action, "path": result.path,
-             "reason": result.reason, "written": written},
+             "reason": result.reason, "written": result.written},
         )
     else:
         print(f"{result.action}: {result.path}")

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .locking import atomic_write_text
+from .locking import atomic_write_text, vault_write_lock
 from .schema import LOOKUP_EXCLUDED, content_fingerprint, has_conflict_markers
 from .vault import (
     SCHEMA_VERSION,
@@ -198,15 +198,42 @@ def _iter_indexable(vault: "Vault"):
 
 
 def build_index(vault: "Vault") -> dict:
-    """Build frontmatter-only index, write to ``.claudron/index.json``."""
-    entries: list[dict] = []
-    for md, tier, text in _iter_indexable(vault):
-        fm, body = parse_frontmatter(text)
-        entries.append(index_entry(fm, body, md, tier, vault.root))
+    """Build frontmatter-only index, write to ``.claudron/index.json``.
 
-    index = {"schema_version": SCHEMA_VERSION, "entries": entries}
-    write_index(vault, index)
-    return index
+    Held under the vault write-lock across the disk read AND the write: a full
+    rebuild that reads the tree at T0 and writes at T2 would otherwise clobber a
+    concurrent capture that landed a note at T1 (read-path lost-update). The lock
+    is re-entrant, so calling this from within a mutator that already holds it
+    (capture → ensure_index → build_index) is a no-op acquisition, not a deadlock.
+    """
+    with vault_write_lock(vault):
+        entries: list[dict] = []
+        for md, tier, text in _iter_indexable(vault):
+            fm, body = parse_frontmatter(text)
+            entries.append(index_entry(fm, body, md, tier, vault.root))
+
+        index = {"schema_version": SCHEMA_VERSION, "entries": entries}
+        write_index(vault, index)
+        return index
+
+
+def _read_index_raw(vault: "Vault") -> dict | None:
+    """The index.json decode both :func:`load_index` and :func:`index_divergence`
+    share — read, parse, shape-check, schema-version-check. Returns ``None`` on
+    missing/corrupt/stale-schema (no pruning; that is load_index's job). One home
+    so the two callers can't drift on the decode."""
+    index_path = vault.root / ".claudron" / "index.json"
+    if not index_path.is_file():
+        return None
+    try:
+        data = json.loads(index_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not (isinstance(data, dict) and "entries" in data):
+        return None
+    if data.get("schema_version") != SCHEMA_VERSION:
+        return None  # stale schema — trigger rebuild
+    return data
 
 
 def load_index(vault: Vault) -> dict | None:
@@ -222,53 +249,70 @@ def load_index(vault: Vault) -> dict | None:
         return None
     if index_is_stale(vault, index_path):
         return None
-    try:
-        data = json.loads(index_path.read_text())
-    except (json.JSONDecodeError, OSError):
+    data = _read_index_raw(vault)
+    if data is None:
         return None
-    if not (isinstance(data, dict) and "entries" in data):
-        return None
-    if data.get("schema_version") != SCHEMA_VERSION:
-        return None  # stale schema — trigger rebuild
     entries = data["entries"]
     live = [e for e in entries if (vault.root / e.get("path", "")).exists()]
-    if len(live) != len(entries):
-        data["entries"] = live
-        write_index(vault, data)  # drop the ghosts from disk, not just in memory
-    return data
+    if len(live) == len(entries):
+        return data
+    # Ghosts to drop — but a concurrent capture may have appended between our
+    # read and now. Re-read under the write-lock and prune THAT, so we never
+    # clobber the appended entry with our stale snapshot.
+    with vault_write_lock(vault):
+        fresh = _read_index_raw(vault)
+        if fresh is None:
+            return data
+        fresh["entries"] = [
+            e for e in fresh["entries"] if (vault.root / e.get("path", "")).exists()
+        ]
+        write_index(vault, fresh)
+        return fresh
 
 
-def index_divergence(vault: "Vault") -> dict:
+def index_divergence(vault: "Vault", *, quarantined: set[str] | None = None) -> dict:
     """Count how far the index has drifted from the notes on disk.
 
     ``missing`` — notes that should be indexed but aren't (a dropped write, a
     coarse-mtime staleness miss). ``ghost`` — index rows whose note is gone.
-    Both are the *silent* failure class the disposable mirror can introduce:
-    recall and dedup quietly work off a stale index with no error. Surfaced by
-    ``claudron status`` and read by the G1 gate; zero on a fresh index.
+    ``corrupt`` — index.json is present but unparseable (itself the silent
+    failure this detector exists to surface). All three are the *silent* failure
+    class the disposable mirror can introduce: recall and dedup quietly work off
+    a stale/garbage index with no error. Surfaced by ``claudron status`` and read
+    by the G1 gate; zero on a fresh index.
 
     Reads ``index.json`` raw (not through :func:`load_index`, which auto-prunes
-    ghosts and hides staleness) and walks disk through :func:`_iter_indexable` —
-    the same enumerator :func:`build_index` uses — so the on-disk set is exactly
-    the set that *should* be indexed (no drift between builder and detector).
+    ghosts and hides staleness). ``quarantined`` (vault-relative conflicted
+    paths) lets a caller that already scanned for markers — ``status`` — pass its
+    set so the on-disk walk stays stat-only instead of re-reading every note
+    body; omitted, we read bodies via :func:`_iter_indexable` to exclude
+    quarantined notes, matching :func:`build_index` exactly.
     """
     index_path = vault.root / ".claudron" / "index.json"
-    if not index_path.is_file():
-        return {"missing": 0, "ghost": 0, "index_present": False}
-    try:
-        data = json.loads(index_path.read_text())
-        entries = data.get("entries", []) if isinstance(data, dict) else []
-    except (json.JSONDecodeError, OSError):
-        return {"missing": 0, "ghost": 0, "index_present": False}
+    present = index_path.is_file()
+    data = _read_index_raw(vault)
+    if data is None:
+        # present-but-None == corrupt/stale-schema: the detector's whole point.
+        return {"missing": 0, "ghost": 0, "index_present": present, "corrupt": present}
 
-    indexed = {e.get("path") for e in entries}
-    on_disk = {
-        str(md.relative_to(vault.root)) for md, _tier, _text in _iter_indexable(vault)
-    }
+    indexed = {e.get("path") for e in data["entries"]}
+    if quarantined is not None:
+        skip = set(quarantined)
+        on_disk = {
+            rel
+            for base, _tier in note_tiers(vault)
+            for md in iter_markdown_files(base)
+            if (rel := str(md.relative_to(vault.root))) not in skip
+        }
+    else:
+        on_disk = {
+            str(md.relative_to(vault.root)) for md, _tier, _text in _iter_indexable(vault)
+        }
     return {
         "missing": len(on_disk - indexed),
         "ghost": len(indexed - on_disk),
-        "index_present": True,
+        "index_present": present,
+        "corrupt": False,
     }
 
 

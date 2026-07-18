@@ -66,9 +66,19 @@ class WriteResult:
     reason: str
     errors: list[Finding] = field(default_factory=list)
 
+    @property
+    def written(self) -> bool:
+        """True iff a note actually landed. The load-bearing signal every door
+        reports: a ``suggest_*`` dedup route (and ``rejected``) *succeeds* having
+        written nothing, so a consumer must branch on this, not on ok/exit
+        (docs/CLI_CONTRACT.md). Lives on the shared type so the CLI and a future
+        MCP ``claudron_write`` can't drift on the string match."""
+        return self.action in ("created", "updated")
+
     def to_dict(self) -> dict:
         data = asdict(self)
         data["errors"] = [f.to_dict() for f in self.errors]
+        data["written"] = self.written
         return data
 
 
