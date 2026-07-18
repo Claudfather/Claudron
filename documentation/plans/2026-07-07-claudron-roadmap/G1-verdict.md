@@ -54,11 +54,30 @@ noise (capture accumulates junk, not signal), **or** S3 shows unrecoverable
 index/resync loss. Absent all three, **PASS**. A PIVOT is a recorded strategy
 change (fleet-first replan), never silently absorbed into "shipped anyway."
 
+## The F2 trigger — now measured, not assumed
+
+The re-scope defers E4's SQLite/FTS5 tier behind D6/F2 ("paraphrase-miss rate
+crosses a threshold, or the vault passes ~1k notes"). That paraphrase half was
+never measured — until the eval seed (`claudron/tests/eval/queries.json` +
+`claudron/eval.py`). Baseline on the reference vault (2026-07):
+
+- **recall@5 = 95%** (18/19); **literal 100%** (9/9), **paraphrase 90%** (9/10).
+- One genuine paraphrase miss ("problems verifying identity claims" → JWT
+  gotchas — near-zero surface overlap), the exact F2 blind spot.
+
+**One miss in ten paraphrases is far below any threshold that would trigger the
+scale build**, so the deferral is now evidence-based. (The first run also caught
+two seed errors — queries targeting a `status: superseded` note that `lookup`
+correctly hides — a reminder the harness tests itself too.) Re-run
+`run_eval()` as the vault grows; the same harness scores E4's before/after if it
+ever ships.
+
 ## What this verdict gates
 
 On PASS: the next build proceeds — the **graph slice** (`resolve_wikilinks` +
-`links`/`related`, scale-free) then **E5-lite** (maturity + `promote`); SQLite/FTS5
-stays deferred behind the measured D6/F2 trigger (adopt-vs-build spike:
-`2026-07-18-adopt-vs-build-spike.md`, verdict BUILD). MCP/E3 stays demand-gated
+`links`/`related`, scale-free — **shipped**) then **E5-lite** (maturity +
+`promote`); SQLite/FTS5 stays deferred behind the D6/F2 trigger (**measured
+above; not fired**) and the adopt-vs-build spike
+(`2026-07-18-adopt-vs-build-spike.md`, verdict BUILD). MCP/E3 stays demand-gated
 (`2026-07-18-decision-c-mcp-demand-gated.md`). On PIVOT: re-anchor per
 `00-overview.md` §Gate G1.
