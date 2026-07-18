@@ -201,6 +201,66 @@ class TestNestedFleetNameShadow:
         assert "system:sys1" in tags
 
 
+class TestFleetNameCollision:
+    """Fix-forward for #49's blocker: a flat top-level fleet and a same-named
+    nested fleet collide by bare name. The flat fleet MUST win (else its dir is
+    misclassified into the other:-hatch and its whole tree — library/, voices/ —
+    is rglob'd as notes), and the collision is recorded, never silently dropped."""
+
+    def _collision_vault(self, tmp_path: Path) -> Path:
+        root = tmp_path / "v"
+        (root / "_shared" / "knowledge").mkdir(parents=True)
+        flat = root / "experiments"  # a real flat top-level fleet
+        (flat / "shared" / "knowledge").mkdir(parents=True)
+        (flat / "fleet.yaml").write_text("name: experiments\n")
+        (flat / "library").mkdir()  # overlay content that must NOT be swept
+        (flat / "library" / "notanote.md").write_text("# overlay, not a note\n")
+        sysd = root / "sys1"  # a system container holding a same-named fleet
+        nested = sysd / "experiments"
+        (nested / "shared" / "knowledge").mkdir(parents=True)  # creates sysd too
+        (sysd / ".claudron-system").write_text("")
+        (nested / "fleet.yaml").write_text("name: experiments\n")
+        return root
+
+    def test_flat_fleet_wins_and_collision_recorded(self, tmp_path: Path):
+        vault = detect(self._collision_vault(tmp_path))
+        assert vault.fleets["experiments"] == vault.root / "experiments"  # flat wins
+        assert "experiments" in vault.fleet_collisions
+
+    def test_flat_fleet_not_over_swept(self, tmp_path: Path):
+        vault = detect(self._collision_vault(tmp_path))
+        pairs = list(note_tiers(vault))
+        # the flat fleet's shared/ is a proper fleet tier, keyed at the root ...
+        assert (vault.root / "experiments" / "shared", "fleet:experiments") in pairs
+        # ... and its dir is NOT dumped into the other: hatch (which rglobs library/)
+        assert not any(tier == "other:experiments" for _b, tier in pairs)
+
+    def test_status_warns_on_collision(self, tmp_path: Path):
+        info = status(detect(self._collision_vault(tmp_path)))
+        assert any("claimed by two fleets" in w for w in info["warnings"])
+
+
+class TestSystemContainerDetect:
+    """Fix-forward for #49: the `_shared` branch of detect() also guards against
+    a `.claudron-system` container, so a container using the *preferred*
+    `_shared/` spelling doesn't bind as the vault root and lose the true global
+    root above it (the `shared` branch already had this guard; `_shared` didn't)."""
+
+    def test_shared_spelled_system_container_does_not_bind(self, tmp_path: Path):
+        root = tmp_path / "v"
+        (root / "_shared" / "knowledge").mkdir(parents=True)
+        sysd = root / "sys1"
+        (sysd / "_shared" / "knowledge").mkdir(parents=True)  # preferred spelling, INSIDE
+        (sysd / ".claudron-system").write_text("")
+        fleetA = sysd / "fleetA"
+        (fleetA / "shared" / "knowledge").mkdir(parents=True)
+        (fleetA / "fleet.yaml").write_text("name: fleetA\n")
+        # A bot deep inside walks up PAST sys1 (which has _shared/ + marker) to root.
+        vault = detect(fleetA)
+        assert vault is not None
+        assert vault.root == root  # the true global root, not the sys1 container
+
+
 class TestInit:
     def test_init_creates_structure(self, tmp_path: Path):
         target = tmp_path / "new-vault"

@@ -165,6 +165,10 @@ class Vault:
     projects: dict[str, Path]  # {name: root / "projects" / name}
     fleets: dict[str, Path]  # {name: fleet_dir} — flat AND nested, bare-name key
     systems: dict[str, Path]  # {name: root / name} — .claudron-system containers
+    # Bare fleet names claimed by more than one fleet (a flat + a nested one, or
+    # two systems' nested fleets). The loser is NOT indexed — surfaced as a
+    # status/validate warning so the F5 violation is visible, never silent.
+    fleet_collisions: tuple[str, ...] = ()
 
     @property
     def recognized_top_level(self) -> set[str]:
@@ -243,21 +247,26 @@ def detect(path: Path | None = None) -> Vault | None:
     """
     start = (path or Path.cwd()).resolve()
     for candidate in [start, *start.parents]:
-        if _dir_named(candidate, "_shared"):
-            return _scan_vault(candidate)
-        # shared/ is also valid, but NOT the binding root when it is a fleet
-        # overlay's shared/ (fleet.yaml sits beside it) NOR a system container's
-        # shared/ (B2: a `.claudron-system` dir has no sibling fleet.yaml, so
-        # this branch would otherwise bind the container and lose the global
-        # _shared/ above it). In both cases keep walking up to the true root,
-        # whose _shared/ (or a plain shared/) always binds via the checks above.
-        if (
-            _dir_named(candidate, "shared")
-            and not (candidate / "fleet.yaml").is_file()
-            and not (candidate / SYSTEM_MARKER).is_file()
-        ):
+        # `_shared/` and plain `shared/` both mark a vault root, but NEITHER
+        # binds when it is a fleet overlay's dir (fleet.yaml sits beside it) or a
+        # `.claudron-system` container (B2): those live *inside* the vault, and
+        # binding one would lose the true global root above it. A system
+        # container can use the preferred `_shared/` spelling, so the same guard
+        # must apply to both branches — keep walking up to the true root, whose
+        # markers carry no sibling fleet.yaml / system marker.
+        if _is_binding_root(candidate, "_shared") or _is_binding_root(candidate, "shared"):
             return _scan_vault(candidate)
     return None
+
+
+def _is_binding_root(candidate: Path, marker: str) -> bool:
+    """True if *candidate* is a vault root by *marker* and not a fleet overlay
+    or a system container (which live inside a vault, not at its root)."""
+    return (
+        _dir_named(candidate, marker)
+        and not (candidate / "fleet.yaml").is_file()
+        and not (candidate / SYSTEM_MARKER).is_file()
+    )
 
 
 def _scan_vault(root: Path) -> Vault:
@@ -280,28 +289,37 @@ def _scan_vault(root: Path) -> Vault:
     # empty and this is byte-identical to the pre-P1 flat-fleet loop.
     fleets: dict[str, Path] = {}
     systems: dict[str, Path] = {}
+    nested: list[tuple[str, Path]] = []  # deferred: fold AFTER flat fleets
     for d in _child_dirs(root):
         if (d / SYSTEM_MARKER).is_file():
-            # System container: record it, then fold its nested fleets into the
-            # SAME fleets dict under their BARE names (F5 global-unique keys —
-            # never namespaced). The container itself is never a flat fleet.
+            # System container: record it and defer its nested fleets. The
+            # container itself is never a flat fleet.
             systems[d.name] = d
-            for sub in _child_dirs(d):
-                if (sub / "fleet.yaml").is_file():
-                    # Bare-name key (F5 global-unique — never namespaced). A
-                    # duplicate bare fleet name across depths (a flat fleet + a
-                    # nested one, or two systems' nested fleets) silently
-                    # last-wins here — an F5 violation Claudlobby's
-                    # _find_fleet_dir raises on. Claudron's validate flagging it
-                    # via a new S-code is a tracked follow-up (parity with the
-                    # recall-union deferral); the clobber is left as-is for now.
-                    fleets[sub.name] = sub
+            nested.extend(
+                (sub.name, sub) for sub in _child_dirs(d)
+                if (sub / "fleet.yaml").is_file()
+            )
             continue
         if (d / "fleet.yaml").is_file():
             fleets[d.name] = d
 
+    # Fold nested fleets AFTER the flat ones, and never clobber an existing
+    # bare-name key (F5 global-unique). A flat top-level fleet must always win
+    # its name: were a nested fold to overwrite it, `fleets[name]` would point
+    # into a system container (parent != root), so recognized_top_level would
+    # drop the real flat dir into the other:-hatch and rglob its whole tree as
+    # notes — silent over-sweep / data loss. The loser is recorded, not dropped
+    # in silence (surfaced by `status`).
+    collisions: list[str] = []
+    for name, sub in nested:
+        if name in fleets:
+            collisions.append(name)
+        else:
+            fleets[name] = sub
+
     return Vault(
-        root=root, shared=shared, projects=projects, fleets=fleets, systems=systems
+        root=root, shared=shared, projects=projects, fleets=fleets,
+        systems=systems, fleet_collisions=tuple(sorted(set(collisions))),
     )
 
 
@@ -469,6 +487,16 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     quarantined = scan_quarantine(vault)
     for path in quarantined:
         warnings.append(f"quarantined (unresolved conflict markers): {path}")
+
+    # Fleet-name collisions: a bare fleet name claimed at two depths — the loser
+    # is unindexed and unreachable. Surface it (F5: fleet names are global) so
+    # the drop is never silent; the fix is to rename one fleet.
+    for name in vault.fleet_collisions:
+        warnings.append(
+            f"fleet name '{name}' is claimed by two fleets (a flat + a nested "
+            "one, or two systems') — only one is indexed; rename one to recover "
+            "the other's knowledge"
+        )
 
     # Check index freshness
     index_path = vault.root / ".claudron" / "index.json"
