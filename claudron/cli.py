@@ -61,10 +61,16 @@ def _emit_json(command: str, data: dict, findings: list[Finding] | None = None) 
 
 
 def _detect_vault(args) -> Vault | None:
-    """The resolution chain (--vault flag → CLAUDRON_VAULT env → walk-up),
-    policy-free. _resolve_vault adds exit-3-on-None; hooks pass None
-    through (fail-open contract)."""
-    vault_hint = getattr(args, "vault", None) or os.environ.get("CLAUDRON_VAULT")
+    """The resolution chain, policy-free (docs/CLI_CONTRACT.md order):
+    --vault flag → $CLAUDRON_VAULT_PATH → $CLAUDRON_VAULT → walk-up.
+    _resolve_vault adds exit-3-on-None; hooks pass None through (fail-open
+    contract). CLAUDRON_VAULT_PATH is the var Claudlobby emits per bot
+    (composer.py) — reading it is what makes the CLI the fleet's contract floor."""
+    vault_hint = (
+        getattr(args, "vault", None)
+        or os.environ.get("CLAUDRON_VAULT_PATH")
+        or os.environ.get("CLAUDRON_VAULT")
+    )
     return detect(Path(vault_hint)) if vault_hint else detect()
 
 
@@ -482,12 +488,19 @@ def cmd_capture(args) -> int:
 
 def _emit_write_result(args, result) -> int:
     """One WriteResult renderer for the write commands (capture --update
-    shares it): rejected → findings + exit 1, else action/path + exit 0."""
+    shares it): rejected → findings + exit 1, else action/path + exit 0.
+
+    ``written`` is the load-bearing signal: exit 0 and ``ok:true`` mean the
+    command *succeeded*, not that a note landed — a ``suggest_*`` dedup route
+    succeeds having written nothing. A programmatic caller (a clauDNA skill
+    wrapping the CLI) must branch on ``written`` / ``action``, never on the exit
+    code, or it silently drops the deduped finding (docs/CLI_CONTRACT.md)."""
     if result.action == "rejected":
         if args.json:
             _emit_json(
                 "capture",
-                {"action": result.action, "path": result.path, "reason": result.reason},
+                {"action": result.action, "path": result.path,
+                 "reason": result.reason, "written": result.written},
                 result.errors,
             )
         else:
@@ -498,12 +511,15 @@ def _emit_write_result(args, result) -> int:
     if args.json:
         _emit_json(
             "capture",
-            {"action": result.action, "path": result.path, "reason": result.reason},
+            {"action": result.action, "path": result.path,
+             "reason": result.reason, "written": result.written},
         )
     else:
         print(f"{result.action}: {result.path}")
         if result.action.startswith("suggest_"):
             print(result.reason, file=sys.stderr)
+            print("note: nothing written — this is a dedup suggestion, not a "
+                  "save (re-run with --update or --force)", file=sys.stderr)
     return 0
 
 

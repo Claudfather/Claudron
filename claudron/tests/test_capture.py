@@ -110,6 +110,28 @@ class TestCaptureDedup:
         env = json.loads(capsys.readouterr().out)
         assert rc == 0 and env["data"]["action"] == "suggest_update"
 
+    def test_written_flag_distinguishes_a_save_from_a_suggestion(
+        self, vault_dir: Path, capsys
+    ):
+        """PR-H (Juncture B): a dedup suggestion succeeds (exit 0, ok:true)
+        having written nothing — `written` is the signal a CLI-wrapping skill
+        must branch on, or it silently drops the finding."""
+        rc = main(["--vault", str(vault_dir), "capture", "--type", "knowledge",
+                   "--title", "Retry Strategy", "--body", "First.",
+                   "--owner", "b", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert rc == 0 and env["data"]["action"] == "created"
+        assert env["data"]["written"] is True
+
+        # Same title again → dedup routes to suggest_*; nothing written.
+        rc = main(["--vault", str(vault_dir), "capture", "--type", "knowledge",
+                   "--title", "Retry Strategy", "--body", "Second.",
+                   "--owner", "b", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert rc == 0 and env["ok"] is True          # command succeeded
+        assert env["data"]["action"].startswith("suggest_")
+        assert env["data"]["written"] is False        # …but no note landed
+
     def test_stale_match_suggests_supersede(self, vault_dir: Path, capsys):
         _existing(vault_dir, status="stale")
         rc = main(["--vault", str(vault_dir), "capture", "--type", "knowledge",
