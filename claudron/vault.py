@@ -406,6 +406,20 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     if index_path.is_file():
         index_fresh = not index_is_stale(vault, index_path)
 
+    # Index-vs-vault divergence: the silent-failure detector (a dropped write,
+    # a coarse-mtime miss, a ghost row). Nonzero means recall/dedup are working
+    # off a stale mirror with no error — surface it as a warning so it can't rot
+    # invisibly, and carry the numbers for the G1 gate. Lazy import: knowledge
+    # imports vault, so a module-level import here would cycle.
+    from .knowledge import index_divergence
+
+    divergence = index_divergence(vault)
+    if divergence["missing"] or divergence["ghost"]:
+        warnings.append(
+            f"index diverged from disk: {divergence['missing']} note(s) missing, "
+            f"{divergence['ghost']} ghost entr(y/ies) — run `claudron index --full`"
+        )
+
     return {
         "root": str(vault.root),
         "tiers": tiers,
@@ -416,6 +430,7 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
         "quarantined": quarantined,
         "index_present": index_path.is_file(),
         "index_fresh": index_fresh,
+        "divergence": divergence,
         "warnings": warnings,
     }
 

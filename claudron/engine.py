@@ -27,6 +27,7 @@ from pathlib import Path
 import yaml
 
 from .knowledge import ensure_index, index_entry, write_index
+from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     DEDUP_EXEMPT,
     MATURITY_VALUES,
@@ -251,34 +252,39 @@ def capture(
     if errors:
         return _rejected(errors)
 
-    index = ensure_index(vault)
+    # One lock over dedup→write→index: two concurrent writers must not both
+    # pass dedup against the same base index and then clobber each other's
+    # append (last-writer-wins drops a note from the index — invisible to
+    # lookup and dedup). Readers stay lockless; atomic writes protect them.
+    with vault_write_lock(vault):
+        index = ensure_index(vault)
 
-    if not force:
-        dup = find_duplicate(index.get("entries", []), title, note_body)
-        if dup is not None:
-            dup_path, dup_status, matched = dup
-            action = "suggest_supersede" if dup_status == "stale" else "suggest_update"
-            hint = (
-                "it is stale — supersede it (superseded_by) with a fresh note"
-                if action == "suggest_supersede"
-                else "append there (capture --update) instead of duplicating"
-            )
-            return WriteResult(
-                action=action,
-                path=dup_path,
-                reason=f"'{matched}' already covers this ({dup_path}, status: {dup_status}) — {hint}",
-            )
+        if not force:
+            dup = find_duplicate(index.get("entries", []), title, note_body)
+            if dup is not None:
+                dup_path, dup_status, matched = dup
+                action = "suggest_supersede" if dup_status == "stale" else "suggest_update"
+                hint = (
+                    "it is stale — supersede it (superseded_by) with a fresh note"
+                    if action == "suggest_supersede"
+                    else "append there (capture --update) instead of duplicating"
+                )
+                return WriteResult(
+                    action=action,
+                    path=dup_path,
+                    reason=f"'{matched}' already covers this ({dup_path}, status: {dup_status}) — {hint}",
+                )
 
-    target = _free_slug(target_dir, slugify(title))
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(text)
+        target = _free_slug(target_dir, slugify(title))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(target, text)
 
-    # Maintain the index: append the entry, write index.json last so its
-    # mtime ≥ the note's — the next write loads instead of rebuilding.
-    index["entries"].append(
-        index_entry(fm, note_body, target, _tier_label(project, fleet), vault.root)
-    )
-    write_index(vault, index)
+        # Maintain the index: append the entry, write index.json last so its
+        # mtime ≥ the note's — the next write loads instead of rebuilding.
+        index["entries"].append(
+            index_entry(fm, note_body, target, _tier_label(project, fleet), vault.root)
+        )
+        write_index(vault, index)
 
     return WriteResult(
         action="created",
@@ -300,33 +306,37 @@ def append_addendum(vault: Vault, note_path: Path, body: str) -> WriteResult:
         raise ScopeError(f"path {str(note_path)!r} escapes the vault root")
     note_path = note_path.resolve()
 
-    # Fresh index BEFORE the write (writing first would stale it and force
-    # a full rebuild — the pattern this module exists to avoid).
-    index = ensure_index(vault)
-
     rel = str(note_path.relative_to(vault.root))
-    original = note_path.read_text()
     today = date.today().isoformat()
-    text = set_frontmatter_field(original, "updated", today)
-    text = text.rstrip("\n") + f"\n\n## Addendum — {today}\n\n{body.strip()}\n"
 
-    fm, note_body, err = parse_note(text)
-    findings = validate_note(
-        fm, note_body, strict=False, path=rel, raw=text, parse_error=err
-    )
-    errors = [f for f in findings if f.severity == "error"]
-    if errors:
-        return _rejected(errors)
+    # One lock over read→write→index (same critical section as capture): a
+    # concurrent writer must not stale the index between our read and rewrite.
+    with vault_write_lock(vault):
+        # Fresh index BEFORE the write (writing first would stale it and force
+        # a full rebuild — the pattern this module exists to avoid).
+        index = ensure_index(vault)
 
-    note_path.write_text(text)
+        original = note_path.read_text()
+        text = set_frontmatter_field(original, "updated", today)
+        text = text.rstrip("\n") + f"\n\n## Addendum — {today}\n\n{body.strip()}\n"
 
-    # Refresh the note's entry, write index.json last (mtime ≥ the note's).
-    for entry in index.get("entries", []):
-        if entry.get("path") == rel:
-            entry["updated"] = today
-            entry["content_hash"] = content_fingerprint(note_body)
-            break
-    write_index(vault, index)
+        fm, note_body, err = parse_note(text)
+        findings = validate_note(
+            fm, note_body, strict=False, path=rel, raw=text, parse_error=err
+        )
+        errors = [f for f in findings if f.severity == "error"]
+        if errors:
+            return _rejected(errors)
+
+        atomic_write_text(note_path, text)
+
+        # Refresh the note's entry, write index.json last (mtime ≥ the note's).
+        for entry in index.get("entries", []):
+            if entry.get("path") == rel:
+                entry["updated"] = today
+                entry["content_hash"] = content_fingerprint(note_body)
+                break
+        write_index(vault, index)
 
     return WriteResult(
         action="updated",

@@ -20,6 +20,35 @@ class TestInit:
         assert "vault created" in out
 
 
+class TestVaultResolution:
+    """The CLI resolution chain (CLI_CONTRACT.md): --vault → $CLAUDRON_VAULT_PATH
+    → $CLAUDRON_VAULT → walk-up. PR-H (Juncture B) fixed the CLI reading only
+    CLAUDRON_VAULT — the var Claudlobby does NOT emit — silently breaking the
+    fleet's bare-hook consumption path."""
+
+    def test_claudron_vault_path_resolves_from_outside(
+        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(tmp_path)  # cwd outside the vault (the bot-runtime case)
+        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT_PATH", str(vault_dir))
+        rc = main(["status", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert env["data"]["root"] == str(vault_dir)
+
+    def test_claudron_vault_path_wins_over_claudron_vault(
+        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(tmp_path))       # lower precedence
+        monkeypatch.setenv("CLAUDRON_VAULT_PATH", str(vault_dir))  # wins
+        rc = main(["status", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert env["data"]["root"] == str(vault_dir)
+
+
 class TestStatus:
     def test_status_output_human(self, vault_dir: Path, capsys):
         rc = main(["--vault", str(vault_dir), "status"])

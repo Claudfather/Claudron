@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
+from .locking import atomic_write_text
 from .schema import LOOKUP_EXCLUDED, content_fingerprint, has_conflict_markers
 from .vault import (
     SCHEMA_VERSION,
@@ -161,8 +162,8 @@ def write_index(vault: "Vault", index: dict) -> None:
     index_dir = vault.root / ".claudron"
     try:
         index_dir.mkdir(exist_ok=True)
-        (index_dir / "index.json").write_text(
-            json.dumps(index, indent=2, default=str)
+        atomic_write_text(
+            index_dir / "index.json", json.dumps(index, indent=2, default=str)
         )
     except OSError as exc:
         import warnings
@@ -180,11 +181,12 @@ def ensure_index(vault: "Vault") -> dict:
     return load_index(vault) or build_index(vault)
 
 
-def build_index(vault: "Vault") -> dict:
-    """Build frontmatter-only index, write to ``.claudron/index.json``."""
-    entries: list[dict] = []
-
-    def _index_tier(base: Path, tier: str) -> None:
+def _iter_indexable(vault: "Vault"):
+    """Yield ``(path, tier, text)`` for every note that belongs in the index —
+    readable and not quarantined. The single walk :func:`build_index` and
+    :func:`index_divergence` share, so "what is indexed" cannot drift between
+    the builder and the drift-detector."""
+    for base, tier in note_tiers(vault):
         for md in iter_markdown_files(base):
             try:
                 text = md.read_text()
@@ -192,13 +194,15 @@ def build_index(vault: "Vault") -> dict:
                 continue
             if has_conflict_markers(text):
                 continue  # quarantined (see _parse_doc)
-            fm, body = parse_frontmatter(text)
-            entries.append(index_entry(fm, body, md, tier, vault.root))
+            yield md, tier, text
 
-    # Walk all note tiers — the shared enumerator adopt-backfill also uses, so
-    # the indexed set and the backfilled set cannot drift apart.
-    for base, tier in note_tiers(vault):
-        _index_tier(base, tier)
+
+def build_index(vault: "Vault") -> dict:
+    """Build frontmatter-only index, write to ``.claudron/index.json``."""
+    entries: list[dict] = []
+    for md, tier, text in _iter_indexable(vault):
+        fm, body = parse_frontmatter(text)
+        entries.append(index_entry(fm, body, md, tier, vault.root))
 
     index = {"schema_version": SCHEMA_VERSION, "entries": entries}
     write_index(vault, index)
@@ -232,6 +236,40 @@ def load_index(vault: Vault) -> dict | None:
         data["entries"] = live
         write_index(vault, data)  # drop the ghosts from disk, not just in memory
     return data
+
+
+def index_divergence(vault: "Vault") -> dict:
+    """Count how far the index has drifted from the notes on disk.
+
+    ``missing`` — notes that should be indexed but aren't (a dropped write, a
+    coarse-mtime staleness miss). ``ghost`` — index rows whose note is gone.
+    Both are the *silent* failure class the disposable mirror can introduce:
+    recall and dedup quietly work off a stale index with no error. Surfaced by
+    ``claudron status`` and read by the G1 gate; zero on a fresh index.
+
+    Reads ``index.json`` raw (not through :func:`load_index`, which auto-prunes
+    ghosts and hides staleness) and walks disk through :func:`_iter_indexable` —
+    the same enumerator :func:`build_index` uses — so the on-disk set is exactly
+    the set that *should* be indexed (no drift between builder and detector).
+    """
+    index_path = vault.root / ".claudron" / "index.json"
+    if not index_path.is_file():
+        return {"missing": 0, "ghost": 0, "index_present": False}
+    try:
+        data = json.loads(index_path.read_text())
+        entries = data.get("entries", []) if isinstance(data, dict) else []
+    except (json.JSONDecodeError, OSError):
+        return {"missing": 0, "ghost": 0, "index_present": False}
+
+    indexed = {e.get("path") for e in entries}
+    on_disk = {
+        str(md.relative_to(vault.root)) for md, _tier, _text in _iter_indexable(vault)
+    }
+    return {
+        "missing": len(on_disk - indexed),
+        "ghost": len(indexed - on_disk),
+        "index_present": True,
+    }
 
 
 # ── scoring ──────────────────────────────────────────────────────────

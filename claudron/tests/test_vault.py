@@ -256,6 +256,28 @@ class TestStatus:
         assert info["total_docs"] == 0
         assert any("empty" in w for w in info["warnings"])
 
+    def test_status_reports_index_divergence(self, vault_dir: Path):
+        """PR-H (Juncture D): status surfaces index-vs-vault drift — the silent
+        failure the disposable mirror can introduce — as a number + a warning,
+        and is clean on a fresh index."""
+        from claudron.knowledge import build_index
+
+        vault = detect(vault_dir)
+        build_index(vault)  # index the two seed notes
+        info = status(vault)
+        assert info["divergence"] == {"missing": 0, "ghost": 0, "index_present": True}
+        assert not any("diverged" in w for w in info["warnings"])
+
+        # A note appears on disk but the index isn't rebuilt → missing rises.
+        (vault_dir / "_shared" / "knowledge" / "orphan.md").write_text(
+            "---\ntitle: Orphan Note\ntype: knowledge\nstatus: current\n"
+            "owner: t\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n"
+            "# Orphan Note\n\nNot yet indexed.\n"
+        )
+        info2 = status(vault)
+        assert info2["divergence"]["missing"] >= 1
+        assert any("diverged" in w for w in info2["warnings"])
+
     def test_status_includes_fleet(self, vault_with_fleet: Path):
         vault = detect(vault_with_fleet)
         info = status(vault)

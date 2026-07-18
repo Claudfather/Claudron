@@ -25,6 +25,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .locking import vault_write_lock
 from .vault import Vault, scan_quarantine
 
 
@@ -96,47 +97,53 @@ def sync(
 
     result = SyncResult()
 
-    # Commit any working-tree changes first — captures don't commit, sync
-    # owns the commit so notes actually travel.
-    porcelain = run_git(root, "status", "--porcelain").stdout.strip()
-    if porcelain:
-        run_git(root, "add", "-A")
-        n = len(porcelain.splitlines())
-        commit = run_git(
-            root, "commit",
-            "-m", f"claudron sync: {n} change(s) from {socket.gethostname()}",
-        )
-        result.committed = commit.returncode == 0
+    # Hold the vault write-lock across the whole git critical section: a
+    # `git add -A`/commit or a rebase that rewrites working-tree files must not
+    # interleave with a concurrent `capture` writing a note + index on the same
+    # machine (the local-writer race the lock exists for; cross-machine
+    # serialization still happens at the git layer below).
+    with vault_write_lock(vault):
+        # Commit any working-tree changes first — captures don't commit, sync
+        # owns the commit so notes actually travel.
+        porcelain = run_git(root, "status", "--porcelain").stdout.strip()
+        if porcelain:
+            run_git(root, "add", "-A")
+            n = len(porcelain.splitlines())
+            commit = run_git(
+                root, "commit",
+                "-m", f"claudron sync: {n} change(s) from {socket.gethostname()}",
+            )
+            result.committed = commit.returncode == 0
 
-    if pull:
-        pulled = run_git(root, "pull", "--rebase", "origin", "HEAD", timeout=timeout)
-        if pulled.returncode != 0:
-            # Conflict (or no remote). The rebase stays stopped with markers
-            # in the working tree — the standard resolve/--continue flow;
-            # sync never aborts it (aborting would erase the markers the
-            # human is supposed to see). Scan only the unmerged files.
+        if pull:
+            pulled = run_git(root, "pull", "--rebase", "origin", "HEAD", timeout=timeout)
+            if pulled.returncode != 0:
+                # Conflict (or no remote). The rebase stays stopped with markers
+                # in the working tree — the standard resolve/--continue flow;
+                # sync never aborts it (aborting would erase the markers the
+                # human is supposed to see). Scan only the unmerged files.
+                result.quarantined = scan_quarantine(
+                    vault, paths=_changed_md(root, ["--diff-filter=U"])
+                )
+                result.detail = (
+                    "pull hit conflicts — markers left for the human; conflicted "
+                    "notes are quarantined from search until resolved"
+                    if result.quarantined
+                    else f"pull failed: {pulled.stderr.strip()[:200]}"
+                )
+                return result
+            result.pulled = True
+            # A clean pull can still land markers committed elsewhere — scan
+            # exactly what the pull changed (no-op pull: ORIG_HEAD absent or
+            # equal to HEAD → zero files → zero reads).
             result.quarantined = scan_quarantine(
-                vault, paths=_changed_md(root, ["--diff-filter=U"])
+                vault, paths=_changed_md(root, ["ORIG_HEAD..HEAD"])
             )
-            result.detail = (
-                "pull hit conflicts — markers left for the human; conflicted "
-                "notes are quarantined from search until resolved"
-                if result.quarantined
-                else f"pull failed: {pulled.stderr.strip()[:200]}"
-            )
-            return result
-        result.pulled = True
-        # A clean pull can still land markers committed elsewhere — scan
-        # exactly what the pull changed (no-op pull: ORIG_HEAD absent or
-        # equal to HEAD → zero files → zero reads).
-        result.quarantined = scan_quarantine(
-            vault, paths=_changed_md(root, ["ORIG_HEAD..HEAD"])
-        )
 
-    if push:
-        pushed = run_git(root, "push", "origin", "HEAD", timeout=timeout)
-        result.pushed = pushed.returncode == 0
-        if not result.pushed:
-            result.detail = f"push failed: {pushed.stderr.strip()[:200]}"
+        if push:
+            pushed = run_git(root, "push", "origin", "HEAD", timeout=timeout)
+            result.pushed = pushed.returncode == 0
+            if not result.pushed:
+                result.detail = f"push failed: {pushed.stderr.strip()[:200]}"
 
     return result

@@ -90,5 +90,22 @@ One shape, every command:
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision
   errors (never silently overwrites); `--force` overrides. `--edit` without
   `$EDITOR` still writes the note and errors on stderr.
+- `capture` / `capture --update` — the write door (shared engine with a future
+  MCP `claudron_write`). The `--json` `data` payload is the typed write result:
+  `{action, path, reason, written}`.
+  - **`action` ∈ `{created, updated, suggest_update, suggest_supersede, rejected}`**;
+    `written` is `true` only for `created`/`updated`.
+  - **`written`/`action` — not the exit code — is the "a note landed" signal.**
+    Dedup *routes, never hard-rejects*: a near-duplicate returns
+    `suggest_update`/`suggest_supersede` with **exit 0** and **`ok:true`** having
+    written nothing (the human/agent is asked to `--update` or `--force`). A
+    consumer that treats exit 0 / `ok:true` as "captured" silently drops the
+    finding — branch on `written`. `rejected` (validation failure) is the only
+    write outcome that exits 1.
+  - **Programmatic writers MUST pass content via `--stdin` JSON, never `--body`
+    string interpolation.** Note bodies are free text (quotes, newlines,
+    `$(...)`, backticks); building a `--body "…"` shell argument truncates the
+    note or executes substitutions in the caller's shell before `claudron` runs.
+    `--stdin` carries arbitrary content safely.
 - `init --adopt` — additionally backfills missing `updated` from file mtime
   (the one sanctioned mutation, at adoption time only).
