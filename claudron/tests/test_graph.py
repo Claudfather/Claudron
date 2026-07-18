@@ -38,6 +38,19 @@ class TestWikilinkTargets:
         text = "real [[Live]] but `[[inline]]` and\n```\n[[fenced]]\n```\n"
         assert wikilink_targets(text) == ["Live"]
 
+    def test_ignores_unclosed_fence_to_eof(self):
+        # CommonMark: an unterminated fence is code through EOF (review finding)
+        text = "keep [[Real]]\n```python\ncode [[ShouldBeCode]]\nmore [[AlsoCode]]"
+        assert wikilink_targets(text) == ["Real"]
+
+    def test_ignores_tilde_fence(self):
+        text = "keep [[Real]]\n~~~\n[[TildeFenced]]\n~~~\n"
+        assert wikilink_targets(text) == ["Real"]
+
+    def test_target_does_not_span_newline(self):
+        # a stray `[[` must not bind to a `]]` on a later line and swallow text
+        assert wikilink_targets("stray [[ oops\nlater [[Real]] here ]]") == ["Real"]
+
 
 class TestResolveWikilinks:
     def _vault(self, tmp_path: Path):
@@ -89,3 +102,48 @@ class TestResolveWikilinks:
 
     def test_no_links_returns_empty(self, tmp_path: Path):
         assert resolve_wikilinks("plain text, no links", self._vault(tmp_path)) == {}
+
+    def test_resolves_by_kebab_filename_slug(self, tmp_path: Path):
+        """SCHEMA step 3: the default slug is the KEBAB-CASE filename stem, so a
+        note filed `API Guide.md` (no explicit slug) resolves `[[api-guide]]`."""
+        v = tmp_path / "v"
+        (v / "_shared" / "knowledge").mkdir(parents=True)
+        _note(v, "_shared/knowledge", "API Guide.md", "API Guide")
+        r = resolve_wikilinks("[[api-guide]]", detect(v))
+        assert r["[[api-guide]]"]["path"].endswith("API Guide.md")
+
+    def test_scalar_alias_resolves(self, tmp_path: Path):
+        """A scalar `aliases: JWT` (a YAML string, not a list) must resolve as
+        the whole alias, not be walked character-by-character."""
+        v = tmp_path / "v"
+        d = v / "_shared" / "knowledge"
+        d.mkdir(parents=True)
+        (d / "auth.md").write_text(
+            "---\ntitle: Auth\ntype: knowledge\nstatus: current\naliases: JWT\n"
+            "owner: t\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n# Auth\n\nx\n"
+        )
+        r = resolve_wikilinks("[[JWT]] not [[J]]", detect(v))
+        assert r["[[JWT]]"]["path"].endswith("auth.md")
+        assert r["[[J]]"]["path"] is None  # a single letter is NOT an alias
+
+    def test_title_beats_alias_across_tiers(self, tmp_path: Path):
+        """Resolution ORDER dominates tier: a TITLE match in shared wins over an
+        ALIAS match in a higher-priority project tier (title step resolves first)."""
+        v = tmp_path / "v"
+        (v / "_shared" / "knowledge").mkdir(parents=True)
+        _note(v, "_shared/knowledge", "backoff.md", "Backoff")            # title, shared
+        _note(v, "projects/app", "other.md", "Other", aliases='"Backoff"')  # alias, project
+        r = resolve_wikilinks("[[Backoff]]", detect(v))
+        assert r["[[Backoff]]"]["path"].endswith("backoff.md")
+        assert r["[[Backoff]]"]["tier"] == "shared"
+
+    def test_same_tier_tiebreak_is_deterministic(self, tmp_path: Path):
+        """Same title in two project tiers (equal rank) resolves deterministically
+        by path, independent of walk order."""
+        v = tmp_path / "v"
+        (v / "_shared" / "knowledge").mkdir(parents=True)
+        _note(v, "projects/web", "retry.md", "Retry Strategy")
+        _note(v, "projects/api", "retry.md", "Retry Strategy")
+        r = resolve_wikilinks("[[Retry Strategy]]", detect(v))
+        # api < web by path → the api note wins, stably
+        assert "projects/api" in r["[[Retry Strategy]]"]["path"]
