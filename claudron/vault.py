@@ -42,6 +42,12 @@ SKIP_DIRS = frozenset(
 
 SHARED_MARKERS = ("_shared", "shared")
 
+# Opt-in marker FILE (Claudlobby#602 P1). A top-level dir carrying it is a
+# *system container*: it holds nested fleets one level down (`<system>/<fleet>/
+# fleet.yaml`) plus its own `<system>/shared/` knowledge bucket. A vault with no
+# such marker is flat and scans byte-identically to before — the invariant.
+SYSTEM_MARKER = ".claudron-system"
+
 # Single source of truth for the shared tier tree: keys are the tiers that
 # status/index/search walk; values are on-disk filing subdirs (scaffolded
 # nested, walked as one tier — rglob sweeps them in the tier's pass).
@@ -157,7 +163,26 @@ class Vault:
     root: Path
     shared: Path  # root / "_shared"
     projects: dict[str, Path]  # {name: root / "projects" / name}
-    fleets: dict[str, Path]  # {name: root / name} where fleet.yaml exists
+    fleets: dict[str, Path]  # {name: fleet_dir} — flat AND nested, bare-name key
+    systems: dict[str, Path]  # {name: root / name} — .claudron-system containers
+
+    @property
+    def recognized_top_level(self) -> set[str]:
+        """Top-level dir names that are NOT the ``other:`` hatch — TOP-LEVEL
+        (flat) fleets + system containers. The single set the other:/S3
+        consumers exclude by, and every one of them does a *top-level* walk.
+
+        Nested fleet names are deliberately excluded: ``_scan_vault`` folds a
+        nested fleet into ``fleets`` under its BARE name, but that name is not a
+        top-level dir. Including it would shadow an unrelated same-named
+        top-level dir out of the other:/S3 hatch — silent data loss
+        (Claudlobby#602 review). A flat fleet's dir is ``root/<name>`` (parent
+        IS the root); a nested fleet's is ``root/<system>/<name>`` (parent is
+        the system dir), so ``path.parent == self.root`` selects flat fleets."""
+        flat_fleets = {
+            name for name, path in self.fleets.items() if path.parent == self.root
+        }
+        return flat_fleets | set(self.systems)
 
 
 # ── detection ─────────────────────────────────────────────────────────
@@ -178,6 +203,14 @@ def _dir_named(parent: Path, name: str) -> bool:
         return name in os.listdir(parent)
     except OSError:
         return False
+
+
+def _child_dirs(parent: Path) -> Iterator[Path]:
+    """Yield *parent*'s eligible child dirs — sorted, skipping SKIP_DIRS and
+    dotfiles. The single definition of a "scannable" vault directory."""
+    for d in sorted(parent.iterdir()):
+        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
+            yield d
 
 
 def is_within_root(path: Path, root: Path) -> bool:
@@ -212,9 +245,17 @@ def detect(path: Path | None = None) -> Vault | None:
     for candidate in [start, *start.parents]:
         if _dir_named(candidate, "_shared"):
             return _scan_vault(candidate)
-        # shared/ is also valid, but NOT inside fleet overlays (which
-        # have fleet.yaml next to their shared/ dir).
-        if _dir_named(candidate, "shared") and not (candidate / "fleet.yaml").is_file():
+        # shared/ is also valid, but NOT the binding root when it is a fleet
+        # overlay's shared/ (fleet.yaml sits beside it) NOR a system container's
+        # shared/ (B2: a `.claudron-system` dir has no sibling fleet.yaml, so
+        # this branch would otherwise bind the container and lose the global
+        # _shared/ above it). In both cases keep walking up to the true root,
+        # whose _shared/ (or a plain shared/) always binds via the checks above.
+        if (
+            _dir_named(candidate, "shared")
+            and not (candidate / "fleet.yaml").is_file()
+            and not (candidate / SYSTEM_MARKER).is_file()
+        ):
             return _scan_vault(candidate)
     return None
 
@@ -233,14 +274,35 @@ def _scan_vault(root: Path) -> Vault:
             if d.is_dir() and not d.name.startswith(".")
         }
 
-    # Discover fleet overlays (dirs containing fleet.yaml)
+    # Discover fleet overlays (dirs containing fleet.yaml) and opt-in system
+    # containers (dirs carrying a .claudron-system marker; their nested fleets
+    # live one level down). A flat vault has no markers, so `systems` stays
+    # empty and this is byte-identical to the pre-P1 flat-fleet loop.
     fleets: dict[str, Path] = {}
-    for d in sorted(root.iterdir()):
-        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
-            if (d / "fleet.yaml").is_file():
-                fleets[d.name] = d
+    systems: dict[str, Path] = {}
+    for d in _child_dirs(root):
+        if (d / SYSTEM_MARKER).is_file():
+            # System container: record it, then fold its nested fleets into the
+            # SAME fleets dict under their BARE names (F5 global-unique keys —
+            # never namespaced). The container itself is never a flat fleet.
+            systems[d.name] = d
+            for sub in _child_dirs(d):
+                if (sub / "fleet.yaml").is_file():
+                    # Bare-name key (F5 global-unique — never namespaced). A
+                    # duplicate bare fleet name across depths (a flat fleet + a
+                    # nested one, or two systems' nested fleets) silently
+                    # last-wins here — an F5 violation Claudlobby's
+                    # _find_fleet_dir raises on. Claudron's validate flagging it
+                    # via a new S-code is a tracked follow-up (parity with the
+                    # recall-union deferral); the clobber is left as-is for now.
+                    fleets[sub.name] = sub
+            continue
+        if (d / "fleet.yaml").is_file():
+            fleets[d.name] = d
 
-    return Vault(root=root, shared=shared, projects=projects, fleets=fleets)
+    return Vault(
+        root=root, shared=shared, projects=projects, fleets=fleets, systems=systems
+    )
 
 
 # ── scaffolding ───────────────────────────────────────────────────────
@@ -290,7 +352,8 @@ def note_tiers(vault: Vault) -> Iterator[tuple[Path, str]]:
     """(base dir, tier tag) for every note tier in *vault* — the single scope
     shared by ``build_index`` and adopt-backfill so they cannot diverge.
     Mirrors the indexer's walk: each shared subdir, every project, each fleet's
-    ``shared/``, and any unrecognized root dir (the ``other:`` hatch). It
+    ``shared/``, each ``.claudron-system`` container's ``shared/`` (``system:``),
+    and any unrecognized root dir (the ``other:`` hatch). It
     deliberately never descends a fleet's ``library/``/``voices/``/``runtime/``
     — those are Claudlobby overlay content, not notes (a plain ``root.rglob``
     would wrongly sweep them in, which is the bug this enumerator exists to
@@ -301,11 +364,18 @@ def note_tiers(vault: Vault) -> Iterator[tuple[Path, str]]:
         yield proj_path, f"project:{name}"
     for name, fleet_path in vault.fleets.items():
         yield fleet_path / "shared", f"fleet:{name}"
-    fleet_names = set(vault.fleets)
-    for d in sorted(vault.root.iterdir()):
-        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
-            if d.name not in fleet_names:
-                yield d, f"other:{d.name}"
+    # Opt-in system containers: the container's shared/ is its own tier, parallel
+    # to a fleet's shared/. Its nested fleets already flowed through the fleet
+    # loop above (_scan_vault folds them into vault.fleets under bare names).
+    for name, sys_path in vault.systems.items():
+        yield sys_path / "shared", f"system:{name}"
+    # The `other:` hatch — unrecognized root dirs. Fleets AND system containers
+    # are recognized tiers, so a system container is never mis-pooled as other:.
+    # Hoist the property once: it rebuilds a set on every access (O(n²) in-loop).
+    recognized = vault.recognized_top_level
+    for d in _child_dirs(vault.root):
+        if d.name not in recognized:
+            yield d, f"other:{d.name}"
 
 
 def backfill_updated(root: Path) -> int:

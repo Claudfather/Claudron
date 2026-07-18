@@ -22,8 +22,8 @@ from .schema import LOOKUP_EXCLUDED, content_fingerprint, has_conflict_markers
 from .vault import (
     SCHEMA_VERSION,
     SHARED_SUBDIRS,
-    SKIP_DIRS,
     Vault,
+    _child_dirs,
     index_is_stale,
     iter_markdown_files,
     note_tiers,
@@ -548,11 +548,17 @@ def _collect_all_docs(
     for subdir in SHARED_SUBDIRS:
         docs.extend(walk_knowledge_tier(vault.shared / subdir, "shared"))
 
-    # Unrecognized root dirs
-    fleet_names = set(vault.fleets.keys())
-    for d in sorted(vault.root.iterdir()):
-        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
-            if d.name not in fleet_names:
-                docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
+    # Unrecognized root dirs (the `other:` hatch). A `.claudron-system` container
+    # is a recognized tier, not `other:` — exclude it so its nested fleets and
+    # shared/ bucket are not over-swept here. Its shared/ is classified `system:`
+    # by note_tiers and indexed for Tier-A recall; P1 deliberately does NOT add
+    # it to this Tier-B general union (recall-union policy deferred to #601/#47).
+    # Flat vaults have no systems, so `recognized` == the flat-fleet set and
+    # this is byte-identical to before. Hoist the property once — it rebuilds a
+    # set on every access (O(n²) if read in-loop).
+    recognized = vault.recognized_top_level
+    for d in _child_dirs(vault.root):
+        if d.name not in recognized:
+            docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
 
     return docs
