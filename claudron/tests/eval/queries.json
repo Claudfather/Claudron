@@ -1,0 +1,25 @@
+{
+  "_about": "Retrieval eval seed — query→expected-note pairs run against the reference vault (examples/reference-vault). Measures today's heuristic lookup so the E4 SQLite/FTS5 build stays trigger-gated (D6/F2): if the paraphrase-miss rate here crosses the agreed threshold, the scale tier is warranted; until then the deferral is evidence-based, not assumed. `kind`: 'literal' = words that appear in the note (title/tag/body); 'paraphrase' = a synonym/rephrase that shares few surface words (the F2 blind spot heuristic search is expected to miss). `expects` = vault-relative path that SHOULD rank in the top-k.",
+  "k": 5,
+  "queries": [
+    {"kind": "literal", "query": "JWT validation gotchas", "expects": "_shared/knowledge/jwt-validation-gotchas.md"},
+    {"kind": "literal", "query": "auth service decision", "expects": "_shared/decisions/auth-service-decision.md"},
+    {"kind": "literal", "query": "deploy rollback runbook", "expects": "_shared/runbooks/deploy-rollback-runbook.md"},
+    {"kind": "literal", "query": "clock skew", "expects": "_shared/knowledge/jwt-validation-gotchas.md"},
+    {"kind": "literal", "query": "RS256", "expects": "_shared/decisions/auth-service-decision.md"},
+    {"kind": "literal", "query": "key rotation JWKS", "expects": "_shared/knowledge/jwt-validation-gotchas.md"},
+    {"kind": "literal", "query": "image tag revert", "expects": "_shared/runbooks/deploy-rollback-runbook.md"},
+    {"kind": "literal", "query": "auth", "expects": "_shared/knowledge/jwt-validation-gotchas.md"},
+    {"kind": "literal", "query": "forward-only migrations", "expects": "_shared/runbooks/deploy-rollback-runbook.md"},
+    {"kind": "paraphrase", "query": "why do token timestamps fail between servers", "expects": "_shared/knowledge/jwt-validation-gotchas.md"},
+    {"kind": "paraphrase", "query": "which service signs our login tokens", "expects": "_shared/decisions/auth-service-decision.md"},
+    {"kind": "paraphrase", "query": "how do we undo a bad release", "expects": "_shared/runbooks/deploy-rollback-runbook.md"},
+    {"kind": "paraphrase", "query": "why not use a shared secret for signing", "expects": "_shared/decisions/auth-service-decision.md"},
+    {"kind": "paraphrase", "query": "rolling out the knowledge vault this quarter", "expects": "_shared/planning/active/q3-vault-rollout.md"},
+    {"kind": "paraphrase", "query": "keeping the old version warm to roll back", "expects": "_shared/runbooks/deploy-rollback-runbook.md"},
+    {"kind": "paraphrase", "query": "problems verifying identity claims", "expects": "_shared/knowledge/jwt-validation-gotchas.md"},
+    {"kind": "paraphrase", "query": "single source of truth for issuing credentials", "expects": "_shared/decisions/auth-service-decision.md"},
+    {"kind": "paraphrase", "query": "database schema changes must be backward compatible", "expects": "_shared/runbooks/deploy-rollback-runbook.md"},
+    {"kind": "paraphrase", "query": "throttling breaks when tokens all refresh at once", "expects": "_shared/knowledge/jwt-validation-gotchas.md"}
+  ]
+}
