@@ -139,7 +139,13 @@ Two mechanisms resolve a vault; the contract governs both:
   calls `claudron.vault.detect()` → `vault.fleets[fleet]`; its caller then falls
   back to a plain `local/<fleet>/` overlay when no vault resolves.
 - **(b) Bot-runtime** — the composed `CLAUDRON_VAULT_PATH` env var (emitted by
-  Claudlobby's `composer.py`) points a running bot's Claudron CLI/MCP at the vault.
+  Claudlobby's `composer.py`) points a running bot's **Claudron CLI** at the vault
+  (per the resolution order in docs/CLI_CONTRACT.md; the CLI reading this var
+  landed in #62). The CLI is the
+  fleet-consumption door (clauDNA's `/claudron`, `/capture`, `/recall` wrap it);
+  an MCP server over the same engine is **demand-gated** (decision C — see
+  `documentation/plans/2026-07-18-decision-c-mcp-demand-gated.md`), not required
+  for a bot to reach the hub.
 
 ## Promotion
 
