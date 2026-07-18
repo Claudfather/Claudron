@@ -134,7 +134,12 @@ Claudron itself.
 
 ## Consequence
 
-This clears the **G1 adopt-vs-build gate for E4**. E4's first build PR (SQLite
-mirror + incremental reindex behind existing `lookup` — `04-indexer.md` PR1) may
-open. E3/MCP stays demand-gated (decision C); the adopt-vs-build question for a
-*future* MCP server, if a trigger ever fires, is a separate, later spike.
+This settles only the **adopt-vs-build (HOW) sub-question**: if we build E4's
+engine, we build it ourselves. It does **not** authorize opening the SQLite PR —
+that WHEN/what-shape call belongs to the re-scope (`2026-07-18-ironclad-rescope-record.md`
+Theme C + `G1-verdict.md`), which **splits E4**: pull the scale-free **graph
+slice** (`resolve_wikilinks` + `links`/`related`) forward and **defer the
+SQLite/FTS5 mirror** behind the measured D6/F2 trigger. Opening any E4 build PR
+still requires a **G1-verdict PASS** (a merged spike is a gate *dependency*, not
+the verdict). E3/MCP stays demand-gated (decision C); the adopt-vs-build question
+for a *future* MCP server, if a trigger ever fires, is a separate, later spike.
