@@ -30,9 +30,10 @@ metrics:
   `validate`-checked shape to conform to.
 - **clauDNA reconciled** its hooks + terminology (#45; `/reflect`→`/capture`) and
   consumes the vault via the CLI door (#197) — the fleet-consumption path is live.
-- **Concurrent-write safety landed** (PR-H) — the fleet can write without
-  dropping index entries; `claudron status` now instruments index-vs-vault
-  divergence, so silent index failures surface.
+- **Concurrent-write safety** (PR-H, in flight as #62) — the fleet can write
+  without dropping index entries, and `claudron status` gains an index-vs-vault
+  divergence instrument so silent index failures surface. (S3 below depends on
+  #62 having merged; if this verdict is finalized first, note that dependency.)
 
 ## The three retained signals (fill from the dogfood — Chris)
 
