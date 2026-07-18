@@ -59,7 +59,7 @@ change (fleet-first replan), never silently absorbed into "shipped anyway."
 The re-scope defers E4's SQLite/FTS5 tier behind D6/F2 ("paraphrase-miss rate
 crosses a threshold, or the vault passes ~1k notes"). That paraphrase half was
 never measured — until the eval seed (`claudron/tests/eval/queries.json` +
-`claudron/eval.py`). Baseline on the reference vault (2026-07):
+`claudron/tests/eval_harness.py`). Baseline on the reference vault (2026-07):
 
 - **recall@5 = 95%** (18/19); **literal 100%** (9/9), **paraphrase 90%** (9/10).
 - One genuine paraphrase miss ("problems verifying identity claims" → JWT

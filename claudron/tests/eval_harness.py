@@ -7,8 +7,10 @@ passes ~1k notes"). This makes the paraphrase-miss half of that trigger
 heuristic ``lookup`` already misses too many paraphrases, the scale bet is
 warranted — otherwise the deferral is evidence-based.
 
-Stdlib + the existing ``lookup`` only; no new dependency. When E4's ranking
-lands, the same harness scores the before/after the roadmap promises to publish.
+Test-scoped tooling (lives beside its ``eval/queries.json`` fixture, which the
+wheel excludes): stdlib + the existing ``lookup`` only, no new dependency. When
+E4's ranking lands, the same harness scores the before/after the roadmap
+promises to publish — point it at whichever ``lookup`` is live.
 """
 
 from __future__ import annotations
@@ -17,17 +19,17 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .knowledge import lookup
-from .vault import Vault
+from ..knowledge import lookup
+from ..vault import Vault
 
-SEED_PATH = Path(__file__).parent / "tests" / "eval" / "queries.json"
+SEED_PATH = Path(__file__).parent / "eval" / "queries.json"
 
 
 @dataclass
 class EvalResult:
     total: int
     hits: int  # expected note in top-k
-    by_kind: dict[str, tuple[int, int]]  # kind -> (hits, total)
+    by_kind: dict[str, list[int]]  # kind -> [hits, total]
     misses: list[dict]  # the queries that missed, for inspection
 
     @property
@@ -54,7 +56,7 @@ def run_eval(vault: Vault, seed: dict | None = None) -> EvalResult:
         results = lookup(q["query"], vault, limit=k)
         got = [str(r.doc.source_path.relative_to(vault.root)) for r in results]
         hit = q["expects"] in got
-        hits += hit
+        hits += int(hit)
         kind = q.get("kind", "literal")
         bucket = by_kind.setdefault(kind, [0, 0])
         bucket[0] += int(hit)
@@ -63,10 +65,7 @@ def run_eval(vault: Vault, seed: dict | None = None) -> EvalResult:
             misses.append({"query": q["query"], "kind": kind,
                            "expects": q["expects"], "got": got})
     return EvalResult(
-        total=len(seed["queries"]),
-        hits=hits,
-        by_kind={kind: (h, t) for kind, (h, t) in by_kind.items()},
-        misses=misses,
+        total=len(seed["queries"]), hits=hits, by_kind=by_kind, misses=misses
     )
 
 
@@ -77,7 +76,8 @@ def format_report(result: EvalResult) -> str:
     ]
     for kind in sorted(result.by_kind):
         h, t = result.by_kind[kind]
-        lines.append(f"  {kind:<10s} {h}/{t}  ({h / t:.0%})")
+        pct = (h / t) if t else 0.0
+        lines.append(f"  {kind:<10s} {h}/{t}  ({pct:.0%})")
     if result.misses:
         lines.append("  misses:")
         for m in result.misses:
