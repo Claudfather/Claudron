@@ -7,10 +7,17 @@ first-class), over the existing index — no SQLite (that's the deferred scale b
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from claudron import resolve_wikilinks
-from claudron.knowledge import wikilink_targets
+from claudron.cli import main
+from claudron.knowledge import (
+    link_report,
+    related,
+    resolve_note_ref,
+    wikilink_targets,
+)
 from claudron.vault import detect
 
 
@@ -147,3 +154,135 @@ class TestResolveWikilinks:
         r = resolve_wikilinks("[[Retry Strategy]]", detect(v))
         # api < web by path → the api note wins, stably
         assert "projects/api" in r["[[Retry Strategy]]"]["path"]
+
+
+class TestRelatedAndLinks:
+    def _graph_vault(self, tmp_path: Path):
+        v = tmp_path / "v"
+        d = v / "_shared" / "knowledge"
+        d.mkdir(parents=True)
+
+        def note(fn: str, title: str, body: str) -> None:
+            (d / fn).write_text(
+                f"---\ntitle: {title}\ntype: knowledge\nstatus: current\n"
+                f"owner: t\ncreated: 2026-01-01\nupdated: 2026-01-01\n---\n\n"
+                f"# {title}\n\n{body}\n"
+            )
+
+        note("a.md", "Note A", "links to [[Note B]] and [[Missing Thing]]")
+        note("b.md", "Note B", "links to [[Note C]]")
+        note("c.md", "Note C", "no links here")
+        note("d.md", "Note D", "orphan, no links")
+        return v
+
+    def test_related_direct_direction(self, tmp_path: Path):
+        vault = detect(self._graph_vault(tmp_path))
+        out = related(vault, "_shared/knowledge/a.md", hops=1)
+        assert {r["path"] for r in out} == {"_shared/knowledge/b.md"}
+        assert out[0]["direction"] == "out"
+        b = {r["path"]: r["direction"]
+             for r in related(vault, "_shared/knowledge/b.md", hops=1)}
+        assert b["_shared/knowledge/a.md"] == "in"    # A links to B
+        assert b["_shared/knowledge/c.md"] == "out"   # B links to C
+
+    def test_related_two_hops(self, tmp_path: Path):
+        vault = detect(self._graph_vault(tmp_path))
+        by_hops = {r["path"]: r["hops"]
+                   for r in related(vault, "_shared/knowledge/a.md", hops=2)}
+        assert by_hops["_shared/knowledge/b.md"] == 1
+        assert by_hops["_shared/knowledge/c.md"] == 2  # A→B→C
+
+    def test_link_report_broken_and_orphans(self, tmp_path: Path):
+        rep = link_report(detect(self._graph_vault(tmp_path)))
+        assert {"src": "_shared/knowledge/a.md", "target": "Missing Thing"} in rep["broken"]
+        assert "_shared/knowledge/d.md" in rep["orphans"]  # nothing links to D
+        assert "_shared/knowledge/b.md" not in rep["orphans"]  # A links to B
+        # A links OUT but nothing links to it → still an orphan (the surprising,
+        # intended semantics: orphan = no INBOUND edge, not zero-degree).
+        assert "_shared/knowledge/a.md" in rep["orphans"]
+
+    def test_self_link_note_is_still_an_orphan(self, tmp_path: Path):
+        """A note that links only to itself is not linked-to by anything else,
+        so a self-edge must not hide it from the orphan report."""
+        v = tmp_path / "v"
+        d = v / "_shared" / "knowledge"
+        d.mkdir(parents=True)
+        (d / "hub.md").write_text(
+            "---\ntitle: Hub\ntype: knowledge\nstatus: current\nowner: t\n"
+            "created: 2026-01-01\nupdated: 2026-01-01\n---\n\n# Hub\n\nsee [[Hub]]\n"
+        )
+        rep = link_report(detect(v))
+        assert "_shared/knowledge/hub.md" in rep["orphans"]
+
+    def test_related_both_direction_and_2hop_label(self, tmp_path: Path):
+        """Pin the two unasserted direction strings: 'both' for a mutual pair,
+        and 'N-hop' for a farther neighbor."""
+        v = tmp_path / "v"
+        d = v / "_shared" / "knowledge"
+        d.mkdir(parents=True)
+
+        def note(fn, title, body):
+            (d / fn).write_text(
+                f"---\ntitle: {title}\ntype: knowledge\nstatus: current\nowner: t\n"
+                f"created: 2026-01-01\nupdated: 2026-01-01\n---\n\n# {title}\n\n{body}\n"
+            )
+        note("x.md", "X", "to [[Y]]")          # X ↔ Y mutual, X → ... → Z at 2 hops
+        note("y.md", "Y", "to [[X]] and [[Z]]")
+        note("z.md", "Z", "leaf")
+        out = {r["path"]: r for r in related(detect(v), "_shared/knowledge/x.md", hops=2)}
+        assert out["_shared/knowledge/y.md"]["direction"] == "both"  # X↔Y
+        assert out["_shared/knowledge/z.md"]["direction"] == "2-hop"
+
+    def test_cli_related_resolves_by_title(self, tmp_path: Path, capsys):
+        vault_dir = self._graph_vault(tmp_path)
+        rc = main(["--vault", str(vault_dir), "related", "Note A", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert env["command"] == "related"
+        assert any(r["path"] == "_shared/knowledge/b.md" for r in env["data"]["related"])
+
+    def test_cli_links_reports_broken(self, tmp_path: Path, capsys):
+        vault_dir = self._graph_vault(tmp_path)
+        rc = main(["--vault", str(vault_dir), "links", "--broken", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert any(b["target"] == "Missing Thing" for b in env["data"]["broken"])
+
+    def test_resolve_note_ref_by_title_and_path(self, tmp_path: Path):
+        """The engine ref-resolver (public, shared by CLI + future MCP): a title
+        or an already vault-relative path both resolve; a miss is None."""
+        vault = detect(self._graph_vault(tmp_path))
+        assert resolve_note_ref(vault, "Note A") == "_shared/knowledge/a.md"
+        assert resolve_note_ref(vault, "_shared/knowledge/a.md") == "_shared/knowledge/a.md"
+        assert resolve_note_ref(vault, "No Such Note") is None
+
+    def test_resolve_note_ref_by_alias_and_slug(self, tmp_path: Path):
+        v = tmp_path / "v"
+        (v / "_shared" / "knowledge").mkdir(parents=True)
+        _note(v, "_shared/knowledge", "auth-patterns.md", "Auth Patterns",
+              aliases='"JWT Guide"')
+        _note(v, "_shared/knowledge", "deploy-doc.md", "Deploy Checklist", slug="deploy")
+        vault = detect(v)
+        assert resolve_note_ref(vault, "JWT Guide").endswith("auth-patterns.md")  # alias
+        assert resolve_note_ref(vault, "deploy").endswith("deploy-doc.md")        # slug
+
+    def test_resolve_note_ref_path_beats_title(self, tmp_path: Path):
+        """A path-shaped ref matches the literal path first, so an explicit path
+        is never redirected to a note that carries that string as its title."""
+        v = tmp_path / "v"
+        d = v / "_shared" / "knowledge"
+        d.mkdir(parents=True)
+        _note(v, "_shared/knowledge", "target.md", "Real Target")
+        # a decoy note whose TITLE is literally the other note's path
+        _note(v, "_shared/knowledge", "decoy.md", "_shared/knowledge/target.md")
+        vault = detect(v)
+        assert resolve_note_ref(vault, "_shared/knowledge/target.md") == \
+            "_shared/knowledge/target.md"
+
+    def test_cli_links_json_shape_is_stable(self, tmp_path: Path, capsys):
+        """--json always carries both keys regardless of --broken/--orphans, so
+        a machine consumer never hits a flag-dependent KeyError."""
+        vault_dir = self._graph_vault(tmp_path)
+        main(["--vault", str(vault_dir), "links", "--broken", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert "broken" in env["data"] and "orphans" in env["data"]

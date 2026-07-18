@@ -45,7 +45,11 @@ One shape, every command:
   a serialized `Finding` (see SCHEMA.md §Validation) — never a bare string.
 - `data` is the per-command payload: `validate` → summary counts + per-note
   breakdown; `new` → `{"path": "…"}`; `status` → the health dict; `lookup` →
-  `{query, results}`.
+  `{query, results}`; `related` →
+  `{note, related: [{path, title, tier, direction, hops}]}` (`direction` ∈
+  `out`/`in`/`both` for a direct neighbor, else `N-hop`); `links` →
+  `{broken: [{src, target}], orphans: [path]}` (both keys always present in
+  `--json`; the `--broken`/`--orphans` flags filter human output only).
 - `ok` is `errors == []` (warnings don't flip it).
 
 > Breaking change at 0.2.0: `status --json`, `lookup --json`, and
@@ -66,7 +70,7 @@ One shape, every command:
 | Group | Commands |
 |---|---|
 | vault | `init`, `status`, `validate`, `index` |
-| notes | `new`, `lookup` |
+| notes | `new`, `lookup`, `related`, `links` |
 | session | `recall`, `capture`, `sync`, `hooks` *(E2)* |
 | fleet | `fleet add`, `fleet list` |
 | integration | `plug`, `unplug`, `config`, `migrate` |

@@ -30,7 +30,15 @@ from .hooks import (
     run_hook,
     settings_snippet,
 )
-from .knowledge import build_index, load_index, lookup
+from .knowledge import (
+    build_index,
+    ensure_index,
+    link_report,
+    load_index,
+    lookup,
+    related,
+    resolve_note_ref,
+)
 from .session import derive_project, recall, render_brief
 from .sync import SyncError, run_git, sync
 
@@ -336,6 +344,61 @@ def cmd_lookup(args) -> int:
         rel = r.doc.source_path.relative_to(vault.root)
         tags = f"  [{', '.join(r.doc.tags)}]" if r.doc.tags else ""
         print(f"  [{r.score:3d}] {r.doc.title:<40s} {rel}{tags}")
+    return 0
+
+
+def cmd_related(args) -> int:
+    vault = _resolve_vault(args)
+    # One index snapshot for the whole command: resolve the ref and build the
+    # graph against the same entries (no double load, no split-snapshot race).
+    entries = ensure_index(vault).get("entries", [])
+    path = resolve_note_ref(vault, args.note, entries=entries)
+    if path is None:
+        if args.json:
+            _emit_json("related", {"note": args.note, "related": []})
+        else:
+            print(f"no note matches '{args.note}'", file=sys.stderr)
+        return 0
+    hits = related(vault, path, hops=args.hops, entries=entries)
+    if args.json:
+        _emit_json("related", {"note": path, "related": hits})
+        return 0
+    if not hits:
+        print(f"no notes linked to {path} (within {args.hops} hop(s))",
+              file=sys.stderr)
+        return 0
+    for h in hits:
+        print(f"  {h['direction']:>5s}  {h['title'] or '?':<40s} {h['path']}")
+    return 0
+
+
+def cmd_links(args) -> int:
+    vault = _resolve_vault(args)
+    report = link_report(vault)
+    # --json is the full report with a STABLE shape (both keys always present);
+    # the --broken/--orphans flags are a human-display filter only, so a machine
+    # consumer never hits a flag-dependent KeyError.
+    if args.json:
+        _emit_json("links", {"broken": report["broken"], "orphans": report["orphans"]})
+        return 0
+    # Human mode: show what was asked; with no flags, show both.
+    neither = not (args.broken or args.orphans)
+    show_broken = args.broken or neither
+    show_orphans = args.orphans or neither
+    if show_broken:
+        if report["broken"]:
+            print(f"broken links ({len(report['broken'])}):")
+            for b in report["broken"]:
+                print(f"  [[{b['target']}]]  ← {b['src']}")
+        else:
+            print("broken links: none")
+    if show_orphans:
+        if report["orphans"]:
+            print(f"orphan notes ({len(report['orphans'])}) — nothing links here:")
+            for p in report["orphans"]:
+                print(f"  {p}")
+        else:
+            print("orphan notes: none")
     return 0
 
 
@@ -1115,6 +1178,29 @@ def main(argv=None) -> int:
         "--include-expired", action="store_true", help="Include expired docs"
     )
 
+    # related — wikilink neighbors of a note
+    p_related = sub.add_parser(
+        "related", help="Notes linked to/from a note (wikilink graph)",
+        parents=[vault_parent, json_parent],
+    )
+    p_related.add_argument("note", help="Note title/alias/slug or vault-relative path")
+    p_related.add_argument(
+        "--hops", type=int, default=1, choices=(1, 2),
+        help="Neighbor distance (1 = direct, 2 = neighbors-of-neighbors)",
+    )
+
+    # links — broken links + orphan notes across the vault
+    p_links = sub.add_parser(
+        "links", help="Report broken wikilinks and orphan notes",
+        parents=[vault_parent, json_parent],
+    )
+    p_links.add_argument(
+        "--broken", action="store_true", help="Only unresolved (broken) links"
+    )
+    p_links.add_argument(
+        "--orphans", action="store_true", help="Only notes nothing links to"
+    )
+
     # index
     p_index = sub.add_parser(
         "index",
@@ -1205,6 +1291,8 @@ def main(argv=None) -> int:
         "hook": cmd_hook,
         "validate": cmd_validate,
         "lookup": cmd_lookup,
+        "related": cmd_related,
+        "links": cmd_links,
         "index": cmd_index,
         "version": cmd_version,
         "plug": cmd_plug,

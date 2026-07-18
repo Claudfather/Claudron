@@ -688,3 +688,154 @@ def resolve_wikilinks(text: str, vault: "Vault") -> dict[str, dict]:
             "tier": best.get("tier") if best else None,
         }
     return resolved
+
+
+def resolve_note_ref(
+    vault: "Vault", ref: str, *, entries: list[dict] | None = None
+) -> str | None:
+    """A graph note reference → its vault-relative path, or ``None``. Accepts a
+    title/alias/slug (resolved exactly like a wikilink, via
+    :func:`resolve_target`) or an already vault-relative path. The engine home so
+    every caller — ``claudron related``, a future MCP ``related`` — shares one
+    ref-resolution rule instead of re-deriving it. Pass *entries* to reuse an
+    index snapshot the caller already loaded.
+
+    A **path-shaped** ref (contains ``/`` or ends ``.md``) is matched as a path
+    first, so an explicit path is never silently redirected to a note that
+    happens to carry that string as its title; other refs resolve title→alias→
+    slug."""
+    if entries is None:
+        entries = ensure_index(vault).get("entries", [])
+    ref_norm = ref.replace("\\", "/")
+    path_shaped = "/" in ref_norm or ref_norm.endswith(".md")
+    if path_shaped and any(str(e.get("path")) == ref_norm for e in entries):
+        return ref_norm
+    hit = resolve_target(ref, build_resolution_index(entries))
+    if hit is not None:
+        return str(hit.get("path"))
+    return ref_norm if any(str(e.get("path")) == ref_norm for e in entries) else None
+
+
+def _note_body(vault: "Vault", rel_path: str) -> str:
+    """Body of a vault-relative note, or ``""`` on any read error / quarantine.
+    Quarantined (conflict-marker) notes are not part of the graph, matching the
+    index build."""
+    try:
+        text = (vault.root / rel_path).read_text()
+    except OSError:
+        return ""
+    if has_conflict_markers(text):
+        return ""
+    _fm, body = parse_frontmatter(text)
+    return body
+
+
+def build_edges(
+    vault: "Vault", *, entries: list[dict] | None = None
+) -> tuple[list[tuple[str, str, str | None]], list[dict]]:
+    """Every wikilink edge in the vault as ``(src, target, dst)``, plus the index
+    entries the edges were built from — returned together so a caller
+    (``related``, ``link_report``) reuses one ``ensure_index`` snapshot instead of
+    loading the index twice. src/dst are vault-relative note paths, target is the
+    raw ``[[text]]``, dst is ``None`` for an unresolved link (a wanted-but-unwritten
+    note).
+
+    Reads each indexed note's body once and resolves against a single shared
+    resolution index — O(N), which is the exact work the deferred SQLite ``edges``
+    table will cache; the graph API here computes it on demand (E4 scale bet).
+    Pass *entries* to reuse an index snapshot the caller already loaded (so a
+    command doesn't load the index twice)."""
+    if entries is None:
+        entries = ensure_index(vault).get("entries", [])
+    index = build_resolution_index(entries)
+    edges: list[tuple[str, str, str | None]] = []
+    for e in entries:
+        rel = str(e.get("path") or "")
+        if not rel:
+            continue  # a pathless entry can't be a graph node — skip, don't fake one
+        for target in wikilink_targets(_note_body(vault, rel)):
+            best = resolve_target(target, index)
+            edges.append((rel, target, best.get("path") if best else None))
+    return edges, entries
+
+
+def related(
+    vault: "Vault", note_path: str, *, hops: int = 1,
+    entries: list[dict] | None = None,
+) -> list[dict]:
+    """Notes connected to *note_path* through wikilinks within *hops*.
+
+    Returns ``[{path, title, tier, direction, hops}]`` sorted by (hops, path).
+    For a direct (hop-1) neighbor, ``direction`` is ``out`` (this note links to
+    it), ``in`` (it links here), or ``both``; farther neighbors are ``N-hop``.
+    Traversal is undirected so a 2-hop reaches a neighbor's neighbor either way.
+    Pass *entries* to reuse an index snapshot the caller already loaded (so a
+    command that also resolved a ref doesn't load the index twice)."""
+    rel = str(note_path)
+    edges, entry_list = build_edges(vault, entries=entries)
+    entries = {str(e.get("path")): e for e in entry_list}
+
+    # BFS needs full undirected adjacency; direction is only reported for rel's
+    # own direct neighbors, so accumulate just those two sets, not a whole-graph
+    # directed index.
+    adj: dict[str, set[str]] = {}
+    out_of_rel: set[str] = set()
+    in_to_rel: set[str] = set()
+    for src, _t, dst in edges:
+        if dst is None:
+            continue
+        adj.setdefault(src, set()).add(dst)
+        adj.setdefault(dst, set()).add(src)
+        if src == rel:
+            out_of_rel.add(dst)
+        if dst == rel:
+            in_to_rel.add(src)
+
+    depth_of = {rel: 0}
+    frontier = [rel]
+    for depth in range(1, hops + 1):
+        nxt: list[str] = []
+        for node in frontier:
+            for nb in adj.get(node, ()):
+                if nb not in depth_of:
+                    depth_of[nb] = depth
+                    nxt.append(nb)
+        frontier = nxt
+
+    results = []
+    for path, depth in depth_of.items():
+        if depth == 0:
+            continue
+        e = entries.get(path, {})
+        if depth == 1:
+            out, inn = path in out_of_rel, path in in_to_rel
+            direction = "both" if out and inn else ("out" if out else "in")
+        else:
+            direction = f"{depth}-hop"
+        results.append({
+            "path": path, "title": e.get("title"), "tier": e.get("tier"),
+            "direction": direction, "hops": depth,
+        })
+    results.sort(key=lambda r: (r["hops"], str(r["path"])))
+    return results
+
+
+def link_report(vault: "Vault") -> dict:
+    """Graph health: **broken** links (an unresolved ``[[target]]`` — a
+    wanted-but-unwritten note) and **orphan** notes (nothing links to them).
+
+    ``broken``: ``[{src, target}]``; ``orphans``: ``[path]``. Both sorted. An
+    orphan is a candidate to link from a hub or to prune; a broken link is a
+    prompt to write the wanted note or fix the reference."""
+    edges, entries = build_edges(vault)
+    broken = sorted(
+        ({"src": s, "target": t} for s, t, dst in edges if dst is None),
+        key=lambda b: (b["src"], b["target"].lower()),
+    )
+    # Inbound edges from OTHER notes only — a note's link to itself is not
+    # something-links-to-it, so a self-only-linking note is still an orphan.
+    linked_to = {dst for src, _t, dst in edges if dst is not None and dst != src}
+    orphans = sorted(
+        p for e in entries if (p := str(e.get("path") or "")) and p not in linked_to
+    )
+    return {"broken": broken, "orphans": orphans}
