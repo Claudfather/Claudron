@@ -6,7 +6,7 @@ Public API::
 
     vault = detect()                        # walk up from CWD
     results = lookup("auth", vault=vault)   # search vault knowledge
-    resolved = resolve_wikilinks(text, vault=vault)  # Phase 4
+    resolved = resolve_wikilinks(text, vault=vault)  # [[wikilink]] → note refs
 """
 
 from __future__ import annotations
@@ -19,14 +19,14 @@ except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
 from .vault import Vault, detect
-from .knowledge import KnowledgeDoc, KnowledgeResult, lookup
+from .knowledge import KnowledgeDoc, KnowledgeResult, lookup, resolve_wikilinks
 
-
-def resolve_wikilinks(text: str, vault: Vault) -> dict[str, dict]:
-    """Resolve ``[[wikilinks]]`` in *text*.
-
-    Returns a mapping of ``{"[[topic]]": {"path": ..., "title": ..., "tier": ...}}``.
-
-    .. note:: Stub for Phase 4. Returns an empty dict.
-    """
-    return {}
+__all__ = [
+    "Vault",
+    "detect",
+    "lookup",
+    "resolve_wikilinks",
+    "KnowledgeDoc",
+    "KnowledgeResult",
+    "__version__",
+]

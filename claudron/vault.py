@@ -95,7 +95,7 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
 # LOOKUP_EXCLUDED — ratified is done-not-hidden, so the sets differ.
 
-SCHEMA_VERSION = 2  # bump when index.json entry shape changes (mismatch forces rebuild)
+SCHEMA_VERSION = 3  # bump when index.json entry shape changes (mismatch forces rebuild)
 
 # CONVENTIONS.md is the always-loaded layer (injected, not retrieved) —
 # never indexed/searched as a note; validate budget-checks it separately

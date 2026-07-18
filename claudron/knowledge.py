@@ -151,6 +151,7 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
         "expires": str(fm.get("expires", "")),
         "content_hash": content_fingerprint(body),
         "filename": md.stem,
+        "slug": str(fm.get("slug") or ""),  # explicit override; else filename stem
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
@@ -562,3 +563,80 @@ def _collect_all_docs(
             docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
 
     return docs
+
+
+# ── wikilink graph (Tier A over the JSON index; SQLite edges table is E4) ──
+
+_WIKILINK_RE = re.compile(r"\[\[\s*([^\]|]+?)\s*(?:\|[^\]]*)?\]\]")
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)  # fenced code blocks
+_INLINE_CODE_RE = re.compile(r"`[^`\n]+`")  # inline code spans
+
+# Ambiguity tiebreak (SCHEMA.md: project > fleet > shared > pack). `system:` is
+# a nested-container tier (post-SCHEMA); `other:` is the unrecognized hatch.
+_TIER_RANK = {"project": 0, "fleet": 1, "shared": 2, "pack": 3, "system": 4, "other": 5}
+
+
+def _tier_rank(tier: str) -> int:
+    return _TIER_RANK.get(tier.split(":", 1)[0], 9)
+
+
+def wikilink_targets(text: str) -> list[str]:
+    """Ordered-unique ``[[Target]]`` targets in *text*, ignoring code fences and
+    inline code (SCHEMA.md: literal ``[[`` in code is not a wikilink). The
+    display label after ``|`` is dropped; dedup is case-insensitive, keeping the
+    first-seen surface form."""
+    body = _INLINE_CODE_RE.sub("", _FENCE_RE.sub("", text))
+    seen: dict[str, str] = {}
+    for m in _WIKILINK_RE.finditer(body):
+        target = m.group(1).strip()
+        if target:
+            seen.setdefault(target.lower(), target)
+    return list(seen.values())
+
+
+def resolve_wikilinks(text: str, vault: "Vault") -> dict[str, dict]:
+    """Resolve every ``[[Target]]`` / ``[[Target|label]]`` in *text* against the
+    vault index.
+
+    Per SCHEMA.md, case-insensitive, in order: exact **title** → exact **alias**
+    → **slug** (explicit ``slug`` field, else the filename stem). Ambiguity —
+    several notes claim the same name at the *same* resolution step — goes to the
+    higher-priority tier (project > fleet > shared > pack). **Unresolved links
+    are first-class:** returned with ``path: None`` (they mark wanted-but-unwritten
+    notes, reported by ``claudron links``, never an error). Returns
+    ``{"[[Target]]": {"path", "title", "tier"}}`` for every distinct target.
+    """
+    targets = wikilink_targets(text)
+    if not targets:
+        return {}
+    entries = ensure_index(vault).get("entries", [])
+
+    by_title: dict[str, list[dict]] = {}
+    by_alias: dict[str, list[dict]] = {}
+    by_slug: dict[str, list[dict]] = {}
+    for e in entries:
+        title = str(e.get("title") or "").lower()
+        if title:
+            by_title.setdefault(title, []).append(e)
+        for alias in e.get("aliases") or []:
+            by_alias.setdefault(str(alias).lower(), []).append(e)
+        slug = str(e.get("slug") or e.get("filename") or "").lower()
+        if slug:
+            by_slug.setdefault(slug, []).append(e)
+
+    resolved: dict[str, dict] = {}
+    for target in targets:
+        key = target.lower()
+        # Honor the resolution ORDER: a title match wins over an alias match
+        # wins over a slug match (fall through only when the prior step is empty).
+        matches = by_title.get(key) or by_alias.get(key) or by_slug.get(key) or []
+        if matches:
+            best = min(matches, key=lambda e: _tier_rank(str(e.get("tier", ""))))
+            resolved[f"[[{target}]]"] = {
+                "path": best.get("path"),
+                "title": best.get("title"),
+                "tier": best.get("tier"),
+            }
+        else:
+            resolved[f"[[{target}]]"] = {"path": None, "title": None, "tier": None}
+    return resolved
