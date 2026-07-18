@@ -138,7 +138,7 @@ higher-priority tier (`project > fleet > shared > pack`); `validate` warns
 (W104) on cross-tier title/alias collisions.
 
 **Unresolved links are valid.** They mark wanted-but-unwritten notes and are
-reported (`claudron links`, E4), never errored. Literal `[[` inside code
+reported by `claudron links`, never errored. Literal `[[` inside code
 fences or inline code is not a wikilink.
 
 ## Vault directory taxonomy

@@ -32,6 +32,7 @@ from .hooks import (
 )
 from .knowledge import (
     build_index,
+    ensure_index,
     link_report,
     load_index,
     lookup,
@@ -348,14 +349,17 @@ def cmd_lookup(args) -> int:
 
 def cmd_related(args) -> int:
     vault = _resolve_vault(args)
-    path = resolve_note_ref(vault, args.note)
+    # One index snapshot for the whole command: resolve the ref and build the
+    # graph against the same entries (no double load, no split-snapshot race).
+    entries = ensure_index(vault).get("entries", [])
+    path = resolve_note_ref(vault, args.note, entries=entries)
     if path is None:
         if args.json:
             _emit_json("related", {"note": args.note, "related": []})
         else:
             print(f"no note matches '{args.note}'", file=sys.stderr)
         return 0
-    hits = related(vault, path, hops=args.hops)
+    hits = related(vault, path, hops=args.hops, entries=entries)
     if args.json:
         _emit_json("related", {"note": path, "related": hits})
         return 0
@@ -371,18 +375,16 @@ def cmd_related(args) -> int:
 def cmd_links(args) -> int:
     vault = _resolve_vault(args)
     report = link_report(vault)
-    # Show what was asked; with no flags, show both.
+    # --json is the full report with a STABLE shape (both keys always present);
+    # the --broken/--orphans flags are a human-display filter only, so a machine
+    # consumer never hits a flag-dependent KeyError.
+    if args.json:
+        _emit_json("links", {"broken": report["broken"], "orphans": report["orphans"]})
+        return 0
+    # Human mode: show what was asked; with no flags, show both.
     neither = not (args.broken or args.orphans)
     show_broken = args.broken or neither
     show_orphans = args.orphans or neither
-    if args.json:
-        data = {}
-        if show_broken:
-            data["broken"] = report["broken"]
-        if show_orphans:
-            data["orphans"] = report["orphans"]
-        _emit_json("links", data)
-        return 0
     if show_broken:
         if report["broken"]:
             print(f"broken links ({len(report['broken'])}):")
