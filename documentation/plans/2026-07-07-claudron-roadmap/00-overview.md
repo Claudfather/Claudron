@@ -121,16 +121,22 @@ conformance). Net effect on the roadmap:
 
 - **The wedge is validated by adoption**, not a ceremony — see the lightweight
   Gate G1 below.
-- **E3 is reframed.** Not "build the fleet socket" (the CLI socket already ships
-  and bots consume it via the #528 query-before wedge) but **"upgrade the proven
-  CLI surface to typed, in-context MCP tools + the cross-process write-lock"** —
-  the write-lock is what un-parks multi-writer. The adopt-vs-build spike still
-  precedes it.
+- **E3 (MCP) is demand-gated, not the next epic — decision C, 2026-07-18.** The
+  fleet already consumes the hub through clauDNA's **CLI-skill door** (`/claudron`
+  lookup/status, `/capture`, `/recall` over the CLI — shipped, clauDNA #197; *"the
+  CLI is the contract floor; MCP is the same engine with equivalent semantics"*).
+  So the MCP server is **parked** as an optional upgrade, built only on a named
+  trigger — **per-tool permission gating** (Claudlobby #644) or a **non-clauDNA
+  MCP consumer**. See `03-mcp-server.md`'s banner. This is D3 (MCP optional)
+  playing out; the demotion was drift, now a recorded decision.
 - **Sequence now:** *[0.2.x, pre-gate]* land the Claudlobby-conformance
   stragglers (#509 / #602 / Claudron #49) and P3-if-the-dogfood-needs-it →
-  *[light gate]* a stretch of real dogfood + the adopt-vs-build spike + a short
-  `G1-verdict.md` → *[0.3.0]* E3 (MCP over the CLI surface) → E4 / E5 / E6 as
-  before. Release numbers stay ordinal (ship order wins).
+  *[light gate]* a stretch of real dogfood + a short `G1-verdict.md` → *[next
+  epic — slot re-opened by C]* **E4 (indexer / real search)** or **E5
+  (lifecycle & curation)** or finishing the conformance/P3 layer, whichever
+  delivers value; **E3/MCP is demand-gated, off the critical path.** The
+  adopt-vs-build spike (Basic Memory / Graphify) now informs **E4** (the search/
+  graph engine), not E3. Release numbers stay ordinal (ship order wins).
 
 **Gate G1 — the continuation gate (D9).** Sits between the 0.2.0 release and
 everything after it. E3–E6 are *options the evidence exercises*, not
