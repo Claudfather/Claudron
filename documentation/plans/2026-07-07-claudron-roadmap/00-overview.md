@@ -108,20 +108,52 @@ whichever gated epic ships first takes 0.3.0.
 | [E5 — Lifecycle & curation](05-lifecycle.md) | 0.5.0 | M | draft→verified→canonical on `maturity`, `promote`, `review` queue, librarian workflow; supersedes #11, partially closes #12 |
 | [E6 — Packs + Claudosseum grounding](06-packs.md) | 0.6.0 | M (S if subscribe-side stays gated) | pack.yaml v1, publish + scenario export; subscribe machinery behind a demand trigger |
 
+**2026-07-18 — re-scope after the vault-structure layer.** A layer the original
+six-epic table didn't foresee landed between E2 and the gate: the **vault-structure
+contract** ([`2026-07-09-vault-structure-contract/`](../2026-07-09-vault-structure-contract/00-overview.md)),
+an **E1 extension, not a new gated epic**. P1 (`VAULT-STRUCTURE.md`) and P2
+(`structure.py` + `validate --fix`) shipped on a 0.2.x line; P3 (fleet-scoped
+recall) stays dogfood-gated (F6). It hardened the CLI+markdown wedge into a
+documented, `validate`-checked contract the fleet can conform to — and alongside
+it clauDNA reconciled its hooks + terminology (#45; `/reflect`→`/capture`) and the
+Claudlobby socket went live (`plug`/`config`/`fleet` CLI + #509/#560–563
+conformance). Net effect on the roadmap:
+
+- **The wedge is validated by adoption**, not a ceremony — see the lightweight
+  Gate G1 below.
+- **E3 (MCP) is demand-gated, not the next epic — decision C, 2026-07-18.** The
+  fleet already consumes the hub through clauDNA's **CLI-skill door** (`/claudron`
+  lookup/status, `/capture`, `/recall` over the CLI — shipped, clauDNA #197; *"the
+  CLI is the contract floor; MCP is the same engine with equivalent semantics"*).
+  So the MCP server is **parked** as an optional upgrade, built only on a named
+  trigger — **per-tool permission gating** (Claudlobby #644) or a **non-clauDNA
+  MCP consumer**. See `03-mcp-server.md`'s banner. This is D3 (MCP optional)
+  playing out; the demotion was drift, now a recorded decision.
+- **Sequence now:** *[0.2.x, pre-gate]* land the Claudlobby-conformance
+  stragglers (#509 / #602 / Claudron #49) and P3-if-the-dogfood-needs-it →
+  *[light gate]* a stretch of real dogfood + a short `G1-verdict.md` → *[next
+  epic — slot re-opened by C]* **E4 (indexer / real search)** or **E5
+  (lifecycle & curation)** or finishing the conformance/P3 layer, whichever
+  delivers value; **E3/MCP is demand-gated, off the critical path.** The
+  adopt-vs-build spike (Basic Memory / Graphify) now informs **E4** (the search/
+  graph engine), not E3. Release numbers stay ordinal (ship order wins).
+
 **Gate G1 — the continuation gate (D9).** Sits between the 0.2.0 release and
 everything after it. E3–E6 are *options the evidence exercises*, not
-commitments. Entry criteria, measured over ≥2 weeks of E2 dogfood:
+commitments. **Lightweight (2026-07-18):** the original rigid form — a ≥2-week
+clock with four pre-registered signals and tracking tables — is **retired**
+(operator steer: calibrate ceremony to stakes; a solo dogfood of one's own hub
+is not a pre-registered experiment). Entry criteria, read from real use:
 
-- **Dogfood scope (2026-07-09 refinement):** the ≥2-week dogfood runs the vault
-  on Chris's local machines **and** the Pi fleet, wired **CLI + git, not MCP**
-  (E2's shipped surface; the MCP server is E3, which this gate decides), with
-  **writes serialized** so the parked multi-writer claim (below) stays parked.
-  Success is read from **four pre-registered signals** — cross-boundary recall,
-  accumulation quality, resync robustness, hooks-fired-automatically — each
-  threshold fixed *before* the clock starts. Runbook + tracking checklist:
-  [`2026-07-09-g1-dogfood-protocol.md`](../2026-07-09-g1-dogfood-protocol.md).
-  This does not reverse D1 (local-first); it makes the human↔fleet half of the
-  wedge observable rather than only the personal half
+- **Validate by real use, not a ceremony.** Run the vault on the operator's
+  machines and the Pi fleet via the CLI wedge (E2's surface + the vault-structure
+  contract; not MCP — that's E3), writes effectively single-writer. Over a
+  stretch of ordinary use, notice whether it's working: recall surfacing useful
+  cross-machine/fleet context, capture accumulating signal, resync holding. **By
+  2026-07-18 the wedge is largely validated in practice** — the structure
+  contract shipped, clauDNA reconciled (#45), and the fleet consumes the vault
+  via the interim query-before wedge (#528). Now-lightweight runbook:
+  [`2026-07-09-g1-dogfood-protocol.md`](../2026-07-09-g1-dogfood-protocol.md)
 - **Pulse:** notes/week > 0 and trending up; recall briefs referenced in-session
 - **Continue personal-first** (E4 next if the vault is growing fast toward the
   F3 knee, E3 next otherwise) when pulse passes
@@ -131,7 +163,7 @@ commitments. Entry criteria, measured over ≥2 weeks of E2 dogfood:
   ignored
 - **The gate emits a written verdict** (cycle-2 must-fix #1): a dated
   `G1-verdict.md` in this directory recording **PASS** (wedge validated —
-  pulse numbers attached) or **PIVOT** (wedge failed; fleet-first replan,
+  a few honest sentences, not a metrics dossier) or **PIVOT** (wedge failed; fleet-first replan,
   with what changed), cross-posted to EPIC #14. The two branches are
   deliberately distinguishable: a PIVOT is a recorded strategy change, never
   silently absorbed into "shipped anyway"

@@ -1,7 +1,7 @@
 ---
 title: "E3 — MCP server v0.1 + the Claudlobby socket"
 type: plan
-status: active
+status: deferred
 owner: chris
 tags: [epic, mcp, claudlobby, claudna, claudron]
 created: 2026-07-07
@@ -9,6 +9,18 @@ updated: 2026-07-07
 ---
 
 # E3 — MCP server v0.1 + the Claudlobby socket
+
+> **⛔ DEMAND-GATED — parked 2026-07-18 (decision C).** The fleet already
+> consumes the hub through clauDNA's **CLI-skill door** (`/claudron`
+> lookup/status, `/capture`, `/recall` over the `claudron` CLI — shipped in
+> clauDNA #197; *"the CLI is the contract floor; MCP tools, if configured, are
+> the same engine with equivalent semantics"*). So this MCP server is **no
+> longer the next epic** — it is an optional upgrade built **only on a named
+> trigger:** per-tool permission gating (Claudlobby #644) or a non-clauDNA MCP
+> consumer. Until a trigger fires, the vault is fully fleet-consumable without
+> it. Everything below is the design, kept ready. Release "0.3.0" below is the
+> *original* ordinal placement, now void — see `00-overview.md` §2026-07-18
+> re-scope.
 
 **Release:** 0.3.0 by default order (ordinal — see overview DAG legend) ·
 **Depends on:** E1, E2 (imports E2's `engine.py`; the overview DAG legend is
