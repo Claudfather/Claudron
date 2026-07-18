@@ -18,7 +18,12 @@ from datetime import date
 from pathlib import Path
 
 from .locking import atomic_write_text, vault_write_lock
-from .schema import LOOKUP_EXCLUDED, content_fingerprint, has_conflict_markers
+from .schema import (
+    LOOKUP_EXCLUDED,
+    content_fingerprint,
+    has_conflict_markers,
+    slugify,
+)
 from .vault import (
     SCHEMA_VERSION,
     SHARED_SUBDIRS,
@@ -142,15 +147,25 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
     the entry shape (build_index and the write engine's incremental update
     both construct entries through this). ``content_hash`` is the
     title-independent body fingerprint dedup keys on alongside the title."""
+    # Coerce a scalar `aliases:` to a list here (the single home): otherwise a
+    # note written `aliases: Foo` (a YAML string, not a list) lands as "Foo" and
+    # every consumer that iterates it — wikilink resolution, lookup scoring —
+    # walks its characters instead of the alias.
+    aliases = fm.get("aliases") or []
+    if isinstance(aliases, str):
+        aliases = [aliases]
     return {
         "title": fm.get("title") or _derive_title(md.stem),
         "tags": fm.get("tags") or [],
-        "aliases": fm.get("aliases") or [],
+        "aliases": [str(a) for a in aliases],
         "status": fm.get("status", "active"),
         "updated": _stamp(fm),
         "expires": str(fm.get("expires", "")),
         "content_hash": content_fingerprint(body),
         "filename": md.stem,
+        # SCHEMA.md §Wikilinks: slug = explicit `slug`, else the *kebab-case*
+        # filename stem — so `[[api-guide]]` resolves a note filed `API Guide.md`.
+        "slug": str(fm.get("slug") or slugify(md.stem)),
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
@@ -511,12 +526,10 @@ def lookup(
                     results.append(result)
                     result_by_path[doc.source_path] = result
 
-    # ── Sort: score desc, then tier priority ──
-    tier_priority = {"project": 0, "fleet": 1, "shared": 2, "other": 3}
-
+    # ── Sort: score desc, then tier priority (_tier_rank is the single home,
+    # shared with wikilink ambiguity resolution) ──
     def _sort_key(r: KnowledgeResult) -> tuple:
-        tier_base = r.doc.tier.split(":")[0] if ":" in r.doc.tier else r.doc.tier
-        return (-r.score, tier_priority.get(tier_base, 3))
+        return (-r.score, _tier_rank(r.doc.tier))
 
     results.sort(key=_sort_key)
     return results[:limit]
@@ -562,3 +575,116 @@ def _collect_all_docs(
             docs.extend(walk_knowledge_tier(d, f"other:{d.name}"))
 
     return docs
+
+
+# ── wikilink graph (Tier A over the JSON index; SQLite edges table is E4) ──
+
+_WIKILINK_RE = re.compile(r"\[\[([^\]|\n]+)(?:\|[^\]\n]*)?\]\]")
+
+# Code spans where a literal ``[[`` is NOT a wikilink (SCHEMA.md §Wikilinks), in
+# one pass: a fenced block (``` or ~~~, 3+, run to the matching closer OR to
+# end-of-text when the fence is unterminated — CommonMark treats an unclosed
+# fence as code through EOF), then inline code. The fenced alternative is tried
+# first so a ``[[link]]`` inside a fence is stripped, not caught as inline.
+_CODE_RE = re.compile(
+    r"(?ms)^[ \t]*(`{3,}|~{3,}).*?(?:^[ \t]*\1[ \t]*$|\Z)"  # fenced (unclosed → EOF)
+    r"|`[^`\n]+`"  # inline
+)
+
+# Tier priority — the single home, shared by wikilink ambiguity (here) and
+# lookup's sort (SCHEMA.md: project > fleet > shared > pack). `system:` is a
+# nested-container tier (post-SCHEMA); `other:` is the unrecognized hatch.
+_TIER_RANK = {"project": 0, "fleet": 1, "shared": 2, "pack": 3, "system": 4, "other": 5}
+
+
+def _tier_rank(tier: str) -> int:
+    return _TIER_RANK.get(tier.split(":", 1)[0], 9)
+
+
+def wikilink_targets(text: str) -> list[str]:
+    """Ordered-unique ``[[Target]]`` targets in *text*, ignoring code fences and
+    inline code (SCHEMA.md: literal ``[[`` in code is not a wikilink). The
+    display label after ``|`` is dropped; dedup is case-insensitive, keeping the
+    first-seen surface form. A target may not span a newline."""
+    body = _CODE_RE.sub("", text)
+    seen: dict[str, str] = {}
+    for m in _WIKILINK_RE.finditer(body):
+        target = m.group(1).strip()
+        if target:
+            seen.setdefault(target.lower(), target)
+    return list(seen.values())
+
+
+# The resolution index: three lowercased name→entries maps (title, alias, slug),
+# kept SEPARATE so the SCHEMA title→alias→slug fall-through can be honored (a
+# title match must beat an alias match on a different note). Built once per
+# vault; the graph-wide caller (``related``/``build_edges``) reuses one index
+# across every note rather than rebuilding it per call.
+ResolutionIndex = tuple
+
+
+def build_resolution_index(entries: list[dict]) -> ResolutionIndex:
+    by_title: dict[str, list[dict]] = {}
+    by_alias: dict[str, list[dict]] = {}
+    by_slug: dict[str, list[dict]] = {}
+    for e in entries:
+        title = str(e.get("title") or "").lower()
+        if title:
+            by_title.setdefault(title, []).append(e)
+        for alias in e.get("aliases") or []:
+            by_alias.setdefault(str(alias).lower(), []).append(e)
+        slug = str(e.get("slug") or e.get("filename") or "").lower()
+        if slug:
+            by_slug.setdefault(slug, []).append(e)
+    return by_title, by_alias, by_slug
+
+
+def resolve_target(target: str, index: ResolutionIndex) -> dict | None:
+    """The winning index entry for one ``[[target]]``, or ``None`` if unresolved.
+
+    SCHEMA order (title → alias → slug, fall through only when a step is empty);
+    within the winning step, ambiguity goes to the higher-priority tier, then —
+    where SCHEMA leaves same-tier ties unspecified — to the note path (a stable,
+    walk-order-independent tiebreak, so reindexing never silently reassigns a
+    link)."""
+    by_title, by_alias, by_slug = index
+    key = target.lower()
+    matches = by_title.get(key) or by_alias.get(key) or by_slug.get(key)
+    if not matches:
+        return None
+    return min(
+        matches,
+        key=lambda e: (_tier_rank(str(e.get("tier", ""))), str(e.get("path", ""))),
+    )
+
+
+def resolve_wikilinks(text: str, vault: "Vault") -> dict[str, dict]:
+    """Resolve every ``[[Target]]`` / ``[[Target|label]]`` in *text* against the
+    vault index.
+
+    Per SCHEMA.md, case-insensitive, in order: exact **title** → exact **alias**
+    → **slug** (explicit ``slug`` field, else the kebab-case filename stem).
+    Ambiguity — several notes claim the same name at the *same* step — goes to the
+    higher-priority tier (project > fleet > shared > pack). **Unresolved links
+    are first-class:** returned with ``path: None`` (they mark wanted-but-unwritten
+    notes, reported by ``claudron links``, never an error).
+
+    Returns ``{"[[Target]]": {"path", "title", "tier"}}``, one entry per distinct
+    target. **Keys are canonical** — the stripped target, case-folded (so
+    ``[[Auth]]`` and ``[[AUTH]]`` collapse to one entry) — for reporting; they do
+    not necessarily equal the source substring, so callers rewriting text should
+    match by regex, not by dict key.
+    """
+    targets = wikilink_targets(text)
+    if not targets:
+        return {}
+    index = build_resolution_index(ensure_index(vault).get("entries", []))
+    resolved: dict[str, dict] = {}
+    for target in targets:
+        best = resolve_target(target, index)
+        resolved[f"[[{target}]]"] = {
+            "path": best.get("path") if best else None,
+            "title": best.get("title") if best else None,
+            "tier": best.get("tier") if best else None,
+        }
+    return resolved
