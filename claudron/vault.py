@@ -95,7 +95,7 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
 # LOOKUP_EXCLUDED — ratified is done-not-hidden, so the sets differ.
 
-SCHEMA_VERSION = 3  # bump when index.json entry shape changes (mismatch forces rebuild)
+SCHEMA_VERSION = 4  # bump when index.json entry shape changes (mismatch forces rebuild)
 
 # CONVENTIONS.md is the always-loaded layer (injected, not retrieved) —
 # never indexed/searched as a note; validate budget-checks it separately
@@ -511,9 +511,24 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     # Pass the quarantine set we already computed so divergence walks paths only
     # instead of re-reading every note body. Lazy import: knowledge imports
     # vault, so a module-level import here would cycle.
-    from .knowledge import index_divergence
+    from .knowledge import ensure_index, index_divergence
 
     divergence = index_divergence(vault, quarantined=set(quarantined))
+
+    # Maturity lifecycle metric (E5): how far knowledge has climbed the trust
+    # ladder. `promoted_pct` is the share of rated notes that reached
+    # verified/canonical — the "is anyone curating?" signal the epic calls for.
+    maturity: dict[str, int] = {"draft": 0, "verified": 0, "canonical": 0, "unrated": 0}
+    for e in ensure_index(vault).get("entries", []):
+        m = e.get("maturity") or "unrated"
+        maturity[m if m in maturity else "unrated"] += 1
+    rated = maturity["draft"] + maturity["verified"] + maturity["canonical"]
+    promoted = maturity["verified"] + maturity["canonical"]
+    lifecycle = {
+        "maturity": maturity,
+        "promoted_pct": round(100 * promoted / rated) if rated else 0,
+    }
+
     if divergence.get("corrupt"):
         warnings.append(
             "index.json is present but unreadable (corrupt) — recall/dedup run "
@@ -536,6 +551,7 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
         "index_present": index_path.is_file(),
         "index_fresh": index_fresh,
         "divergence": divergence,
+        "lifecycle": lifecycle,
         "warnings": warnings,
     }
 
