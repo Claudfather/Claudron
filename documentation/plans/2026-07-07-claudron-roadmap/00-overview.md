@@ -138,6 +138,30 @@ conformance). Net effect on the roadmap:
   adopt-vs-build spike (Basic Memory / Graphify) now informs **E4** (the search/
   graph engine), not E3. Release numbers stay ordinal (ship order wins).
 
+**2026-07-18 — SHIPPED this session (the next-epic slot, resolved by building the
+scale-free halves first).** Rather than pick E4 *or* E5 wholesale, the work split
+each epic and shipped the parts that help at any vault size, deferring the scale
+bets behind measured triggers:
+
+- **PR-H hardening** (#62): the vault write-lock + atomic writes the parked E3
+  spec had orphaned, the `CLAUDRON_VAULT_PATH` fix, the typed `--json` write
+  contract, and a `status` index-vs-vault divergence counter — the live CLI/fleet
+  write path made correct.
+- **E4's graph half** (#65 `resolve_wikilinks`, #66 `related` / `claudron links`,
+  #67 eval seed): the wikilink graph over the existing index — scale-free, no
+  SQLite. The **SQLite/FTS5 scale half stays deferred and now *measured*:** the
+  eval seed put heuristic recall@5 at **95%** (paraphrase 90%), far below the F2
+  trigger, so the deferral is evidence-based (recorded in `G1-verdict.md`).
+- **E5's PR1** (#68): the maturity trust ladder (draft→verified→canonical) +
+  `claudron promote` + provenance + ranking boost + a `status` lifecycle metric —
+  filling the `promote.py` stub. **E5 PR2–4 deferred** (`--to-tier` tier moves,
+  the `review` queue, `capture --suggest`).
+
+Net: **Juncture C (the graph slice + curation half) is done.** The remaining
+critical-path work is Chris-gated, not code-blocked — the lightweight dogfood +
+the `#644` per-verb-grant policy call. E3/MCP stays demand-gated; SQLite (E4
+scale), E5 PR2–4, and E6 are the evidence-gated upside.
+
 **Gate G1 — the continuation gate (D9).** Sits between the 0.2.0 release and
 everything after it. E3–E6 are *options the evidence exercises*, not
 commitments. **Lightweight (2026-07-18):** the original rigid form — a ≥2-week
