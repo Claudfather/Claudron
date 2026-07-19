@@ -520,7 +520,7 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     # verified/canonical — the "is anyone curating?" signal the epic calls for.
     maturity: dict[str, int] = {"draft": 0, "verified": 0, "canonical": 0, "unrated": 0}
     for e in ensure_index(vault).get("entries", []):
-        m = e.get("maturity") or "unrated"
+        m = e.get("maturity", "")  # missing/empty/invalid all bucket to "unrated"
         maturity[m if m in maturity else "unrated"] += 1
     rated = maturity["draft"] + maturity["verified"] + maturity["canonical"]
     promoted = maturity["verified"] + maturity["canonical"]

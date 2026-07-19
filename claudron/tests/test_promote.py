@@ -122,6 +122,13 @@ class TestPromoteCLI:
         assert env["command"] == "promote"
         assert env["data"]["action"] == "promoted"
         assert env["data"]["to"] == "verified" and env["data"]["promoted_by"] == "chris"
+        assert env["data"]["written"] is True  # shared success-signal (mirrors WriteResult)
+
+    def test_written_flag_false_when_nothing_changed(self, vault_dir: Path):
+        note = _capture(vault_dir, "Retry Rules")
+        vault = detect(vault_dir)
+        promote(vault, note, to_maturity="verified", actor="t")
+        assert promote(vault, note, to_maturity="verified", actor="t").written is False
 
     def test_cli_promote_resolves_by_title(self, vault_dir: Path, capsys):
         _capture(vault_dir, "Retry Rules")

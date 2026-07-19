@@ -20,9 +20,9 @@ from pathlib import Path
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     LOOKUP_EXCLUDED,
-    MATURITY_VALUES,
     content_fingerprint,
     has_conflict_markers,
+    ladder_index,
     slugify,
 )
 from .vault import (
@@ -531,7 +531,9 @@ def lookup(
     # ── Sort: score desc, then tier priority (_tier_rank is the single home,
     # shared with wikilink ambiguity resolution) ──
     def _sort_key(r: KnowledgeResult) -> tuple:
-        return (-r.score, _maturity_rank(r.doc.maturity), _tier_rank(r.doc.tier))
+        # -ladder_index: canonical(-2) < verified(-1) < draft(0) < unrated(+1),
+        # so higher trust sorts first, above tier.
+        return (-r.score, -ladder_index(r.doc.maturity), _tier_rank(r.doc.tier))
 
     results.sort(key=_sort_key)
     return results[:limit]
@@ -601,16 +603,6 @@ _TIER_RANK = {"project": 0, "fleet": 1, "shared": 2, "pack": 3, "system": 4, "ot
 
 def _tier_rank(tier: str) -> int:
     return _TIER_RANK.get(tier.split(":", 1)[0], 9)
-
-
-# Maturity (trust) rank for lookup sort — canonical outranks verified outranks
-# draft outranks unrated (E5). Lower is better (ascending sort). Derived from
-# MATURITY_VALUES so it can't drift from the schema's ladder order.
-_MATURITY_RANK = {m: len(MATURITY_VALUES) - 1 - i for i, m in enumerate(MATURITY_VALUES)}
-
-
-def _maturity_rank(maturity: str) -> int:
-    return _MATURITY_RANK.get(maturity, len(MATURITY_VALUES))  # unrated ranks last
 
 
 def wikilink_targets(text: str) -> list[str]:

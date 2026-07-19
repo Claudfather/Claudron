@@ -26,6 +26,7 @@ from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     MATURITY_VALUES,
     Finding,
+    ladder_index,
     parse_note,
     set_frontmatter_field,
     validate_note,
@@ -46,6 +47,14 @@ class PromoteResult:
     promoted_at: str = ""
     errors: list[Finding] = field(default_factory=list)
 
+    @property
+    def written(self) -> bool:
+        """True iff the note changed on disk. The shared success-signal (mirrors
+        ``engine.WriteResult.written``, PR-H) so a CLI/MCP door branches on this,
+        not on the ``action`` string — ``unchanged`` and ``rejected`` wrote
+        nothing."""
+        return self.action in ("promoted", "demoted")
+
     def to_dict(self) -> dict:
         return {
             "action": self.action,
@@ -54,14 +63,9 @@ class PromoteResult:
             "to": self.to_maturity,
             "promoted_by": self.promoted_by,
             "promoted_at": self.promoted_at,
+            "written": self.written,
             "errors": [f.to_dict() for f in self.errors],
         }
-
-
-def _ladder_index(maturity: str) -> int:
-    """Ladder position: draft(0) < verified(1) < canonical(2); unrated is below
-    all (-1), so setting any maturity on an unrated note reads as a promotion."""
-    return MATURITY_VALUES.index(maturity) if maturity in MATURITY_VALUES else -1
 
 
 def promote(
@@ -86,18 +90,21 @@ def promote(
 
     # One lock over read→write→index (same critical section as capture/append):
     # a concurrent writer must not stale the index between our read and rewrite.
+    # NOTE (E5 PR2): this guarded-mutate skeleton mirrors engine.append_addendum;
+    # when --to-tier lands as the 3rd note-mutator, extract a shared
+    # engine._guarded_mutate(mutate, refresh) primitive (rule of three).
     with vault_write_lock(vault):
-        index = ensure_index(vault)  # fresh BEFORE the write (append_addendum note)
         original = note_path.read_text()
         fm_before, _body, _err = parse_note(original)
         current = str(fm_before.get("maturity", ""))
 
-        if current == to_maturity:
+        if current == to_maturity:  # no-op: skip the index load entirely
             return PromoteResult(
                 action="unchanged", path=rel,
                 from_maturity=current, to_maturity=to_maturity,
             )
 
+        index = ensure_index(vault)  # fresh BEFORE the write (append_addendum note)
         text = set_frontmatter_field(original, "maturity", to_maturity)
         text = set_frontmatter_field(text, "promoted_by", actor)
         text = set_frontmatter_field(text, "promoted_at", today)
@@ -124,7 +131,7 @@ def promote(
         write_index(vault, index)
 
     action = (
-        "promoted" if _ladder_index(to_maturity) > _ladder_index(current) else "demoted"
+        "promoted" if ladder_index(to_maturity) > ladder_index(current) else "demoted"
     )
     return PromoteResult(
         action=action, path=rel, from_maturity=current, to_maturity=to_maturity,
