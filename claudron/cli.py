@@ -39,6 +39,7 @@ from .knowledge import (
     related,
     resolve_note_ref,
 )
+from .graph import build_graph, render_html
 from .promote import promote
 from .session import derive_project, recall, render_brief
 from .sync import SyncError, run_git, sync
@@ -432,6 +433,21 @@ def cmd_promote(args) -> int:
         return 0
     print(f"{result.action}: {result.path}  "
           f"{result.from_maturity or 'unrated'} → {result.to_maturity}  (by {actor})")
+    return 0
+
+
+def cmd_graph(args) -> int:
+    vault = _resolve_vault(args)
+    graph = build_graph(vault)
+    if args.json:
+        _emit_json("graph", graph)
+        return 0
+    out = Path(args.output) if args.output else vault.root / ".claudron" / "graph.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(render_html(graph, title=f"{vault.root.name} — knowledge graph"))
+    n, e = len(graph["nodes"]), len(graph["edges"])
+    print(f"wrote {out}  ({n} notes, {e} links)")
+    print(f"open it: open {out}", file=sys.stderr)
     return 0
 
 
@@ -1248,6 +1264,15 @@ def main(argv=None) -> int:
         "--by", help="Who is vouching (default: git user.name, then $USER)"
     )
 
+    # graph — the wikilink graph as a self-contained HTML visual or JSON
+    p_graph = sub.add_parser(
+        "graph", help="Export the wikilink graph (interactive HTML, or --json)",
+        parents=[vault_parent, json_parent],
+    )
+    p_graph.add_argument(
+        "-o", "--output", help="HTML output path (default: <vault>/.claudron/graph.html)"
+    )
+
     # index
     p_index = sub.add_parser(
         "index",
@@ -1341,6 +1366,7 @@ def main(argv=None) -> int:
         "related": cmd_related,
         "links": cmd_links,
         "promote": cmd_promote,
+        "graph": cmd_graph,
         "index": cmd_index,
         "version": cmd_version,
         "plug": cmd_plug,
