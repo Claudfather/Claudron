@@ -124,6 +124,14 @@ DEDUP_EXEMPT = LOOKUP_EXCLUDED
 MATURITY_VALUES = ("draft", "verified", "canonical")
 
 
+def ladder_index(maturity: str) -> int:
+    """Position on the trust ladder: draft(0) < verified(1) < canonical(2);
+    unrated is below all (-1). The single home of the maturity ordinal — E5's
+    promote reads it for direction (higher = a promotion), and lookup's sort
+    negates it (``-ladder_index`` puts canonical first, unrated last)."""
+    return MATURITY_VALUES.index(maturity) if maturity in MATURITY_VALUES else -1
+
+
 def claimed_names(mapping: dict) -> list[str]:
     """Lowercased title + aliases a note claims — the name set wikilink
     resolution and dedup both key on. One home (used by write-time dedup

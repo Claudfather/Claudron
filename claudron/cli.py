@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import __version__
 from .engine import ScopeError, append_addendum, capture, compose_note, resolve_target_dir
-from .schema import TYPES, Finding, slugify, validate_path
+from .schema import MATURITY_VALUES, TYPES, Finding, slugify, validate_path
 from .structure import StructureError, check_structure, fix_structure, is_fixable
 from .vault import (
     SCAFFOLD_TREE,
@@ -39,6 +39,7 @@ from .knowledge import (
     related,
     resolve_note_ref,
 )
+from .promote import promote
 from .session import derive_project, recall, render_brief
 from .sync import SyncError, run_git, sync
 
@@ -290,6 +291,14 @@ def cmd_status(args) -> int:
             stale_str = f"  ({tier_info['stale']} stale)" if tier_info["stale"] else ""
             print(f"  {tier_name}: {tier_info['docs']} docs{stale_str}")
 
+    # Maturity lifecycle (E5): trust-ladder progress
+    m = info["lifecycle"]["maturity"]
+    if any(m.values()):
+        print()
+        print(f"maturity: {m['canonical']} canonical, {m['verified']} verified, "
+              f"{m['draft']} draft, {m['unrated']} unrated "
+              f"({info['lifecycle']['promoted_pct']}% promoted)")
+
     # Index state + vault warnings are diagnostics, not payload → stderr
     if not info["index_present"]:
         print("index: not built (will auto-build on first lookup)", file=sys.stderr)
@@ -399,6 +408,30 @@ def cmd_links(args) -> int:
                 print(f"  {p}")
         else:
             print("orphan notes: none")
+    return 0
+
+
+def cmd_promote(args) -> int:
+    vault = _resolve_vault(args)
+    path = resolve_note_ref(vault, args.note)
+    if path is None:
+        print(f"no note matches '{args.note}'", file=sys.stderr)
+        return 1
+    actor = args.by or _derive_owner(args)
+    result = promote(vault, vault.root / path, to_maturity=args.to, actor=actor)
+    if args.json:
+        _emit_json("promote", result.to_dict(), result.errors or None)
+        return 1 if result.action == "rejected" else 0
+    if result.action == "rejected":
+        for f in result.errors:
+            print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
+        return 1
+    if result.action == "unchanged":
+        print(f"unchanged: {result.path} already at maturity '{result.to_maturity}'",
+              file=sys.stderr)
+        return 0
+    print(f"{result.action}: {result.path}  "
+          f"{result.from_maturity or 'unrated'} → {result.to_maturity}  (by {actor})")
     return 0
 
 
@@ -1201,6 +1234,20 @@ def main(argv=None) -> int:
         "--orphans", action="store_true", help="Only notes nothing links to"
     )
 
+    # promote — move a note along the maturity trust ladder (E5)
+    p_promote = sub.add_parser(
+        "promote", help="Set a note's maturity (draft/verified/canonical)",
+        parents=[vault_parent, json_parent],
+    )
+    p_promote.add_argument("note", help="Note title/alias/slug or vault-relative path")
+    p_promote.add_argument(
+        "--to", required=True, choices=MATURITY_VALUES,
+        help="Target maturity (any target; direction is derived)",
+    )
+    p_promote.add_argument(
+        "--by", help="Who is vouching (default: git user.name, then $USER)"
+    )
+
     # index
     p_index = sub.add_parser(
         "index",
@@ -1293,6 +1340,7 @@ def main(argv=None) -> int:
         "lookup": cmd_lookup,
         "related": cmd_related,
         "links": cmd_links,
+        "promote": cmd_promote,
         "index": cmd_index,
         "version": cmd_version,
         "plug": cmd_plug,

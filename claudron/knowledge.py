@@ -22,6 +22,7 @@ from .schema import (
     LOOKUP_EXCLUDED,
     content_fingerprint,
     has_conflict_markers,
+    ladder_index,
     slugify,
 )
 from .vault import (
@@ -166,6 +167,7 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
         # SCHEMA.md §Wikilinks: slug = explicit `slug`, else the *kebab-case*
         # filename stem — so `[[api-guide]]` resolves a note filed `API Guide.md`.
         "slug": str(fm.get("slug") or slugify(md.stem)),
+        "maturity": str(fm.get("maturity", "")),  # D11 trust axis (E5): status metric + rank
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
@@ -529,7 +531,9 @@ def lookup(
     # ── Sort: score desc, then tier priority (_tier_rank is the single home,
     # shared with wikilink ambiguity resolution) ──
     def _sort_key(r: KnowledgeResult) -> tuple:
-        return (-r.score, _tier_rank(r.doc.tier))
+        # -ladder_index: canonical(-2) < verified(-1) < draft(0) < unrated(+1),
+        # so higher trust sorts first, above tier.
+        return (-r.score, -ladder_index(r.doc.maturity), _tier_rank(r.doc.tier))
 
     results.sort(key=_sort_key)
     return results[:limit]
