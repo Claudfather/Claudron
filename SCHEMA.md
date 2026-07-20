@@ -57,6 +57,17 @@ does X*). When in doubt: if an agent is meant to *execute* it, it's clauDNA's.
 | `audit` | Point-in-time assessment outputs |
 | `review` | Review outputs (code, plan, design) |
 
+### Non-note files
+
+Not every `.md` file in a vault is a note. **Structural files carry no
+frontmatter and are skipped by every note walk — index, search, *and*
+validation:** `README.md`, `INDEX.md` (navigation), and `CLAUDE.md` (Claude Code
+directory guidance, e.g. `projects/CLAUDE.md`). They are never indexed, ranked,
+or error-flagged as broken notes. `CONVENTIONS.md` is a near-cousin — skipped by
+index/search but *budget-checked* by validation, because it is the always-injected
+layer. The skip set is `schema.NON_NOTE_FILES` (plus `CONVENTIONS.md`), closed for
+the 0.x line.
+
 ## Frontmatter fields
 
 **Universal — required:** `title` (string), `type` (enum above), `status`

@@ -18,6 +18,7 @@ import yaml
 from .schema import (
     CONVENTIONS_TEMPLATE,
     NON_NOTE_FILES,
+    PROJECTS_CLAUDE_TEMPLATE,
     STALENESS_DONE,
     has_conflict_markers,
     parse_note,
@@ -104,7 +105,7 @@ _SKIP_NAMES = NON_NOTE_FILES | {"CONVENTIONS.md"}
 
 
 def iter_markdown_files(base: Path):
-    """Yield .md file paths under *base*, skipping INDEX.md and README.md."""
+    """Yield .md file paths under *base*, skipping non-note files (``_SKIP_NAMES``)."""
     if not base.is_dir():
         return
     for md in sorted(base.rglob("*.md")):
@@ -356,7 +357,7 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
     scaffold_shared_tree(root / "_shared", exist_ok=True)
     projects = root / "projects"
     projects.mkdir(parents=True, exist_ok=True)
-    _write_if_absent(projects / ".gitkeep", "")
+    _write_if_absent(projects / "CLAUDE.md", PROJECTS_CLAUDE_TEMPLATE)
     _write_if_absent(root / "_shared" / "CONVENTIONS.md", CONVENTIONS_TEMPLATE)
     _ensure_gitignore(root)
 

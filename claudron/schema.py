@@ -85,9 +85,10 @@ STATUS_VOCAB: dict[str, dict] = {
 }
 
 # Structural files that are never notes (skipped by walks AND validation).
-# CONVENTIONS.md is deliberately not here: walks skip it (vault._SKIP_NAMES
+# CLAUDE.md is a Claude Code dir-guidance file (e.g. projects/CLAUDE.md) — never
+# a note. CONVENTIONS.md is deliberately not here: walks skip it (vault._SKIP_NAMES
 # adds it) but validation budget-checks it.
-NON_NOTE_FILES = frozenset({"INDEX.md", "README.md"})
+NON_NOTE_FILES = frozenset({"INDEX.md", "README.md", "CLAUDE.md"})
 
 # Where each type files inside a shared tier (SCHEMA.md §taxonomy; matches
 # clauDNA publish's disk routing — audit/review share planning/active).
@@ -206,6 +207,30 @@ CONVENTIONS_TEMPLATE = """\
 - Wikilink related notes at write time: `[[Title]]`.
 - Agent captures enter as `maturity: draft`; humans promote.
 - Stale? Set `superseded_by` and `status: superseded` — never delete.
+"""
+
+
+# Dropped into projects/ at scaffold time; Claude Code reads it up the directory
+# tree, so it governs every projects/<repo>/ beneath it. The vault-vs-repo-plane
+# boundary is normative in VAULT-STRUCTURE.md §projects/<repo>/.
+PROJECTS_CLAUDE_TEMPLATE = """\
+# projects/<repo>/ — the operator's outside view of a repo
+
+Each `projects/<repo>/` holds what the vault (operator + fleet) knows about a
+codebase that does **not** belong in that repo's own `documentation/`.
+
+- **Belongs here:** operational gotchas, cross-repo workflow, how the repo fits
+  the wider operation, durable residue promoted from audits/reviews.
+- **Not here:** the repo's own architecture, ADRs, specs, design decisions —
+  those live in `<repo>/documentation/`, versioned with the code.
+
+Two tests before filing a note:
+
+- Still true if this repo didn't exist? → `_shared/` instead.
+- The repo speaking about itself? → the repo's own `documentation/` instead.
+
+Standard note taxonomy + frontmatter apply (`knowledge/`, `decisions/`, … —
+see `SCHEMA.md`).
 """
 
 

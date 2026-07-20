@@ -37,6 +37,42 @@ class TestInitPersonal:
         log = _git(target, "log", "--oneline").stdout
         assert log.strip() != ""
 
+    def test_scaffolds_projects_claude_md(self, tmp_path: Path):
+        """projects/ ships a CLAUDE.md carrying the vault-vs-repo-plane
+        boundary — Claude Code reads it up the tree, so it governs every
+        projects/<repo>/ beneath it (VAULT-STRUCTURE.md §projects)."""
+        target = tmp_path / "v"
+        assert main(["init", str(target), "--personal", "--owner", "t"]) == 0
+        claude = target / "projects" / "CLAUDE.md"
+        assert claude.is_file()
+        body = claude.read_text()
+        assert "outside view" in body and "documentation/" in body
+
+    def test_projects_claude_md_is_not_a_note(self, tmp_path: Path, capsys):
+        """A CLAUDE.md carries no frontmatter; validation must skip it, not
+        flag it as a broken note (NON_NOTE_FILES). Guards the whole feature —
+        without the skip, projects/CLAUDE.md is itself a validation error."""
+        target = tmp_path / "v"
+        main(["init", str(target), "--personal", "--owner", "t"])
+        capsys.readouterr()
+        rc = main(["validate", str(target), "--json"])
+        env = json.loads(capsys.readouterr().out)
+        flagged = [f for f in env["errors"] + env["warnings"]
+                   if "CLAUDE.md" in f.get("path", "")]
+        assert flagged == [], f"CLAUDE.md wrongly treated as a note: {flagged}"
+        assert rc == 0
+
+    def test_adopt_scaffolds_projects_claude_md(self, tmp_path: Path):
+        """--adopt on a non-empty *non-vault* dir scaffolds projects/CLAUDE.md
+        while adopting the existing content. (Fresh init covers the empty case;
+        this covers the adopt path. An already-a-vault dir is refused, so there
+        is no re-scaffold-existing path here — that is a separate concern.)"""
+        target = tmp_path / "existing"
+        target.mkdir()
+        (target / "notes.md").write_text("# preexisting content, no _shared yet\n")
+        assert main(["init", str(target), "--adopt"]) == 0
+        assert (target / "projects" / "CLAUDE.md").is_file()
+
     def test_bootstrap_note_recall_smoke(self, tmp_path: Path, capsys):
         """The doctor-style smoke test is a REAL first note: capture it,
         prove recall finds it — the loop verified at bootstrap."""
