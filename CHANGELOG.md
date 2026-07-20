@@ -16,8 +16,31 @@
   guarded `fix_structure`; user-facing reserved names derive from
   `vault.SKIP_DIRS` (no second list), and the SCHEMA↔VAULT-STRUCTURE
   cross-reference is guarded by `TestDocParity`.
+- **The wikilink graph** (E4's scale-free half; SQLite/FTS5 deferred).
+  `resolve_wikilinks` is no longer a stub — it resolves `[[Target]]` per
+  SCHEMA.md (title→alias→slug, case-insensitive; ambiguity → higher tier;
+  unresolved links first-class). New **`claudron related <note>`** (wikilink
+  neighbors, 1–2 hops, in/out/both direction) and **`claudron links
+  [--broken] [--orphans]`** (unresolved links + orphan notes). (#65/#66)
+- **Maturity lifecycle** (E5 PR1). **`claudron promote <note> --to
+  draft|verified|canonical [--by]`** walks the trust axis with `promoted_by` /
+  `promoted_at` provenance (demotion is the same verb; the human running it is
+  the gate). `lookup` ranks canonical > verified > draft above tier; `claudron
+  status` reports the maturity breakdown + `promoted_pct`. (#68)
+- `claudron status` reports **index-vs-vault divergence** (missing / ghost /
+  corrupt) — the silent-failure detector for the disposable index. (#62)
 
 ### Changed
+- **Vault writes are now serialized and atomic.** Every mutator (`capture`,
+  `capture --update`, `promote`, `sync`) holds a cross-process `flock` over its
+  read→write→index critical section and writes via temp-then-`os.replace`, so
+  concurrent fleet writes can't drop an index entry or leave a torn file. (#62)
+- `claudron` resolves the vault via `--vault` → `$CLAUDRON_VAULT_PATH` →
+  `$CLAUDRON_VAULT` → walk-up. Reading `CLAUDRON_VAULT_PATH` (the var Claudlobby
+  emits per bot) makes the CLI the fleet's contract floor. (#62)
+- The `capture` `--json` result carries **`written`** (true only when a note
+  actually landed) so a wrapper branches on it, not the exit code — a
+  `suggest_*` dedup route succeeds having written nothing. (#62)
 - `claudron init` prints a `next: claudron validate` pointer; a fresh `init`
   then `validate` is a clean no-op.
 - **PreCompact hook now defers to clauDNA when it is installed.** Both plugins
