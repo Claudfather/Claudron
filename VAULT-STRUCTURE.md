@@ -112,6 +112,31 @@ What *kind* of knowledge belongs where:
 - **Knowledge rises, never sideways** — a finding is promoted up when it earns
   broader visibility (see Promotion); it is never copied between fleets.
 
+### `projects/<repo>/` — the operator's outside view of a repo
+
+`projects/<repo>/` holds what the vault (operator + fleet) knows about a codebase
+that does **not belong in that repo's own `documentation/`**. Repo-authoritative
+records — architecture, ADRs, specs, design decisions — travel *with the code* on
+the repo plane (`<repo>/documentation/`), versioned alongside it. The vault's
+project tier is the **outside view**: the cross-repo, operational, and provenance
+knowledge a repo would never self-document —
+
+- operational gotchas ("flaky on Sundays — upstream cron"), cross-repo workflow
+  ("deploy after `narrative`"), how the repo fits the operator's wider world;
+- durable **residue** promoted from point-in-time work — an audit finding or a
+  review tidbit that outlives its artifact (§Promotion).
+
+Two tests place a note:
+
+- **vs `_shared/`** — *would this still hold if this repo didn't exist?*
+  **Yes → `_shared/`** (project-independent). **No → `projects/<repo>/`.**
+- **vs the repo's own `documentation/`** — *is the repo speaking about itself, or
+  is this the operator/fleet's take on it?* **Repo's own → repo plane. Outside
+  view → `projects/<repo>/`.**
+
+At creation the directory is scaffolded with a `CLAUDE.md` carrying this guidance,
+so any agent filing here meets the boundary in-context.
+
 ## Consumption contract
 
 - **Navigate for config, query for knowledge.** An agent reads *configuration*

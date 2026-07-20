@@ -157,7 +157,7 @@ class TestScaffoldTravels:
         """Live-verification catch #2: git doesn't track empty dirs, so a
         young vault's clone arrived with NO _shared/ — undetectable, and
         every hook silently no-opped on machine B. The scaffold must
-        travel (.gitkeep + the CONVENTIONS template)."""
+        travel (_shared/ leaf .gitkeeps, CONVENTIONS.md, and projects/CLAUDE.md)."""
         from claudron.vault import detect
 
         remote = tmp_path / "remote.git"
@@ -175,10 +175,10 @@ class TestScaffoldTravels:
         vault = detect(b)
         assert vault is not None, "empty-tier vault clone lost _shared/"
         assert (b / "_shared" / "CONVENTIONS.md").is_file()  # E1 deliverable
-        assert (b / "projects" / ".gitkeep").is_file()
-        # The tier leaves themselves must travel (.gitkeep per leaf) —
+        assert (b / "projects" / "CLAUDE.md").is_file()
+        # The _shared/ tier leaves must travel too (.gitkeep per leaf) —
         # CONVENTIONS.md alone carries _shared/ but not its subdirs, and
-        # this assertion is what makes the .gitkeep red-green cycle red.
+        # the loop below is what makes the .gitkeep red-green cycle red.
         from claudron.vault import SCAFFOLD_TREE
 
         for leaf in SCAFFOLD_TREE:
