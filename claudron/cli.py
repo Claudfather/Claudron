@@ -114,8 +114,20 @@ def _shadowed_removed_vars(resolved: Path | None) -> list[str]:
         if not raw:
             continue
         try:
-            if resolved is not None and Path(raw).expanduser().resolve() == resolved:
-                continue  # points at the vault we used anyway
+            # Compare what the dead name *would have resolved to*, not its raw
+            # text: 0.2.x fed this value to the same detector, so a value
+            # naming a subdirectory of the vault we used addressed that very
+            # same vault and changed nothing.
+            #
+            # Then compare by identity, not by path equality. `resolve()` does
+            # not canonicalize case, so on a case-insensitive filesystem (the
+            # macOS default) `/x/VAULT` and `/x/vault` are one directory that
+            # compares unequal. `samefile` reads st_dev/st_ino, which settles
+            # case-aliasing and symlinks together.
+            would_be = detect(Path(raw).expanduser())
+            if resolved is not None and would_be is not None:
+                if would_be.root.samefile(resolved):
+                    continue
         except (OSError, ValueError, RuntimeError):
             # A value we cannot even parse into a path certainly does not name
             # the vault we used, so it shadows. Never propagate: this helper is
@@ -203,11 +215,14 @@ def _resolve_claudlobby_root(args) -> Path | None:
     cl_root = _detect_claudlobby_root(hint)
     if cl_root is None or hint is not None:
         return cl_root
-    if (cl_root / ".claudron").is_file():
-        # The root carries the declared artifact (§Bridge file) — the walk only
-        # located a declaration that already exists, which is not the sniff R5
-        # forbids. Warning here would nag every `config`/`migrate` on a
-        # correctly plugged install, which is the normal workflow.
+    if _read_claudron_config(cl_root / ".claudron").get("vault"):
+        # The root carries a *valid* declared artifact (§Bridge file) — the
+        # walk only located a declaration that already exists, which is not the
+        # sniff R5 forbids. Warning here would nag every `config`/`migrate` on
+        # a correctly plugged install, i.e. the normal workflow. Existence
+        # alone is not enough: an empty `.claudron` declares nothing, and
+        # suppressing on it would have the engine claim "the declaration is
+        # present" while `config` prints "(not plugged)" in the same breath.
         return cl_root
     print(
         f"deprecated: resolved {cl_root} by walking for a "

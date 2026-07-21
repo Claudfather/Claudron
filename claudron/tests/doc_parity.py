@@ -60,9 +60,14 @@ def section(doc: str, header: str) -> str:
 def fenced_block(doc: str, header: str) -> str:
     """The first fenced code block inside a ``## <header>`` section.
 
-    Reads from the section start rather than from :func:`section`'s output:
-    a ``## `` line *inside* the fence would otherwise truncate the block and
-    hide content from the gate.
+    Bounded at *both* ends. Anchoring only the start lets a section with no
+    fence of its own silently return a *later* section's block — the gate then
+    asserts against text from somewhere else entirely and passes vacuously,
+    which is worse than no gate. Raises if the section has no fence rather
+    than reaching past its end for one.
+
+    The end bound tolerates a line-initial ``## `` *inside* the fence, which is
+    why this does not simply call :func:`section`.
     """
     text = (REPO_ROOT / doc).read_text()
     starts = [m.end() for m in re.finditer(rf"^## {re.escape(header)}\s*$", text, re.M)]
@@ -70,7 +75,18 @@ def fenced_block(doc: str, header: str) -> str:
         raise AssertionError(
             f"{doc}: expected exactly one '## {header}' heading, found {len(starts)}"
         )
-    return text[starts[0] :].split("```", 2)[1]
+    body = text[starts[0] :]
+    parts = body.split("```")
+    if len(parts) < 3:
+        raise AssertionError(f"{doc}: '## {header}' contains no fenced block")
+    # The fence must open before the section does — a heading appearing in the
+    # prose *before* the first fence means the fence belongs to a later one.
+    if re.search(r"^## ", parts[0], re.M):
+        raise AssertionError(
+            f"{doc}: '## {header}' has no fenced block of its own "
+            "(the next fence belongs to a later section)"
+        )
+    return parts[1]
 
 
 def code_values(cell: str) -> tuple[str, ...]:

@@ -112,21 +112,57 @@ class TestVaultResolution:
         assert rc == 0
         assert "no longer read" not in capsys.readouterr().err
 
+    def test_agreement_is_by_resolution_not_by_string(
+        self, vault_dir: Path, monkeypatch, capsys
+    ):
+        """A value naming a *subdirectory* of the vault still addressed that
+        vault under 0.2.x — the same detector ran on it. Comparing raw strings
+        warned this user, who has nothing to fix. Agreement is decided by what
+        the dead name would have resolved to, not by how it was spelled."""
+        sub = vault_dir / "projects" / "foo"
+        sub.mkdir(parents=True)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(sub))
+        monkeypatch.chdir(sub)
+        rc = main(["status", "--json"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert json.loads(captured.out)["data"]["root"] == str(vault_dir)
+        assert "no longer read" not in captured.err
+
+    def test_agreement_survives_a_case_insensitive_filesystem(
+        self, vault_dir: Path, monkeypatch, capsys
+    ):
+        """On macOS's default case-insensitive APFS, `.../VAULT` and
+        `.../vault` are the same directory (same inode). A string compare
+        warned; resolving through the detector does not. Skipped where the
+        filesystem really is case-sensitive."""
+        shouty = vault_dir.parent / vault_dir.name.upper()
+        if vault_dir.name == shouty.name or not shouty.is_dir():
+            pytest.skip("case-sensitive filesystem — no aliasing to test")
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(shouty))
+        monkeypatch.chdir(vault_dir)
+        rc = main(["status", "--json"])
+        assert rc == 0
+        assert "no longer read" not in capsys.readouterr().err
+
     @pytest.mark.parametrize(
         "bad_value",
-        ["~nosuchuser42/vault", "relative/not/absolute", "~" * 300],
-        ids=["unexpandable-user", "relative", "absurd-tilde"],
+        ["~nosuchuser42/vault", "relative/not/absolute", "~" * 300, ""],
+        ids=["unexpandable-user", "relative", "absurd-tilde", "empty"],
     )
-    def test_unparseable_removed_var_never_raises(
+    def test_hostile_removed_var_never_raises(
         self, vault_dir: Path, monkeypatch, capsys, bad_value: str
     ):
-        """A value we cannot parse into a path must warn, never explode.
+        """Whatever the dead name holds, resolution must not explode.
 
         The comparison behind the softener runs on the hook path, *outside*
         `run_hook`'s fail-open guard. `~nouser/x` raises RuntimeError from
         `expanduser()`, which turned a stale dotfile into a broken session
         start — a louder version of the silent failure the hint exists to
-        prevent. Unparseable cannot name the resolved vault, so it shadows.
+        prevent. Whether a given value warns is decided by resolution (see the
+        agreement tests); what this pins is that none of them raise.
         """
         monkeypatch.chdir(vault_dir)  # a vault DOES resolve — the risky branch
         monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
@@ -135,7 +171,19 @@ class TestVaultResolution:
         assert rc == 0
         captured = capsys.readouterr()
         assert json.loads(captured.out)["data"]["root"] == str(vault_dir)
-        assert "no longer read" in captured.err
+        assert "Traceback" not in captured.err
+
+    def test_unresolvable_removed_var_shadows(
+        self, vault_dir: Path, monkeypatch, capsys
+    ):
+        """A value that cannot name any vault cannot name the one we used, so
+        it shadows and warns — the dotfile-straggler case."""
+        monkeypatch.chdir(vault_dir)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", "~nosuchuser42/vault")
+        rc = main(["status", "--json"])
+        assert rc == 0
+        assert "no longer read" in capsys.readouterr().err
 
     def test_hook_stays_fail_open_on_unparseable_removed_var(
         self, vault_dir: Path, monkeypatch, capsys
@@ -480,9 +528,13 @@ def _env_table() -> list[list[str]]:
 class _RecordingEnv(dict):
     """An `os.environ` stand-in that remembers which names were looked up.
 
-    All three access forms are recorded, not just `.get` — a resolver reading
-    `os.environ["X"]` or testing `"X" in os.environ` would otherwise be
-    invisible to the gate (verified: it was).
+    Records the three *single-name* access forms — `.get`, `env["X"]` and
+    `"X" in env` — because a resolver using any of them would otherwise be
+    invisible to the gate (verified: `.get`-only was). Bulk reads
+    (`dict(env)`, `.copy()`, `.items()`) are **not** recorded and would slip
+    past; that shape is not how a resolver reads a named variable, so the gate
+    is scoped to what it can honestly promise rather than pretending
+    otherwise.
     """
 
     def __init__(self, base):

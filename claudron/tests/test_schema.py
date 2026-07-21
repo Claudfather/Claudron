@@ -207,3 +207,40 @@ class TestDateEdges:
         fm.update({"title": "T", "type": "knowledge", "status": "current", "owner": "x"})
         findings = validate_note(fm, "", strict=True, path="t.md")
         assert not [f for f in findings if f.code == "E005"]
+
+
+class TestDocParityReaders:
+    """The readers behind every parity gate. A reader that silently returns the
+    wrong text makes its gate pass vacuously — worse than having no gate."""
+
+    def test_fenced_block_never_reaches_into_a_later_section(self, tmp_path, monkeypatch):
+        from claudron.tests import doc_parity
+
+        monkeypatch.setattr(doc_parity, "REPO_ROOT", tmp_path)
+        (tmp_path / "T.md").write_text(
+            "## Directory contract\n\nProse only, no fence here.\n\n"
+            "## Something else\n\n```\nWRONG-BLOCK\n```\n"
+        )
+        with pytest.raises(AssertionError, match="no fenced block of its own"):
+            doc_parity.fenced_block("T.md", "Directory contract")
+
+    def test_fenced_block_tolerates_a_heading_inside_the_fence(
+        self, tmp_path, monkeypatch
+    ):
+        from claudron.tests import doc_parity
+
+        monkeypatch.setattr(doc_parity, "REPO_ROOT", tmp_path)
+        (tmp_path / "T.md").write_text(
+            "## Directory contract\n\n```\nvault/\n## not-a-heading\n  runbooks/\n```\n"
+            "\n## Next\n"
+        )
+        block = doc_parity.fenced_block("T.md", "Directory contract")
+        assert "runbooks/" in block  # not truncated at the in-fence '## '
+
+    def test_section_rejects_ambiguity(self, tmp_path, monkeypatch):
+        from claudron.tests import doc_parity
+
+        monkeypatch.setattr(doc_parity, "REPO_ROOT", tmp_path)
+        (tmp_path / "D.md").write_text("## Flags\n\nstale\n\n## Flags\n\nreal\n")
+        with pytest.raises(AssertionError, match="expected exactly one"):
+            doc_parity.section("D.md", "Flags")

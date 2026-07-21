@@ -243,3 +243,18 @@ class TestTreeWalkDeprecation:
         captured = capsys.readouterr()
         assert "deprecated" not in captured.err
         assert "(not found)" in captured.out
+
+    def test_empty_bridge_file_does_not_suppress(
+        self, claudlobby_root: Path, monkeypatch, capsys
+    ):
+        """Existence is not a declaration. An empty `.claudron` declares no
+        vault, so suppressing on it would have the engine claim the declared
+        artifact is present while `config` prints '(not plugged)' in the same
+        output."""
+        (claudlobby_root / ".claudron").write_text("# nothing declared here\n")
+        monkeypatch.chdir(claudlobby_root)
+        rc = main(["config"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "deprecated" in captured.err
+        assert "(not plugged)" in captured.out

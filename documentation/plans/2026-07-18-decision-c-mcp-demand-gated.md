@@ -112,9 +112,10 @@ integration doc, PR-H) so consumption does not depend on clauDNA being present.
 ## Cross-repo consequence (filed, not done here)
 
 Parking the MCP fragment strands two things in Claudlobby to clean up:
-`validator.py:243-254` asserts vault-present ⟹ `claudron` MCP config present
-(now permanently false — relax/invert it), and `CLAUDRON_VAULT_PATH` is now a
-CLI pointer, not an MCP one (reconcile its doc). Filed as Claudlobby cleanup.
+`validator.py:403–413` (the line range as of 2026-07-20; it read `243-254` when
+this was written) asserts vault-present ⟹ `claudron` MCP config present — now
+permanently false, so relax/invert it — and `CLAUDRON_VAULT_PATH` is now a CLI
+pointer, not an MCP one (reconcile its doc). Both are phase L1's work.
 
 ## Related
 
