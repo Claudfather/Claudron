@@ -2,7 +2,7 @@
 
 ## What this project is
 
-Claudron is a markdown-based knowledge graph designed for agent fleets. Each deployment owns a vault — a directory of markdown files with YAML frontmatter and wikilinks — and bots read and write to it via an MCP server. The vault is the source of truth; an indexer maintains a SQLite mirror for fast queries and optional vector similarity.
+Claudron is a markdown-based knowledge graph designed for agent fleets. Each deployment owns a vault — a directory of markdown files with YAML frontmatter and wikilinks — and bots read and write to it through the `claudron` CLI, the one door (`docs/CLI_CONTRACT.md`). The vault is the source of truth; a derived frontmatter index (`.claudron/index.json`, Tier A) is a rebuildable cache in front of it, with full-text scan as the fallback (Tier B) — never a second source of truth. *(Superseded 2026-07-21: this line previously asserted present-tense MCP consumption and a SQLite mirror. The MCP server is parked and demand-gated behind a falsifiable trigger — `documentation/plans/2026-07-18-decision-c-mcp-demand-gated.md`; the index shipped as derived JSON, not SQLite. Sprint-focus items 2–3 below carry the same stamp.)*
 
 The metaphor: a cauldron. Raw observations from bots go in (findings, decisions, gotchas). They mix with prior content via wikilinks, get cross-referenced, get curated. Refined patterns come out — both as queryable context for future bots and as candidates for promotion into skills.
 
@@ -51,8 +51,8 @@ A hive mind any agent fleet can run locally and optionally federate.
 
 **Current sprint focus:**
 1. Note schema spec: types, required frontmatter, link conventions, `pack.yaml` format. Highest-leverage decision and blocks everything else.
-2. MCP server v0.1: read, write, traverse, search tools that bots can call
-3. Indexer: file watcher → SQLite mirror with frontmatter index and wikilink edges table
+2. ~~MCP server v0.1: read, write, traverse, search tools that bots can call~~ — **superseded 2026-07-21.** The fleet consumes the hub through the CLI door; MCP is parked and demand-gated (`documentation/plans/2026-07-18-decision-c-mcp-demand-gated.md`).
+3. ~~Indexer: file watcher → SQLite mirror with frontmatter index and wikilink edges table~~ — **superseded 2026-07-21.** Shipped as a derived, rebuildable JSON index (`.claudron/index.json`); no SQLite mirror and no watcher daemon (decision D3 — MCP optional, never a daemon).
 4. CLI: `claudron init`, vault path config, pack subscription config
 5. Pack publisher: command that exports a curated subset of a vault as a properly-structured pack repo
 6. Reference vault as documentation: a small example vault demonstrating the format, hosted in the Claudron repo
