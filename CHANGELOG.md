@@ -2,7 +2,42 @@
 
 ## Unreleased
 
+### Removed (breaking)
+- **`CLAUDRON_VAULT` is no longer read.** The vault address resolves via
+  `--vault` → `$CLAUDRON_VAULT_PATH` → walk-up, and nothing else. The name was
+  a lower-precedence alias through 0.2.x; with both set and disagreeing, the
+  engine and its consumers resolved *different vaults*, so it is cut rather
+  than deprecated — an alias that is read at all keeps that hazard alive.
+  There is no warning phase. **Migration:** rename the variable. The single
+  softener: when no vault resolves *and* `CLAUDRON_VAULT` is set, the exit-3
+  message appends one stderr line naming the removal and the canonical name.
+  (boundary program C1, fork F3)
+
 ### Added
+- **`docs/CLI_CONTRACT.md` grew the contracts it was missing.** §Environment is
+  now the one normative, precedence-ordered statement of the vault address
+  (§Flags defers to it); §Bridge file specifies the `.claudron` `vault=<path>`
+  format as a *resolution artifact, not vault structure*; §Write guarantees
+  states the cross-host ladder honestly — per-host serialized, cross-host
+  eventually consistent with conflict quarantine, multi-writer exclusion out of
+  scope by constraint — with its limits and named conflict surface. Previously
+  these lived only in `locking.py` / `sync.py` docstrings and one `§Flags` line.
+  (boundary program C1; contracts #3/#4/#6)
+- **`docs/INTEGRATION.md`** — the vendor-neutral any-agent front door: install
+  channels, engine detection (step 0), a runnable hello-world, the
+  query-before / write-after loop, and a conformance checklist. Decision C
+  cited this document as its mitigation; it had never been written. It is under
+  `CLI_CONTRACT.md`'s change discipline. (boundary program C1, fork F5)
+- **`status --json` reports `engine_version`** plus a documented stable field
+  set (`root`, `total_docs`, `total_stale`, `tiers`, `fleets`, `projects`).
+  This is the sanctioned capability probe: consumers read the engine's version
+  off an envelope they already parse, instead of maintaining private detection
+  ladders. (boundary program C1)
+- The recall brief ends with a one-line discovery hint naming
+  `claudron lookup` and `claudron capture --stdin`. Its cost is reserved
+  *before* notes are laid out, so a budget-saturated brief still teaches the
+  door — for any host running the engine's hooks, the brief is the in-context
+  discovery channel. (boundary program C1)
 - `claudron validate` gained a **directory-structure lens** beside its
   frontmatter lens: it audits a vault's shape against `VAULT-STRUCTURE.md`
   (codes `S1`–`S4`) through the existing `error`/`warning` model, so structure
@@ -36,8 +71,16 @@
   read→write→index critical section and writes via temp-then-`os.replace`, so
   concurrent fleet writes can't drop an index entry or leave a torn file. (#62)
 - `claudron` resolves the vault via `--vault` → `$CLAUDRON_VAULT_PATH` →
-  `$CLAUDRON_VAULT` → walk-up. Reading `CLAUDRON_VAULT_PATH` (the var Claudlobby
-  emits per bot) makes the CLI the fleet's contract floor. (#62)
+  walk-up, now stated once and normatively in `docs/CLI_CONTRACT.md`
+  §Environment and pinned to the resolver by a doc-parity test. Reading
+  `CLAUDRON_VAULT_PATH` (the var Claudlobby emits per bot) makes the CLI the
+  fleet's contract floor. (#62, #30)
+- **`claudron plug` / `config` / `migrate` / `unplug`: the Claudlobby
+  tree-shape walk is deprecated.** Resolving a consumer root by walking for a
+  `library/` + `lib/` directory pair now emits a one-line stderr deprecation
+  pointing at `--claudlobby <path>`; passing the flag is silent. Resolution
+  behavior is unchanged — the walk still works, and its removal is a later
+  release. (boundary program C1)
 - The `capture` `--json` result carries **`written`** (true only when a note
   actually landed) so a wrapper branches on it, not the exit code — a
   `suggest_*` dedup route succeeds having written nothing. (#62)

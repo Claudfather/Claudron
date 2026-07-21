@@ -57,7 +57,7 @@ One shape, every command:
 > `config --json` previously emitted three ad-hoc shapes; all now emit the
 > envelope (their old payloads live under `data`).
 
-### The capability probe — `status --json`
+### Capability probe
 
 `status --json`'s `data` carries **`engine_version`** (the installed
 `claudron.__version__`). This is the sanctioned way to ask *"is an engine here,

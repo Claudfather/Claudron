@@ -143,6 +143,15 @@ All services use JWT with RS256...
 - **clauDNA** stores procedural knowledge (skills, slash commands).
 - **Claudlobby** runs bots that read from and write to the vault.
 
+### Integrating any agent
+
+The door is the CLI, and it is vendor-neutral — any agent that can run a
+subprocess and parse JSON can consume the hub, with no plugin and no server.
+**[`docs/INTEGRATION.md`](docs/INTEGRATION.md)** is the front door: install
+channels, the engine-detection probe, a copy-paste hello-world, the
+query-before / write-after loop, and a conformance checklist. The normative
+surface it points at is [`docs/CLI_CONTRACT.md`](docs/CLI_CONTRACT.md).
+
 ## License
 
 MIT
