@@ -208,15 +208,27 @@ before you design a multi-writer topology.
 ## Session loop
 
 If your host has session lifecycle events, the engine ships adapters that pull
-before recalling and push at session end (`claudron hooks install`,
-`claudron hook <event>`). They fail open by design: a broken vault, a missing
-git binary, or a network stall must never break a session start.
+before recalling and push at session end. `claudron hooks install --write` is
+the supported wiring; `claudron hook <event>` is what the host then invokes.
+They fail open by design: a broken vault, a missing git binary, or a network
+stall must never break a session start.
 
-The normative protocol — the roles, their ordering, and which participant owns
-the capture prompt when several are installed — lands as a session-loop section
-of `CLI_CONTRACT.md` (boundary program phase C2). Until then, treat
-`claudron hooks install --write` as the supported wiring and read the adapters'
-docstrings for current behavior.
+The normative protocol is
+**[CLI_CONTRACT.md §Session-loop protocol](CLI_CONTRACT.md#session-loop-protocol)** —
+the four roles and who owns each, the pull-before-recall ordering, the budgets,
+the hook-settings shape, and the fail-open contract. Read it before you install
+these hooks beside anything else that touches the same events. Two obligations
+bind an integration that ships its **own** capture prompt:
+
+- **One capture prompt per session.** If you emit your own distill nudge at
+  compaction, you must defer when the engine's `pre-compact` entry is
+  registered — detected by a hook command ending in `hook pre-compact` in the
+  host's settings files. Both prompting is a defect; the protocol section
+  specifies the detection exactly.
+- **Composed hook entries are a rendered copy.** If you generate the settings
+  block yourself instead of running `hooks install`, gate it against the shape
+  in that section (register rule R3) — a drifted copy silently runs stale hooks
+  on every host you compose.
 
 ---
 
@@ -246,6 +258,10 @@ it can be checked without reading another document.
 - [ ] Exit code 3 is handled as "no vault resolvable" — a configuration state
       the integration can report or degrade from — and is distinguished from
       exit 1 (findings) and exit 2 (bad arguments).
+- [ ] If the integration emits its own capture prompt at compaction, it emits
+      nothing when a hook command ending in `hook pre-compact` is already
+      registered in the host's settings — exactly one capture prompt reaches a
+      session. An integration with no prompt of its own has nothing to do here.
 - [ ] The integration does not write into the vault directly with its own file
       operations; every note it creates goes through `claudron capture`.
 - [ ] The integration does not fork, restate, or paraphrase any contract text as
