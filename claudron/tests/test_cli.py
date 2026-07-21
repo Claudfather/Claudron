@@ -616,6 +616,26 @@ class TestEnvironmentDocParity:
 
         assert recorder.claudron_lookups() == list(VAULT_ENV_VARS)
 
+    def test_flag_beats_env(self, tmp_path: Path, monkeypatch):
+        """Row 1 actually outranks row 2, pinned by resolution not by reading.
+
+        The other gates in this class pin the table's *env* rung — that the
+        names and their order match `VAULT_ENV_VARS`. None of them exercised
+        the top row, so "the first that yields a path wins" was documented and
+        untested precisely where disagreement is most expensive: two real
+        vaults, both resolvable, and the caller's explicit answer losing to an
+        ambient one (Claudron #81).
+        """
+        flagged, ambient = tmp_path / "flagged", tmp_path / "ambient"
+        for root in (flagged, ambient):
+            (root / "_shared").mkdir(parents=True)
+        monkeypatch.setenv(VAULT_ENV_VARS[0], str(ambient))
+        monkeypatch.chdir(ambient)  # and the walk-up rung agrees with the env
+
+        resolved = _detect_vault(SimpleNamespace(vault=str(flagged)))
+
+        assert resolved is not None and resolved.root == flagged.resolve()
+
     def test_table_is_precedence_ordered(self):
         """Rows 1..N are the live ladder in precedence order; removed rows
         carry no rank."""

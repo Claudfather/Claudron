@@ -348,26 +348,28 @@ class TestBriefBudgetEdges:
         """Whichever branch the reservation takes, the cap is never exceeded.
 
         Bounded to conventions within their own budget regime — see
-        `test_oversized_conventions_still_overflow` for what happens past it.
+        `test_oversized_conventions_is_the_stated_exception` for past it.
         """
         from claudron.session import render_brief
 
         out = render_brief(self._data(conv, notes=10))
         assert len(out.split()) <= BRIEF_TOKEN_BUDGET, conv
 
-    def test_oversized_conventions_still_overflow(self):
-        """Documents a **pre-existing** gap, unchanged by the hint work.
+    def test_oversized_conventions_is_the_stated_exception(self):
+        """The one documented way the brief exceeds its cap, enforced.
 
-        `BRIEF_TOKEN_BUDGET` is described as a whole-brief hard cap, but the
-        conventions block is the always-loaded layer and is appended without a
-        check — so a `CONVENTIONS.md` past its own `CONVENTIONS_BUDGET` (160,
-        enforced only as validation warning W105) blows the brief budget on its
-        own. The notes layout below it still degrades correctly: zero notes and
-        no hint, rather than piling on.
+        `CLI_CONTRACT.md` §Session-loop protocol states the budget honestly:
+        the cap holds *given a `CONVENTIONS.md` within its own budget*. That
+        block is the always-loaded layer — recall injects it unconditionally,
+        so past W105's ceiling (160) it can carry the brief over on its own,
+        and the engine will not silently drop the layer a vault declared
+        always-loaded. Enforcing the conventions budget is `validate`'s job.
 
-        Pinned so the behavior is recorded rather than rediscovered. Changing
-        it is a product decision about the always-loaded layer, not a fix to
-        make here.
+        Two halves, both contract: the overflow is bounded to that one block,
+        and everything below it still degrades correctly — zero notes, no hint,
+        rather than compounding. Previously pinned as an unowned pre-existing
+        gap (Claudron #81); C2 gave it an owner in the contract, so it now
+        gates the sentence instead of recording a surprise.
         """
         from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
 

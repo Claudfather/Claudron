@@ -1,5 +1,49 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`docs/CLI_CONTRACT.md` §Session-loop protocol** — the session loop is now
+  contract text instead of two repos' changelog lore. It names the four roles
+  and their owners (continuity is the front-end's; recall, the capture prompt,
+  and sync are the engine's), states that the two SessionStart briefs
+  **co-inject by design**, pins pull-before-recall, gives the recall brief's
+  budget one stated limit, fixes the **single-prompt rule** and how the prompt
+  is claimed, publishes the **hook-settings snippet shape** a composer renders
+  against, and states the fail-open contract with its per-event timeout
+  budgets. Doc-parity tests pin the role table to `HOOK_EVENTS`, the snippet to
+  `settings_snippet()`, and the timeouts to their constants.
+  (boundary program C2; contract #5)
+- **`capture --source-url URL` and `--source-type {url,file,inline}`** (also the
+  `source_url` / `source_type` keys of the `--stdin` JSON) write the SCHEMA.md
+  optional fields of the same names. Both fields have been in the schema since
+  v1; capture dropped them, so consumers folded provenance into a trailing body
+  line — coupling themselves to how the recall brief picks a note's summary.
+  Provenance now has a transport. `--source-type` accepts only the schema's
+  vocabulary. Closes #44; `source_url` as a *dedup signal*, `last_verified`, and
+  typed anchors remain #55's under EPIC #54. (boundary program C2, fork F7)
+
+### Changed
+- **The PreCompact capture prompt names no front-end.** It routes the agent
+  through *its own* capture door, falling back to `claudron capture --stdin` —
+  and it now says `--stdin` rather than demonstrating the `--body` string
+  interpolation §capture forbids. The engine's rule is that it always prompts
+  where its hook is installed and never sniffs for consumers; a front-end
+  shipping its own prompt defers when it finds the engine's registered
+  `hook pre-compact` entry. (boundary program C2, fork F1)
+
+### Deprecated
+- **The PreCompact plugin-install-tree glob is a transitional shim, scheduled
+  for deletion.** It is the engine's last piece of consumer-sniffing (R5) and
+  survives only until a front-end's defer ships. **Release ordering is
+  mandatory and this is the entry to key on: the release that deletes the shim
+  must precede or accompany the front-end's defer release.** Defer-first while
+  the shim lives means both sides yield and *nobody* prompts, silently; the
+  reverse ordering's worst case is a bounded double-prompt window, accepted
+  deliberately. The end-state test is written and skip-marked — the removal
+  release flips it on. (boundary program C2, fork F1; clauDNA #253/#254 is the
+  waiting consumer)
+
 ## 0.3.0 — 2026-07-20
 
 ### Removed (breaking)
