@@ -5,7 +5,7 @@ status: ratified
 owner: chris
 tags: [decision, mcp, e3, claudlobby, claudna, claudron]
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-20
 ---
 
 # Decision C — the MCP server (E3) is demand-gated, not the next epic
@@ -32,23 +32,62 @@ Juncture E); this doc is the dated record the drift previously lacked.
 
 Build the MCP server **only when one of these is concretely true** — not "someday":
 
-1. **Per-tool permission gating is needed.** A specific fleet bot must be granted
-   `recall` (read) while denied `capture` (write) *at the permission layer* —
-   filed as a fleet-policy issue. **Grounded capability gap:** Claudlobby's grant
-   model is per-tool for MCP (`mcp__<server>__<tool>`, `composer.py:252-294`);
-   **CLI-backed integrations get no per-tool grants** (a skill wrapping the CLI
-   is one blanket `Bash(claudron *)` grant — it cannot split read from write).
-   So if the fleet wants per-verb Claudron access, only MCP can express it.
+1. **Adversarial-grade per-verb enforcement is needed.** A fleet policy that
+   must be **non-circumventable at the permission layer** — a bot granted
+   `recall` (read) and denied `capture` (write) where the denial has to hold
+   against an agent actively trying to spell around it. See the 2026-07-20
+   amendment below: the *cooperative-grade* form of this trigger has been
+   answered by #644 and no longer un-parks E3.
 2. **A non-clauDNA MCP consumer appears** — a fleet member (Cursor/Codex/other)
    that speaks MCP but not clauDNA's skills and needs in-context tool discovery.
 
 ## Monitor
 
-Claudlobby's **#644 permissions/grants epic is live** (P4 in flight) — it is the
-machinery trigger (1) would fire through. **Owner (Chris) checks #644's grant
-granularity at each Claudron work session:** the moment a bot's fleet.yaml needs
-read/write-differentiated Claudron access, trigger (1) has fired and E3 re-enters
-the critical path. Until then, C holds.
+**The monitor is a machine check, not a human habit** (amended 2026-07-20).
+Claudlobby's doctor validates the door that actually exists — `claudron`
+resolvable, a vault detected, and the `claudron_compat` floor met — and its
+validator no longer asserts an MCP config the engine deliberately never shipped.
+Trigger (1) fires when a fleet policy is filed that those checks cannot express;
+trigger (2) fires when such a consumer is named. Claudron's side of the probe is
+`status --json` → `engine_version` (docs/CLI_CONTRACT.md §Capability probe); the
+Claudlobby side lands in boundary phase L1. Until one of the triggers fires,
+C holds.
+
+## Amendment — 2026-07-20: trigger 1 re-scoped, monitor named
+
+Recorded by boundary phase C1
+(`2026-07-20-boundary-rearchitecture/01-c1-own-the-door.md`); grounds in the
+boundary spec §10.5.2
+(`2026-07-20-claudfather-boundary-separation.md`).
+
+**The gate is affirmed; the framing is revised.** Verification found that
+trigger 1's original grounds no longer hold as stated. Claudlobby's #644 grant
+machinery *can* now express per-verb CLI gating —
+`Bash(claudron lookup *)` allow beside `Bash(claudron capture *)` deny, with
+deny winning (`composer.py:1307–1454`; grammar `validator.py:69–79`). The
+premise that "a skill wrapping the CLI is one blanket `Bash(claudron *)` grant"
+is therefore obsolete: **for a cooperative fleet, #644 already answers the
+read/write split, and that half of trigger 1 is retired.**
+
+What survives is the adversarial-grade form only. Grant patterns are
+*pattern*-grade, not structural — an agent can spell an invocation many ways —
+so a policy that must hold against circumvention still exceeds what the grant
+layer promises. Trigger 1 is narrowed to exactly that case above.
+
+Two related corrections from the same pass, for the record:
+
+- **§6's pain was a validator bug, not a missing transport.** Claudlobby's
+  `validator.py` warned vault-path ⟹ MCP config — asserting a sibling's
+  unshipped surface (register rule R6). That warning is deleted and inverted to
+  check the CLI door; it was a recurring reason MCP kept being re-proposed, and
+  it was never evidence of demand.
+- **The honest residual named in "what C gives up" is now mitigated on both
+  halves.** The vendor-neutral door has its front door: `docs/INTEGRATION.md`
+  exists (it was cited here as a mitigation before it was written). And for any
+  host running the engine's hooks, the recall brief carries a one-line pointer
+  at `claudron lookup` / `claudron capture` — in-context discovery for the
+  hosts the engine actually reaches. True self-announcement for arbitrary
+  MCP-speaking agents remains gated behind trigger 2.
 
 ## Accepted reversal cost
 
