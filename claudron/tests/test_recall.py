@@ -12,6 +12,30 @@ from claudron.cli import main
 from claudron.session import BRIEF_TOKEN_BUDGET, derive_project, recall
 
 
+def _widget_notes(vault: Path, count: int = 40) -> None:
+    """A note-heavy shared tier — enough to saturate BRIEF_TOKEN_BUDGET."""
+    base = vault / "_shared" / "knowledge"
+    for i in range(count):
+        (base / f"widget-{i}.md").write_text(
+            dedent(f"""\
+                ---
+                title: Widget Pattern {i}
+                type: knowledge
+                status: current
+                owner: t
+                tags: [widget]
+                created: 2026-06-01
+                updated: 2026-06-01
+                ---
+
+                # Widget Pattern {i}
+
+                A long body about widget pattern number {i} with plenty of
+                words to make summaries meaningful and the brief heavy.
+            """)
+        )
+
+
 def _conventions(vault: Path) -> None:
     (vault / "_shared" / "CONVENTIONS.md").write_text(
         "# Vault conventions\n\n- Timezone: America/New_York.\n"
@@ -80,26 +104,7 @@ class TestBrief:
 
     def test_budget_capped(self, vault_dir: Path, capsys):
         """Hard token budget on a note-heavy vault (acceptance criterion)."""
-        base = vault_dir / "_shared" / "knowledge"
-        for i in range(40):
-            (base / f"widget-{i}.md").write_text(
-                dedent(f"""\
-                    ---
-                    title: Widget Pattern {i}
-                    type: knowledge
-                    status: current
-                    owner: t
-                    tags: [widget]
-                    created: 2026-06-01
-                    updated: 2026-06-01
-                    ---
-
-                    # Widget Pattern {i}
-
-                    A long body about widget pattern number {i} with plenty of
-                    words to make summaries meaningful and the brief heavy.
-                """)
-            )
+        _widget_notes(vault_dir)
         rc = main(["--vault", str(vault_dir), "recall", "--query", "widget",
                    "--limit", "40"])
         assert rc == 0
@@ -116,6 +121,25 @@ class TestBrief:
         assert rc == 0
         assert BRIEF_DISCOVERY_HINT in capsys.readouterr().out
 
+    def test_hint_names_real_cli_surface(self, capsys):
+        """The hint hardcodes CLI verbs and flags inside an engine module, and
+        nothing else pins them — a rename of `lookup` or `--stdin` would go
+        stale silently, which is the exact drift class this contract work
+        exists to close. Gate it against the real parser."""
+        import re
+
+        from claudron.session import BRIEF_DISCOVERY_HINT
+
+        invocations = re.findall(r"`claudron ([a-z-]+)([^`]*)`", BRIEF_DISCOVERY_HINT)
+        assert invocations, "the hint no longer names any claudron invocation"
+        for verb, rest in invocations:
+            with pytest.raises(SystemExit) as exc_info:
+                main([verb, "--help"])
+            assert exc_info.value.code == 0, f"`claudron {verb}` is not a subcommand"
+            help_text = capsys.readouterr().out
+            for flag in re.findall(r"--[a-z-]+", rest):
+                assert flag in help_text, f"`claudron {verb}` has no {flag}"
+
     def test_empty_brief_carries_no_hint(self, empty_vault: Path, capsys):
         """An empty brief injects nothing at all — a lone hint line would be
         context spend with no recall behind it."""
@@ -129,26 +153,7 @@ class TestBrief:
         most one note). Regression guard for append-and-drop."""
         from claudron.session import BRIEF_DISCOVERY_HINT
 
-        base = vault_dir / "_shared" / "knowledge"
-        for i in range(40):
-            (base / f"widget-{i}.md").write_text(
-                dedent(f"""\
-                    ---
-                    title: Widget Pattern {i}
-                    type: knowledge
-                    status: current
-                    owner: t
-                    tags: [widget]
-                    created: 2026-06-01
-                    updated: 2026-06-01
-                    ---
-
-                    # Widget Pattern {i}
-
-                    A long body about widget pattern number {i} with plenty of
-                    words to make summaries meaningful and the brief heavy.
-                """)
-            )
+        _widget_notes(vault_dir)
         rc = main(["--vault", str(vault_dir), "recall", "--query", "widget",
                    "--limit", "40"])
         assert rc == 0

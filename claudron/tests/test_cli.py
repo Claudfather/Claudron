@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
 import pytest
 
-from claudron.cli import main
+from .conftest import REPO_ROOT, code_values, doc_table
+from claudron.cli import (
+    REMOVED_VAULT_ENV_VARS,
+    VAULT_ENV_VARS,
+    _detect_vault,
+    main,
+)
+
+CONTRACT = "docs/CLI_CONTRACT.md"
 
 
 class TestInit:
@@ -72,14 +81,12 @@ class TestVaultResolution:
         assert captured.out == ""  # the hint is a diagnostic (§Channels)
 
     def test_no_hint_when_removed_alias_unset(
-        self, tmp_path: Path, monkeypatch, capsys
+        self, tmp_path: Path, monkeypatch, capsys, no_vault_env
     ):
         """No dead var set ⇒ the plain no-vault message, unchanged."""
         outside = tmp_path / "outside"
         outside.mkdir()
         monkeypatch.chdir(outside)
-        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
         with pytest.raises(SystemExit) as exc_info:
             main(["status"])
         assert exc_info.value.code == 3
@@ -88,11 +95,9 @@ class TestVaultResolution:
         assert "no longer read" not in err
 
     def test_walk_up_unchanged_when_no_env(
-        self, vault_dir: Path, monkeypatch, capsys
+        self, vault_dir: Path, monkeypatch, capsys, no_vault_env
     ):
         """Neither var set ⇒ walk-up from CWD, exactly as before."""
-        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
         monkeypatch.chdir(vault_dir)
         rc = main(["status", "--json"])
         assert rc == 0
@@ -375,27 +380,13 @@ class TestChannelDiscipline:
         assert detect(root) is None
 
 
-def _contract_table(marker: str) -> list[list[str]]:
-    """Extract the doc-parity table following *marker* in docs/CLI_CONTRACT.md.
+def _env_table() -> list[list[str]]:
+    return doc_table(CONTRACT, "ENVIRONMENT")
 
-    Same shape as test_schema.py's SCHEMA.md reader — the contract docs use
-    one parity mechanism, not two.
-    """
-    from pathlib import Path as _Path
 
-    repo_root = _Path(__file__).resolve().parents[2]
-    text = (repo_root / "docs" / "CLI_CONTRACT.md").read_text()
-    section = text.split(f"<!-- doc-parity: {marker} -->")[1]
-    rows: list[list[str]] = []
-    for line in section.splitlines():
-        line = line.strip()
-        if line.startswith("|"):
-            cells = [c.strip() for c in line.strip("|").split("|")]
-            if not set(cells[0]) <= {"-", " "}:  # skip separator row
-                rows.append(cells)
-        elif rows:
-            break
-    return rows[1:]  # drop header
+def _section(doc: str, header: str) -> str:
+    """Body of a '## <header>' section, up to the next '## '."""
+    return (REPO_ROOT / doc).read_text().split(f"## {header}", 1)[1].split("\n## ", 1)[0]
 
 
 class TestEnvironmentDocParity:
@@ -406,30 +397,22 @@ class TestEnvironmentDocParity:
     two names resolved different vaults (Claudron #30)."""
 
     def test_env_rows_match_code_ladder_in_order(self):
-        from claudron.cli import VAULT_ENV_VARS
-
-        rows = _contract_table("ENVIRONMENT")
         documented = tuple(
-            _first_code(row[1]) for row in rows if row[2] == "env"
+            code_values(row[1])[0] for row in _env_table() if row[2] == "env"
         )
         assert documented == VAULT_ENV_VARS
 
     def test_removed_rows_match_removal_constant(self):
-        from claudron.cli import REMOVED_VAULT_ENV_VARS
-
-        rows = _contract_table("ENVIRONMENT")
         documented = tuple(
-            _first_code(row[1]) for row in rows if row[2].startswith("removed")
+            code_values(row[1])[0]
+            for row in _env_table()
+            if row[2].startswith("removed")
         )
         assert documented == REMOVED_VAULT_ENV_VARS
 
     def test_removed_vars_are_not_read_by_the_resolver(self):
         """The hard cut, pinned structurally: a removed name may appear in the
         failure-path hint but never in the resolution chain."""
-        import inspect
-
-        from claudron.cli import REMOVED_VAULT_ENV_VARS, _detect_vault
-
         source = inspect.getsource(_detect_vault)
         for var in REMOVED_VAULT_ENV_VARS:
             assert var not in source, var
@@ -437,7 +420,7 @@ class TestEnvironmentDocParity:
     def test_table_is_precedence_ordered(self):
         """Rows 1..N are the live ladder in precedence order; removed rows
         carry no rank."""
-        rows = _contract_table("ENVIRONMENT")
+        rows = _env_table()
         ranks = [row[0] for row in rows if row[0].isdigit()]
         assert ranks == [str(i) for i in range(1, len(ranks) + 1)]
         assert rows[0][2] == "flag"  # --vault always wins
@@ -446,17 +429,16 @@ class TestEnvironmentDocParity:
     def test_flags_section_defers_to_the_table(self):
         """§Flags must point at §Environment, never restate the order (R3
         applied at home — one normative statement, one parity gate)."""
-        from pathlib import Path as _Path
-
-        repo_root = _Path(__file__).resolve().parents[2]
-        text = (repo_root / "docs" / "CLI_CONTRACT.md").read_text()
-        flags = text.split("## Flags", 1)[1].split("\n## ", 1)[0]
+        flags = _section(CONTRACT, "Flags")
         assert "§Environment" in flags
         assert "CLAUDRON_VAULT_PATH" not in flags
 
-
-def _first_code(cell: str) -> str:
-    """First backticked value in a table cell."""
-    import re
-
-    return re.findall(r"`([^`]+)`", cell)[0]
+    def test_integration_guide_names_only_contract_vars(self):
+        """INTEGRATION.md's 'Resolve a vault' section gives readers the short
+        form, so it *can* drift from the table. Gate it: every env name it
+        spells there must be a live contract name. A removed name reappearing
+        in the front door is the #30 failure re-created for integrators."""
+        section = _section("docs/INTEGRATION.md", "Resolve a vault")
+        assert "§Environment" in section  # still points at the normative text
+        spelled = {v for v in code_values(section) if v.startswith("CLAUDRON_")}
+        assert spelled == set(VAULT_ENV_VARS)

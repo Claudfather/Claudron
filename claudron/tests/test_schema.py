@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from .conftest import code_values, doc_table
 from claudron.schema import (
     CATALOG,
     LOOKUP_EXCLUDED,
@@ -85,24 +86,8 @@ class TestReferenceVault:
 
 
 def _doc_table(marker: str) -> list[list[str]]:
-    """Extract the doc-parity table following *marker* in SCHEMA.md."""
-    text = (REPO_ROOT / "SCHEMA.md").read_text()
-    section = text.split(f"<!-- doc-parity: {marker} -->")[1]
-    rows = []
-    for line in section.splitlines():
-        line = line.strip()
-        if line.startswith("|"):
-            cells = [c.strip() for c in line.strip("|").split("|")]
-            if not set(cells[0]) <= {"-", " "}:  # skip separator row
-                rows.append(cells)
-        elif rows:
-            break
-    return rows[1:]  # drop header
-
-
-def _values(cell: str) -> tuple[str, ...]:
-    """Backticked value list from a table cell -> tuple of values."""
-    return tuple(re.findall(r"`([^`]+)`", cell))
+    """The doc-parity table following *marker* in SCHEMA.md."""
+    return doc_table("SCHEMA.md", marker)
 
 
 def _tree_block(doc: str, header: str) -> str:
@@ -123,8 +108,8 @@ class TestDocParity:
         assert {r[0] for r in rows} == set(STATUS_VOCAB)
         for note_type, canonical, terminal, legacy in rows:
             vocab = STATUS_VOCAB[note_type]
-            assert _values(canonical) == vocab["canonical"], note_type
-            assert _values(terminal) == vocab["terminal"], note_type
+            assert code_values(canonical) == vocab["canonical"], note_type
+            assert code_values(terminal) == vocab["terminal"], note_type
             doc_aliases = set(re.findall(r"`(\w+)` →", legacy))
             assert doc_aliases == set(vocab["legacy"]), note_type
 

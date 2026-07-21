@@ -107,14 +107,12 @@ def _removed_var_hint() -> str:
     only trace, and it costs nothing until someone hits the exact confusion
     it explains (a dotfile still exporting the dead name, no vault resolving).
     """
-    live = [v for v in REMOVED_VAULT_ENV_VARS if os.environ.get(v)]
-    if not live:
-        return ""
     canonical = VAULT_ENV_VARS[0]
     return "".join(
         f"\nnote: {var} is no longer read (removed in {_ALIAS_REMOVED_IN}) "
         f"— set {canonical}"
-        for var in live
+        for var in REMOVED_VAULT_ENV_VARS
+        if os.environ.get(var)
     )
 
 
@@ -139,38 +137,41 @@ def _resolve_vault(args) -> Vault:
 def _detect_claudlobby_root(hint: Path | None = None) -> Path | None:
     """Walk up from *hint* (or CWD) looking for a claudlobby repo root.
 
-    Marker: directory containing both ``library/`` and ``lib/``.
-
-    **Deprecated when it is the walk that resolves the root.** Inferring a
-    consumer from its tree shape is the engine knowing a consumer by name
-    (boundary spec §10.2 / register rule R5) — the declared alternative,
-    ``--claudlobby <path>``, already exists and is preempted here. Behavior
-    is unchanged: this deprecates, it does not remove. Removal rides the
-    same release schedule as the CLAUDRON_VAULT cut.
+    Marker: directory containing both ``library/`` and ``lib/``. Policy-free
+    like ``_detect_vault``; ``_resolve_claudlobby_root`` adds the diagnostic.
     """
-    if hint is not None:
-        start = hint.resolve()
-        for candidate in [start, *start.parents]:
-            if (candidate / "library").is_dir() and (candidate / "lib").is_dir():
-                return candidate
-        return None
-
-    start = Path.cwd().resolve()
+    start = (hint or Path.cwd()).resolve()
     for candidate in [start, *start.parents]:
         if (candidate / "library").is_dir() and (candidate / "lib").is_dir():
-            print(
-                f"deprecated: resolved {candidate} by walking for a "
-                "'library/' + 'lib/' tree shape — pass --claudlobby <path> "
-                "instead (the tree-shape walk is scheduled for removal)",
-                file=sys.stderr,
-            )
             return candidate
     return None
 
 
+def _resolve_claudlobby_root(args) -> Path | None:
+    """``_detect_claudlobby_root`` plus the tree-walk deprecation.
+
+    Inferring a consumer from its tree shape is the engine knowing a consumer
+    by name (boundary spec §10.2 / register rule R5). The declared alternative
+    — ``--claudlobby <path>`` — already exists and preempts the walk, so
+    resolving *by walk* earns one stderr line. Behavior is unchanged: this
+    deprecates, it does not remove. Removal rides the same release schedule
+    as the CLAUDRON_VAULT cut.
+    """
+    hint = _claudlobby_hint(args)
+    cl_root = _detect_claudlobby_root(hint)
+    if cl_root is not None and hint is None:
+        print(
+            f"deprecated: resolved {cl_root} by walking for a "
+            "'library/' + 'lib/' tree shape — pass --claudlobby <path> "
+            "instead (the tree-shape walk is scheduled for removal)",
+            file=sys.stderr,
+        )
+    return cl_root
+
+
 def _require_claudlobby_root(args, command: str) -> Path:
     """Resolve claudlobby root or exit with a clear error."""
-    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
+    cl_root = _resolve_claudlobby_root(args)
     if cl_root is None:
         print(
             f"could not find claudlobby root\n"
@@ -906,7 +907,7 @@ def _claudlobby_hint(args) -> Path | None:
 
 
 def cmd_config(args) -> int:
-    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
+    cl_root = _resolve_claudlobby_root(args)
 
     info: dict = {"claudlobby_root": str(cl_root) if cl_root else None}
 
