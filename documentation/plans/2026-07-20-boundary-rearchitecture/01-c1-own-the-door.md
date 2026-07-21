@@ -1,20 +1,26 @@
 ---
 title: "C1 — Own the door: address contract, write guarantees, INTEGRATION.md"
 type: plan
-status: active
+status: completed
 owner: chris
 tags: [plan, claudron, contracts, cli]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-07-21
 ---
 
 # C1 — Own the door (Claudron)
 
-> **In flight:** implemented in [#79](https://github.com/Claudfather/Claudron/pull/79)
-> (2026-07-20). All twelve steps landed; both approval-gated amendments (step 9
-> VAULT-STRUCTURE §Consumption(b), step 10 decision-C trigger 1) are quoted in
-> full in that PR's body awaiting ratification, and the F3 grep sweep is
-> recorded there. Mark `completed` on merge.
+> **Shipped** in [#79](https://github.com/Claudfather/Claudron/pull/79), merged
+> 2026-07-21 and released as **v0.3.0**. All twelve steps landed; both
+> approval-gated amendments (step 9 VAULT-STRUCTURE §Consumption(b), step 10
+> decision-C trigger 1) were ratified on merge, and the F3 grep sweep is
+> recorded in the PR body. Claudron #30 and #46 closed with it.
+>
+> **Follow-on the merge makes urgent:** the hard cut is live, and clauDNA still
+> orders `CLAUDRON_VAULT` first in its ladder — `skills/_shared/claudron-engine.md`
+> additionally states "the CLI resolves the vault from `CLAUDRON_VAULT`", which
+> is now false. That is [D1](03-d1-claudna-conformance.md), and it is the
+> two-vaults hazard pointing the other way until it lands.
 
 ## Summary
 
