@@ -224,7 +224,10 @@ bind an integration that ships its **own** capture prompt:
   compaction, you must defer when the engine's `pre-compact` entry is
   registered — detected by a hook command ending in `hook pre-compact` in the
   host's settings files. Both prompting is a defect; the protocol section
-  specifies the detection exactly.
+  specifies the detection exactly. **Read that section's transitional note
+  before you ship the defer:** while the engine still carries its shim, a defer
+  that ships first means both sides yield and *nobody* prompts. The release
+  ordering is stated there and it binds you.
 - **Composed hook entries are a rendered copy.** If you generate the settings
   block yourself instead of running `hooks install`, gate it against the shape
   in that section (register rule R3) — a drifted copy silently runs stale hooks

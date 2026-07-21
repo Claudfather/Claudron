@@ -463,6 +463,12 @@ class TestChannelDiscipline:
             ["--vault", str(vault_dir), "index", "--json"],
             ["--vault", str(vault_dir), "validate", "--json"],
             ["version", "--json"],
+            # The write door too: provenance fields are carried inside `data`,
+            # so adding them must not have grown the envelope a fleet parses.
+            ["--vault", str(vault_dir), "capture", "--json", "--type",
+             "knowledge", "--title", "Envelope Shape", "--body", "B.",
+             "--owner", "bot", "--source-url", "https://x",
+             "--source-type", "url"],
         ):
             main(argv)
             out = capsys.readouterr().out

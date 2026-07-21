@@ -19,9 +19,10 @@
   optional fields of the same names. Both fields have been in the schema since
   v1; capture dropped them, so consumers folded provenance into a trailing body
   line — coupling themselves to how the recall brief picks a note's summary.
-  Provenance now has a transport. `--source-type` accepts only the schema's
-  vocabulary. Closes #44; `source_url` as a *dedup signal*, `last_verified`, and
-  typed anchors remain #55's under EPIC #54. (boundary program C2, fork F7)
+  Provenance now has a transport. `source_type` accepts only the schema's
+  vocabulary, on both spellings — the flag and the `--stdin` key alike. Closes
+  #44; `source_url` as a *dedup signal*, `last_verified`, and typed anchors
+  remain #55's under EPIC #54. (boundary program C2, fork F7)
 
 ### Changed
 - **The PreCompact capture prompt names no front-end.** It routes the agent

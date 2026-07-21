@@ -224,9 +224,12 @@ contended: `R-capture-prompt`.
     budget (`SCHEMA.md` §W105). That block is the always-loaded layer and is
     injected unconditionally — past W105's ceiling it can carry the brief over
     the cap on its own. The layers below it still degrade correctly (zero notes,
-    no hint) rather than compounding. Enforcement of the conventions budget is
-    `validate`'s job, not recall's: the engine will not silently drop the layer
-    a vault declared always-loaded.
+    no hint) rather than compounding. Recall will not silently drop the layer a
+    vault declared always-loaded, so the conventions budget is **reported, not
+    enforced, and nothing hard-enforces it**: W105 is a warning in *both*
+    validation tiers, so `validate --strict` surfaces an over-budget
+    `CONVENTIONS.md` and still exits 0. A consumer that needs a hard ceiling
+    gates on the warning code itself.
 
 **Combined-budget rule: there is none, deliberately.** Caps are per-brief. The
 continuity brief is the front-end's to budget; the engine's brief never exceeds
@@ -373,8 +376,9 @@ stdout, and never to stderr where a host might surface them as a session error.
     and `--source-type {url,file,inline}` (equally, the `source_url` /
     `source_type` keys of the `--stdin` JSON) write the SCHEMA.md optional
     fields of the same names. Both are omitted from the note when unset.
-    `--source-type` accepts only SCHEMA.md's vocabulary; anything else is a
-    usage error (exit 2). **A consumer must not fold provenance into a body
+    `source_type` accepts only SCHEMA.md's vocabulary **on both spellings** —
+    the flag and the `--stdin` key alike; anything else is a usage error
+    (exit 2). **A consumer must not fold provenance into a body
     line** — the first substantive body line is what the recall brief shows as
     a note's summary, so a `Source:` line there both spends the summary and
     couples the consumer to how that summary is picked.

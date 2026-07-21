@@ -125,10 +125,11 @@ DEDUP_EXEMPT = LOOKUP_EXCLUDED
 MATURITY_VALUES = ("draft", "verified", "canonical")
 
 # `source_type`'s vocabulary (SCHEMA.md §Frontmatter fields, optional). Held
-# here so the write door can refuse a value the schema doesn't define; a
-# parity test reads the row rather than trusting this copy. Not a validation
-# code — the 0.x error catalog is closed, so an out-of-vocabulary value
-# arriving by other doors is preserved-and-ignored like any unknown field.
+# here so the CLI door can refuse a value the schema doesn't define — on both
+# spellings, the flag and the --stdin key; a parity test reads the doc row
+# rather than trusting this copy. Not a validation code: the 0.x error catalog
+# is closed, so `validate` still treats an out-of-vocabulary value already on
+# disk as preserved-and-ignored, exactly like any unknown field.
 SOURCE_TYPES = ("url", "file", "inline")
 
 

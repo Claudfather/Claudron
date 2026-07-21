@@ -711,6 +711,21 @@ def cmd_capture(args) -> int:
     )
     owner = finding.get("owner") or _derive_owner(args)
 
+    # Both spellings of a field get the same door. argparse guards `choices`
+    # on the flag; the --stdin key needs the check restated here or the
+    # vocabulary holds only on the *human* path — while the contract sends
+    # every programmatic writer through --stdin. Exit 2 matches how this
+    # function already answers the payload's other bad-argument shapes
+    # (unparseable JSON, missing type/title) rather than inventing a refusal.
+    source_type = finding.get("source_type") or args.source_type
+    if source_type and source_type not in SOURCE_TYPES:
+        print(
+            f"invalid source_type: {source_type!r} "
+            f"(choose from {', '.join(repr(v) for v in SOURCE_TYPES)})",
+            file=sys.stderr,
+        )
+        return 2
+
     try:
         result = capture(
             vault,
@@ -723,7 +738,7 @@ def cmd_capture(args) -> int:
             fleet=finding.get("fleet") or args.fleet,
             force=args.force,
             source_url=finding.get("source_url") or args.source_url,
-            source_type=finding.get("source_type") or args.source_type,
+            source_type=source_type,
         )
     except ScopeError as exc:
         print(str(exc), file=sys.stderr)

@@ -145,24 +145,49 @@ Write the hook tests first (red), then touch `hooks.py` (green).
 
 ## Verification Checklist
 
-- [ ] One normative session-protocol section exists in CLI_CONTRACT naming the four roles, the
+- [x] One normative session-protocol section exists in CLI_CONTRACT naming the four roles, the
       consumer-defer rule + grep identity, the release-ordering rule, the snippet shape, and the
       combined-budget rule.
-- [ ] The engine's PreCompact prompt names no front-end (note: `hook <event>` is the runtime
+- [x] The engine's PreCompact prompt names no front-end (note: `hook <event>` is the runtime
       dispatch verb; `hooks install` is the installer — both spellings are per the contract).
-- [ ] `claudron capture --type knowledge --title t --stdin --source-url https://x --source-type
+- [x] `claudron capture --type knowledge --title t --stdin --source-url https://x --source-type
       url` writes both frontmatter fields and strict-validates. (**Corrected 2026-07-21:** this
       line read `--source-type article`, which is outside SCHEMA.md's ratified `url | file |
       inline` vocabulary. The SSOT wins over an illustrative example in a phase doc — the example
       was wrong, not the schema, and the write door now rejects out-of-vocabulary values.)
-- [ ] `hooks.py` contains no clauDNA-narrating docstring; the glob is commented as the
+- [x] `hooks.py` contains no clauDNA-narrating docstring; the glob is commented as the
       transitional shim with its removal condition.
-- [ ] Claudron #44 closed; deferral comment on #55/#54 posted.
-- [ ] **#81 (step 5):** `--vault`-beats-env test exists; the budget test gates a contract sentence
-      rather than an unowned gap; the `.gitignore` rule is confirmed-and-kept. #81 closed on land.
-- [ ] **No release cut.** No version bump, no CHANGELOG release heading — the entry lands under
+- [ ] Claudron #44 closed; deferral comment on #55/#54 posted. *(on land)*
+- [x] **#81 (step 5):** `--vault`-beats-env test exists; the budget test gates a contract sentence
+      rather than an unowned gap; the `.gitignore` rule is confirmed-and-kept.
+      *(#81 closes on land.)*
+- [x] **No release cut.** No version bump, no CHANGELOG release heading — the entry lands under
       *Unreleased*. A phase cuts a release only when a step says so, and none here does.
-- [ ] `pytest` green.
+- [x] `pytest` green — 415 passed, 1 skipped (the skip is F1's end-state test, by design).
+
+### Spec review — two false sentences caught and fixed (2026-07-21)
+
+An adversarial spec review of the branch found **two contract sentences this phase wrote that the
+code did not keep**. Both are recorded because the failure mode is the one this program exists to
+prevent, and both were in the deliverable that matters most:
+
+1. **The `source_type` vocabulary held only on the human path.** `choices` sat on argparse, so the
+   flag was guarded and the `--stdin` key was not — while `CLI_CONTRACT.md` §capture and
+   `schema.py`'s own comment both claimed *the write door* enforces it, and the contract sends
+   every programmatic writer through `--stdin`. Exactly inverted: the spelling a consumer will
+   actually use was the unguarded one. **Fixed at the door** (`cmd_capture`, exit 2 — the same
+   answer it already gives the payload's other bad-argument shapes), with a test on the stdin path
+   that asserts nothing lands on disk.
+2. **"Enforcement of the conventions budget is `validate`'s job" was false.** W105 is a *warning in
+   both tiers*, so `validate --strict` reports an over-budget `CONVENTIONS.md` and still exits 0 —
+   a CI gate reading that sentence would go green over the very case the limit describes. **Fixed
+   by saying so**: the budget is reported, not enforced, and nothing hard-enforces it. (Promoting
+   W105 to a strict error would be an approval-gated SCHEMA change and is out of scope.)
+
+Also from the review: `capture` joined the `--json` envelope-shape gate (a Test Plan bullet with no
+gate behind it), the identity-rule parity test stopped being presence-only and now runs the
+documented suffix through `_is_claudron_hook`, and `INTEGRATION.md`'s defer obligation gained the
+transitional-ordering caveat it was restating without.
 
 ## What NOT To Do
 

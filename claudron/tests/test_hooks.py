@@ -257,14 +257,29 @@ class TestSessionProtocolDocParity:
             "session-end": f"{SESSION_END_PUSH_TIMEOUT}s",
         }
 
-    def test_identity_rule_states_the_suffix_merge_keys_on(self):
+    def test_identity_rule_is_the_one_the_installer_applies(self):
         """`merge_settings` replaces a prior entry by matching the command's
-        `hook <event>` suffix. A consumer that rewrites the command without
-        preserving it gets a duplicate hook, not a replacement — so the suffix
-        is contract, and the section must say so."""
+        `hook <event>` suffix; a consumer that rewrites the command without
+        preserving it gets a duplicate hook, not a replacement.
+
+        Asserting the section merely *mentions* the rule would pass on a
+        section that stated it backwards. So take the documented suffix at its
+        word and run it through the matcher: a command ending in it is ours, a
+        command carrying it anywhere else is not.
+        """
+        from claudron.hooks import _is_claudron_hook
+
         body = section(CONTRACT, PROTOCOL)
-        assert "hook <event>" in body
-        assert "merge_settings" in body
+        assert "hook <event>" in body and "merge_settings" in body
+
+        def entry(command: str) -> dict:
+            return {"hooks": [{"type": "command", "command": command}]}
+
+        assert _is_claudron_hook(entry("/anywhere/claudron hook pre-compact"),
+                                 "pre-compact")
+        assert not _is_claudron_hook(entry("/x hook pre-compact --extra"),
+                                     "pre-compact")
+        assert not _is_claudron_hook(entry("/x hook session-end"), "pre-compact")
 
 
 class TestHooksInstall:
