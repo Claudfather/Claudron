@@ -1,7 +1,7 @@
 ---
 title: "C1 — Own the door: address contract, write guarantees, INTEGRATION.md"
 type: plan
-status: draft
+status: active
 owner: chris
 tags: [plan, claudron, contracts, cli]
 created: 2026-07-20
@@ -9,6 +9,12 @@ updated: 2026-07-20
 ---
 
 # C1 — Own the door (Claudron)
+
+> **In flight:** implemented in [#79](https://github.com/Claudfather/Claudron/pull/79)
+> (2026-07-20). All twelve steps landed; both approval-gated amendments (step 9
+> VAULT-STRUCTURE §Consumption(b), step 10 decision-C trigger 1) are quoted in
+> full in that PR's body awaiting ratification, and the F3 grep sweep is
+> recorded there. Mark `completed` on merge.
 
 ## Summary
 
