@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import inspect
 import json
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from .conftest import REPO_ROOT, code_values, doc_table
+from .doc_parity import code_values, doc_table, section
 from claudron.cli import (
     REMOVED_VAULT_ENV_VARS,
     VAULT_ENV_VARS,
@@ -384,9 +385,24 @@ def _env_table() -> list[list[str]]:
     return doc_table(CONTRACT, "ENVIRONMENT")
 
 
-def _section(doc: str, header: str) -> str:
-    """Body of a '## <header>' section, up to the next '## '."""
-    return (REPO_ROOT / doc).read_text().split(f"## {header}", 1)[1].split("\n## ", 1)[0]
+class _RecordingEnv(dict):
+    """An `os.environ` stand-in that remembers which names were looked up."""
+
+    def __init__(self, base):
+        super().__init__(base)
+        self.queried: list[str] = []
+
+    def get(self, key, default=None):
+        self.queried.append(key)
+        return super().get(key, default)
+
+    def claudron_lookups(self) -> list[str]:
+        """Queried `CLAUDRON_*` names, in order, de-duplicated."""
+        seen: dict[str, None] = {}
+        for key in self.queried:
+            if key.startswith("CLAUDRON_"):
+                seen.setdefault(key)
+        return list(seen)
 
 
 class TestEnvironmentDocParity:
@@ -410,12 +426,23 @@ class TestEnvironmentDocParity:
         )
         assert documented == REMOVED_VAULT_ENV_VARS
 
-    def test_removed_vars_are_not_read_by_the_resolver(self):
-        """The hard cut, pinned structurally: a removed name may appear in the
-        failure-path hint but never in the resolution chain."""
-        source = inspect.getsource(_detect_vault)
-        for var in REMOVED_VAULT_ENV_VARS:
-            assert var not in source, var
+    def test_resolver_reads_exactly_the_contract_env_names(
+        self, tmp_path: Path, monkeypatch
+    ):
+        """The hard cut, pinned by what the resolver actually *reads*.
+
+        Grepping `_detect_vault`'s source is not enough: re-adding the removed
+        name by iterating `REMOVED_VAULT_ENV_VARS` leaves no literal behind and
+        slips a text check (verified — it does). Recording the lookups catches
+        both spellings, and pins the ladder to the table in the same assert.
+        """
+        recorder = _RecordingEnv(os.environ)
+        monkeypatch.setattr(os, "environ", recorder)
+        monkeypatch.chdir(tmp_path)  # nothing to walk up to
+
+        _detect_vault(SimpleNamespace(vault=None))
+
+        assert recorder.claudron_lookups() == list(VAULT_ENV_VARS)
 
     def test_table_is_precedence_ordered(self):
         """Rows 1..N are the live ladder in precedence order; removed rows
@@ -429,7 +456,7 @@ class TestEnvironmentDocParity:
     def test_flags_section_defers_to_the_table(self):
         """§Flags must point at §Environment, never restate the order (R3
         applied at home — one normative statement, one parity gate)."""
-        flags = _section(CONTRACT, "Flags")
+        flags = section(CONTRACT, "Flags")
         assert "§Environment" in flags
         assert "CLAUDRON_VAULT_PATH" not in flags
 
@@ -438,7 +465,7 @@ class TestEnvironmentDocParity:
         form, so it *can* drift from the table. Gate it: every env name it
         spells there must be a live contract name. A removed name reappearing
         in the front door is the #30 failure re-created for integrators."""
-        section = _section("docs/INTEGRATION.md", "Resolve a vault")
-        assert "§Environment" in section  # still points at the normative text
-        spelled = {v for v in code_values(section) if v.startswith("CLAUDRON_")}
+        resolve = section("docs/INTEGRATION.md", "Resolve a vault")
+        assert "§Environment" in resolve  # still points at the normative text
+        spelled = {v for v in code_values(resolve) if v.startswith("CLAUDRON_")}
         assert spelled == set(VAULT_ENV_VARS)

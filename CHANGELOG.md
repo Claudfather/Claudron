@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-07-20
 
 ### Removed (breaking)
 - **`CLAUDRON_VAULT` is no longer read.** The vault address resolves via

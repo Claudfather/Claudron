@@ -201,7 +201,7 @@ def render_brief(data: dict) -> str:
 
     if lines:
         sections.append(
-            header + "\n\n" + "\n".join(lines) + "\n\n" + BRIEF_DISCOVERY_HINT
+            "\n\n".join((header, "\n".join(lines), BRIEF_DISCOVERY_HINT))
         )
 
     return "\n\n".join(sections)

@@ -57,13 +57,15 @@ command whose envelope you already know how to parse:
 claudron status --json
 ```
 
-Three outcomes, and exactly what each entitles you to assume:
+Three outcomes, and exactly what each entitles you to assume. **Branch on the
+exit code, never on message text** — exit codes are contract
+([§Exit codes](CLI_CONTRACT.md#exit-codes)); the wording on stderr is not.
 
 | State | How you observe it | What you may assume |
 |---|---|---|
-| **No CLI installed** | The process fails to start: `ENOENT` from `exec`, or shell exit **127** ("command not found"). Nothing is written to stdout. | No engine. Fall back to whatever you do without one — do not synthesize a vault path, and do not treat this as an error condition worth surfacing on every invocation. |
-| **CLI present, no vault** | Exit **3**, stderr carries `no vault found`, stdout is empty. | The engine exists but has no address. Either resolve a vault (below) or degrade. This is a configuration state, not a failure of the engine. |
-| **Engine ready** | Exit **0**, one JSON envelope on stdout with `ok: true`. | `data.engine_version` is the installed engine's version, and `data.root` is the absolute path of the resolved vault. Guard any feature you need on the version. |
+| **No CLI installed** | The process fails to start: `ENOENT` from `exec`, or shell exit **127**. Nothing on stdout. | No engine. Fall back to whatever you do without one — do not synthesize a vault path, and do not surface this as an error on every invocation. |
+| **CLI present, no vault** | Exit **3**, stdout empty, an explanation on stderr. | The engine exists but has no address. Either resolve a vault (below) or degrade. A configuration state, not a failure of the engine. |
+| **Engine ready** | Exit **0**, one JSON envelope on stdout with `ok: true`. | `data.engine_version` is the installed engine's version and `data.root` is the resolved vault. Guard any feature you need on the version. |
 
 ```bash
 # A complete probe, in four lines of shell
@@ -165,24 +167,23 @@ echo '{"type":"knowledge","title":"Neon pool exhaustion","body":"…","tags":["n
   | claudron capture --stdin --json
 ```
 
-Three rules, each of which has bitten a real consumer:
+Three rules, each of which has bitten a real consumer. The normative statement
+of all three is
+[CLI_CONTRACT.md §capture](CLI_CONTRACT.md#command-specific-contracts) — read it
+once; what follows is orientation, not a second copy.
 
 1. **Pass content via `--stdin` JSON, never `--body` string interpolation.**
-   Note bodies are free text — quotes, newlines, backticks, `$(...)`. Building a
-   `--body "…"` shell argument truncates the note or executes substitutions in
-   *your* shell before `claudron` ever runs.
-2. **Branch on `written`, not on the exit code.** Dedup *routes*, it does not
-   reject: a near-duplicate returns `action: "suggest_update"` or
-   `"suggest_supersede"` with **exit 0** and **`ok: true`** having written
-   nothing. A consumer that treats exit 0 as "captured" silently drops the
-   finding. `written` is `true` only for `created` and `updated`.
-3. **Handle the suggestion, don't retry blindly.** On a `suggest_*` action,
-   `data.path` names the existing note and `data.reason` says why. Append to it
-   with `capture --update`, or force a new note with `--force` — as a deliberate
-   choice, not a reflex.
+   Note bodies are free text, so a `--body "…"` argument is a shell-injection
+   and truncation hazard in *your* process, before `claudron` ever starts.
+2. **Branch on `written`, not on the exit code.** Dedup routes rather than
+   rejecting, so a command can succeed having written nothing. A consumer that
+   reads exit 0 as "captured" silently drops the finding.
+3. **Handle the suggestion, don't retry blindly.** When the result is a dedup
+   route, `data.path` names the existing note and `data.reason` says why — pick
+   `--update` or `--force` deliberately.
 
-`action: "rejected"` (validation failure) is the only write outcome that exits
-1; its `errors` array carries the specific findings.
+The `action` vocabulary, which values set `written`, and which one exits 1 are
+all in §capture. Do not hard-code the list from memory.
 
 What the engine promises about durability across machines — per-host
 serialization, cross-host eventual consistency with conflict quarantine, and

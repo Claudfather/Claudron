@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from .conftest import code_values, doc_table
+from .doc_parity import REPO_ROOT, code_values, doc_table, fenced_block
 from claudron.schema import (
     CATALOG,
     LOOKUP_EXCLUDED,
@@ -23,7 +23,6 @@ from claudron.schema import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = json.loads((FIXTURES / "expected.json").read_text())
 
 
@@ -90,13 +89,6 @@ def _doc_table(marker: str) -> list[list[str]]:
     return doc_table("SCHEMA.md", marker)
 
 
-def _tree_block(doc: str, header: str) -> str:
-    """The first fenced code block under a '## <header>' line in *doc*."""
-    text = (REPO_ROOT / doc).read_text()
-    after = text.split(f"## {header}", 1)[1]
-    return after.split("```", 2)[1]
-
-
 class TestDocParity:
     """SCHEMA.md's normative tables and schema.py cannot drift (devex
     major: the SSOT epic must not re-create doc-vs-code drift internally).
@@ -139,8 +131,8 @@ class TestDocParity:
         TYPE_DIRS defines. Closes the gap VAULT-STRUCTURE.md discloses (the two
         trees were previously unguarded — only the tables above were)."""
         tiers = {d.split("/", 1)[0] for d in TYPE_DIRS.values()}
-        schema_tree = _tree_block("SCHEMA.md", "Vault directory taxonomy")
-        vault_tree = _tree_block("VAULT-STRUCTURE.md", "Directory contract")
+        schema_tree = fenced_block("SCHEMA.md", "Vault directory taxonomy")
+        vault_tree = fenced_block("VAULT-STRUCTURE.md", "Directory contract")
         for tier in tiers:
             # whole dir entry, not a loose substring: `x_runbooks/` must not
             # satisfy `runbooks/` (a lookbehind rejects a leading name char).

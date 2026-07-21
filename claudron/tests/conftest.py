@@ -1,48 +1,18 @@
-"""Fixture vaults and doc-parity helpers for claudron tests."""
+"""Fixture vaults for claudron tests.
+
+Fixtures only — pytest auto-injects everything defined here by name. The
+doc-parity readers are plain imports and live in ``doc_parity.py``.
+"""
 
 from __future__ import annotations
 
-import re
 import shutil
 from pathlib import Path
 from textwrap import dedent
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-# ── doc-parity readers ────────────────────────────────────────────────
-#
-# Normative tables live in more than one owned document (SCHEMA.md's status
-# and error catalogs, CLI_CONTRACT.md's §Environment table). One reader for
-# all of them — a second copy of this parser would be the exact drift the
-# tables it reads exist to prevent.
-
-
-def doc_table(doc: str, marker: str) -> list[list[str]]:
-    """Rows of the markdown table following ``<!-- doc-parity: MARKER -->``.
-
-    *doc* is repo-root-relative. Returns data rows only (header dropped,
-    separator skipped), each as a list of stripped cells.
-    """
-    text = (REPO_ROOT / doc).read_text()
-    section = text.split(f"<!-- doc-parity: {marker} -->")[1]
-    rows: list[list[str]] = []
-    for line in section.splitlines():
-        line = line.strip()
-        if line.startswith("|"):
-            cells = [c.strip() for c in line.strip("|").split("|")]
-            if not set(cells[0]) <= {"-", " "}:  # skip separator row
-                rows.append(cells)
-        elif rows:
-            break
-    return rows[1:]  # drop header
-
-
-def code_values(cell: str) -> tuple[str, ...]:
-    """Backticked value list from a table cell -> tuple of values."""
-    return tuple(re.findall(r"`([^`]+)`", cell))
+from .doc_parity import REPO_ROOT
 
 
 @pytest.fixture
