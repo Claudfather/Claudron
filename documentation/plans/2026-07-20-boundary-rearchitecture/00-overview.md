@@ -82,6 +82,18 @@ spent.
 
 ## Phases
 
+**Status ledger** — the single place phase state is tracked (phase-doc banners are a convenience,
+this table is authoritative). Update it in the PR that changes a phase's state.
+
+| # | State | As of | Evidence |
+|---|---|---|---|
+| C1 | ✅ shipped | 2026-07-21 | Claudron #79 → `219b440`, released v0.3.0 |
+| D1 | 🟡 in flight — **partial** | 2026-07-21 | clauDNA #253; **steps 4 + 5 deferred behind C2** (F1 ordering + `--source-url` doesn't exist yet) → follow-up owed |
+| C2 | ⬜ next — critical path | — | unblocks D1's follow-ups and L2 |
+| L1 | ⬜ ready | — | gated on program gate 2 (the #511/#512/#513 re-scope) |
+| X1 | 🟡 partial | 2026-07-21 | Claudron half merged in #79; sibling halves await PRs from the `docs/boundary-claude-md-seams` branches |
+| L2 · L3 · D2 · L4 | ⬜ not started | — | downstream |
+
 | # | Phase | Repo | Size | Delivers |
 |---|---|---|---|---|
 | C1 | [Own the door](01-c1-own-the-door.md) | Claudron | M | §Environment + §Bridge + §Write-guarantees + engine version surface in CLI_CONTRACT; `docs/INTEGRATION.md`; VAULT-STRUCTURE §Consumption(b) amendment; decision-C amendment; tree-walk deprecation; `init` text fix; recall-brief discovery hint |
@@ -157,6 +169,21 @@ ordered schedule).
   breaking-change entry; D1 drops `CLAUDRON_VAULT` from clauDNA's ladder entirely (a consumer
   reading a var the engine ignores would re-create the two-vaults hazard in reverse). *Ratifier:*
   chris (2026-07-20). *Status:* **locked**.
+  - **Amendment A1 (2026-07-21, post-C1) — the softener is broader than "zero ongoing cost."**
+    C1 as shipped emits the removed-var hint on **every** invocation where `CLAUDRON_VAULT` is set
+    and shadows what actually resolved — not only the exit-3 path — including the hook path
+    (`cli.py:184`, `:828`), at the cost of a `detect()` walk per invocation when the dead name is
+    present. **Authorized retroactively on the merits:** the failure the original softener missed is
+    the *silent wrong-vault* case — a straggler dotfile exporting `CLAUDRON_VAULT` no longer errors,
+    it silently resolves somewhere else, and an exit-3-only hint never fires. That is the more
+    dangerous state and it deserves the diagnostic. **Recorded as an amendment because the process
+    was wrong:** the implementation exceeded a locked fork and `docs/CLI_CONTRACT.md:108–116` was
+    edited to describe the new behavior, i.e. the contract followed the code. Under R1–R4 the
+    obligation runs the other way — a change that outgrows a locked decision amends the decision
+    first. **Standing rule for every later phase:** if an implementation outgrows a locked fork,
+    stop and amend the fork; never ratify code by editing the contract it violates. What stays
+    forbidden under F3 is unchanged: no alias read, no warn-then-remove schedule, no time-bomb test.
+    *Ratifier:* chris (2026-07-21).
 - **F4 — lessons migration mode.** *Context:* `library/lessons/` (26 files incl. README) is
   corpus-class content in the runtime repo — but adversarial review showed it is **mixed-class**
   (e.g. `messaging-channel-discipline.md` is Q1 behavior, not Q2 reference; a behavior rule

@@ -1,20 +1,45 @@
 ---
 title: "C1 — Own the door: address contract, write guarantees, INTEGRATION.md"
 type: plan
-status: active
+status: completed
 owner: chris
 tags: [plan, claudron, contracts, cli]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-07-21
 ---
 
 # C1 — Own the door (Claudron)
 
-> **In flight:** implemented in [#79](https://github.com/Claudfather/Claudron/pull/79)
-> (2026-07-20). All twelve steps landed; both approval-gated amendments (step 9
-> VAULT-STRUCTURE §Consumption(b), step 10 decision-C trigger 1) are quoted in
-> full in that PR's body awaiting ratification, and the F3 grep sweep is
-> recorded there. Mark `completed` on merge.
+> **Shipped** in [#79](https://github.com/Claudfather/Claudron/pull/79), merged
+> 2026-07-21 and released as **v0.3.0**. All twelve steps landed; both
+> approval-gated amendments (step 9 VAULT-STRUCTURE §Consumption(b), step 10
+> decision-C trigger 1) were ratified on merge, and the F3 grep sweep is
+> recorded in the PR body. Claudron #30 and #46 closed with it.
+>
+> **Post-merge spec review (2026-07-21) — 0 steps missing, 8 extras.** All twelve
+> verified at file:line; INTEGRATION.md's hello-world runs clean; 400 tests pass.
+> The compliance risk was accretion, not omission. Two extras are ratified here
+> because they are load-bearing: **(i) the 0.3.0 release cut** (pyproject bump +
+> CHANGELOG release section) — no step authorized it, but INTEGRATION.md's
+> capability probe and clauDNA D1's `engine_version ≥ 0.3.0` guard both depend on
+> it, so it stands; **(ii) the broader F3 softener** — see the overview's
+> [F3 Amendment A1](00-overview.md#decision-forks). Program rule that follows:
+> **a phase cuts a release only when a step says so** — later phases land on the
+> version C1 established unless their own plan states otherwise.
+>
+> **Residue filed, not fixed here** (rides C2, which reopens the same doc + test
+> class): the §Environment doc-parity test pins only the *env* rung, so
+> `docs/CLI_CONTRACT.md:189-190`'s claim that it "pins it to the resolver"
+> overstates — nothing asserts `--vault` beats `CLAUDRON_VAULT_PATH`. Also
+> `test_recall.py`'s `test_oversized_conventions_still_overflow` pins an
+> unrelated pre-existing `BRIEF_TOKEN_BUDGET` bug as expected behavior, and
+> `.gitignore` gained an `AGENTS.md` rule as cleanup collateral.
+>
+> **Follow-on the merge makes urgent:** the hard cut is live, and clauDNA still
+> orders `CLAUDRON_VAULT` first in its ladder — `skills/_shared/claudron-engine.md`
+> additionally states "the CLI resolves the vault from `CLAUDRON_VAULT`", which
+> is now false. That is [D1](03-d1-claudna-conformance.md), and it is the
+> two-vaults hazard pointing the other way until it lands.
 
 ## Summary
 
@@ -128,8 +153,12 @@ changes are behavioral.
 - `status --json` carries `engine_version`; envelope shape unchanged otherwise.
 - Brief test: hint line present when notes exist, absent when brief is empty, counted against
   `BRIEF_TOKEN_BUDGET`.
-- Doc-parity: a test asserting `cli.py` resolution order matches the §Environment table order and
-  the removal target matches the constant (mirror the SCHEMA.md doc-parity pattern).
+- Doc-parity: a test asserting `cli.py` resolution order matches the §Environment table order
+  (mirror the SCHEMA.md doc-parity pattern). *(Corrected 2026-07-21: this line previously also
+  required "the removal target matches the constant" — residue from the pre-ratification
+  warn-then-remove draft that F3(b) superseded. F3 forbids a removal-target constant paired with a
+  time-bomb test; the shipped `_ALIAS_REMOVED_IN` is a past-tense record with no time-bomb, which
+  is consistent with F3. The plan, not the implementation, was wrong here.)*
 
 ## Verification Checklist
 
