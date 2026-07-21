@@ -124,6 +124,13 @@ DEDUP_EXEMPT = LOOKUP_EXCLUDED
 # first rung; E5's promote walks the rest.
 MATURITY_VALUES = ("draft", "verified", "canonical")
 
+# `source_type`'s vocabulary (SCHEMA.md §Frontmatter fields, optional). Held
+# here so the write door can refuse a value the schema doesn't define; a
+# parity test reads the row rather than trusting this copy. Not a validation
+# code — the 0.x error catalog is closed, so an out-of-vocabulary value
+# arriving by other doors is preserved-and-ignored like any unknown field.
+SOURCE_TYPES = ("url", "file", "inline")
+
 
 def ladder_index(maturity: str) -> int:
     """Position on the trust ladder: draft(0) < verified(1) < canonical(2);

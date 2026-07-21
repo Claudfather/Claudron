@@ -118,6 +118,29 @@ class TestDocParity:
                 else:
                     assert expected == cell.split()[0], (code, tier)
 
+    def test_source_types_match_the_optional_field_row(self):
+        """`SOURCE_TYPES` is SCHEMA.md's vocabulary, read rather than restated.
+
+        The write door refuses values outside it (`capture --source-type`), so
+        a widened doc row with a stale constant would reject a value the schema
+        now defines — the drift is silent and only shows up as a usage error.
+        The Optional-fields table carries no parity marker; this reads its one
+        typed row directly.
+        """
+        from claudron.schema import SOURCE_TYPES
+
+        from .doc_parity import section
+
+        rows = [
+            line for line in section("SCHEMA.md", "Frontmatter fields").splitlines()
+            if line.startswith("| `source_type`")
+        ]
+        assert len(rows) == 1, "SCHEMA.md: expected one `source_type` row"
+        documented = tuple(
+            v.strip() for v in code_values(rows[0])[1].split(r"\|")
+        )
+        assert documented == SOURCE_TYPES
+
     def test_terminal_vs_lookup_split_documented(self):
         # The blocker fix, pinned both ways: ratified staleness-done but
         # never lookup-hidden.

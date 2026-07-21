@@ -10,7 +10,14 @@ from pathlib import Path
 
 from . import __version__
 from .engine import ScopeError, append_addendum, capture, compose_note, resolve_target_dir
-from .schema import MATURITY_VALUES, TYPES, Finding, slugify, validate_path
+from .schema import (
+    MATURITY_VALUES,
+    SOURCE_TYPES,
+    TYPES,
+    Finding,
+    slugify,
+    validate_path,
+)
 from .structure import StructureError, check_structure, fix_structure, is_fixable
 from .vault import (
     SCAFFOLD_TREE,
@@ -715,6 +722,8 @@ def cmd_capture(args) -> int:
             project=finding.get("project") or args.project,
             fleet=finding.get("fleet") or args.fleet,
             force=args.force,
+            source_url=finding.get("source_url") or args.source_url,
+            source_type=finding.get("source_type") or args.source_type,
         )
     except ScopeError as exc:
         print(str(exc), file=sys.stderr)
@@ -1272,8 +1281,16 @@ def main(argv=None) -> int:
     cap_scope.add_argument("--project", help="File under projects/<name>/")
     cap_scope.add_argument("--fleet", help="File under <fleet>/shared/")
     p_capture.add_argument(
+        "--source-url", metavar="URL",
+        help="Provenance of ingested content (SCHEMA.md optional field)",
+    )
+    p_capture.add_argument(
+        "--source-type", choices=SOURCE_TYPES,
+        help="How the content arrived (SCHEMA.md optional field)",
+    )
+    p_capture.add_argument(
         "--stdin", action="store_true",
-        help="Read the finding as JSON from stdin (fields: type, title, body, tags, owner, project, fleet)",
+        help="Read the finding as JSON from stdin (fields: type, title, body, tags, owner, project, fleet, source_url, source_type)",
     )
     p_capture.add_argument(
         "--update", metavar="PATH",

@@ -115,10 +115,17 @@ def compose_note(
     body: str = "",
     tags: list[str] | None = None,
     maturity: str | None = None,
+    source_url: str | None = None,
+    source_type: str | None = None,
 ) -> str:
     """Assemble a schema-valid note. Hand-assembled rather than yaml.dump —
     pins key order, flow-style tags, unquoted ISO dates so the note stays
-    human-shaped; yaml_scalar covers the escaping that trades away."""
+    human-shaped; yaml_scalar covers the escaping that trades away.
+
+    ``source_url``/``source_type`` are SCHEMA.md optional fields and are
+    omitted entirely when unset — an empty ``source_url:`` would make every
+    unsourced note read as sourced-but-unknown.
+    """
     today = date.today().isoformat()
     lines = [
         "---",
@@ -131,6 +138,10 @@ def compose_note(
     lines.append(f"owner: {yaml_scalar(owner)}")
     if tags:
         lines.append(f"tags: {json.dumps([t.strip() for t in tags])}")
+    if source_url:
+        lines.append(f"source_url: {yaml_scalar(source_url)}")
+    if source_type:
+        lines.append(f"source_type: {yaml_scalar(source_type)}")
     lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
     body = body.strip()
     return "\n".join(lines) + f"\n\n# {title}\n" + (f"\n{body}\n" if body else "")
@@ -228,12 +239,19 @@ def capture(
     project: str | None = None,
     fleet: str | None = None,
     force: bool = False,
+    source_url: str | None = None,
+    source_type: str | None = None,
 ) -> WriteResult:
     """The guarded write path. Validate → dedup (routes) → write → index.
 
     Always returns a WriteResult (action == "rejected" carries the
     validation Findings; nothing written). Raises ScopeError for scope
     refusals (see resolve_target_dir).
+
+    Provenance rides as frontmatter, not as a body line. ``source_url`` is
+    carried, not yet *matched on*: making it a third dedup signal alongside
+    the name set and the content fingerprint is #55's step, and a half-built
+    signal that dedups sometimes is worse than one that never claims to.
     """
     if note_type not in TYPES:
         # Guard before any type-keyed access — validate_note owns the E002
@@ -252,6 +270,7 @@ def capture(
     text = compose_note(
         note_type=note_type, title=title, owner=owner, body=body,
         tags=tags, maturity=MATURITY_VALUES[0],
+        source_url=source_url, source_type=source_type,
     )
     fm, note_body, err = parse_note(text)
     findings = validate_note(
