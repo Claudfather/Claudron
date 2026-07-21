@@ -113,8 +113,18 @@ def _shadowed_removed_vars(resolved: Path | None) -> list[str]:
         raw = os.environ.get(var)
         if not raw:
             continue
-        if resolved is not None and Path(raw).expanduser().resolve() == resolved:
-            continue  # points at the vault we used anyway
+        try:
+            if resolved is not None and Path(raw).expanduser().resolve() == resolved:
+                continue  # points at the vault we used anyway
+        except (OSError, ValueError, RuntimeError):
+            # A value we cannot even parse into a path certainly does not name
+            # the vault we used, so it shadows. Never propagate: this helper is
+            # reached from the hook path, and an exception here would turn a
+            # stale dotfile into a broken session start — a louder version of
+            # the silent failure the hint exists to prevent. (`~nouser/x`
+            # raises RuntimeError; a relative value under a deleted CWD raises
+            # OSError.)
+            pass
         live.append(var)
     return live
 

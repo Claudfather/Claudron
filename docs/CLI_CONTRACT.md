@@ -103,10 +103,17 @@ exits **3** with the no-vault message on stderr.
 lower-precedence alias of `CLAUDRON_VAULT_PATH` through 0.2.x. It was removed
 rather than deprecated: with both set and disagreeing, engine and consumers
 resolved *different vaults*, and an alias that is read at all keeps that hazard
-alive. There is no warning phase. The single trace: when no vault resolves
-**and** `CLAUDRON_VAULT` is set in the environment, the exit-3 message appends
-one stderr line naming the removal and the canonical name — so a stale dotfile
-is explained at the moment it causes confusion, at no ongoing cost.
+alive. There is no warning phase.
+
+The one trace it leaves, on **stderr** only: when `CLAUDRON_VAULT` is set and
+the engine resolved something *else*, one line names the removal and the
+canonical name. That covers both confusing outcomes — no vault resolving
+(appended to the exit-3 message) **and** a *successful* resolution of a
+different vault than 0.2.x would have chosen. The second is the damaging one:
+it exits 0, so an unwarned caller writes notes into a vault they did not
+intend. Hook invocations warn too, on stderr, which is never injected into a
+session. A `CLAUDRON_VAULT` that agrees with the vault actually resolved is
+not confusing and stays silent, so this never becomes ambient noise.
 
 **Consumer obligations.**
 

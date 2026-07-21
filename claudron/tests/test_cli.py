@@ -112,6 +112,47 @@ class TestVaultResolution:
         assert rc == 0
         assert "no longer read" not in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        "bad_value",
+        ["~nosuchuser42/vault", "relative/not/absolute", "~" * 300],
+        ids=["unexpandable-user", "relative", "absurd-tilde"],
+    )
+    def test_unparseable_removed_var_never_raises(
+        self, vault_dir: Path, monkeypatch, capsys, bad_value: str
+    ):
+        """A value we cannot parse into a path must warn, never explode.
+
+        The comparison behind the softener runs on the hook path, *outside*
+        `run_hook`'s fail-open guard. `~nouser/x` raises RuntimeError from
+        `expanduser()`, which turned a stale dotfile into a broken session
+        start — a louder version of the silent failure the hint exists to
+        prevent. Unparseable cannot name the resolved vault, so it shadows.
+        """
+        monkeypatch.chdir(vault_dir)  # a vault DOES resolve — the risky branch
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", bad_value)
+        rc = main(["status", "--json"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert json.loads(captured.out)["data"]["root"] == str(vault_dir)
+        assert "no longer read" in captured.err
+
+    def test_hook_stays_fail_open_on_unparseable_removed_var(
+        self, vault_dir: Path, monkeypatch, capsys
+    ):
+        """The same input on the hook path: exit 0, clean stdout, no traceback."""
+        import io
+
+        monkeypatch.chdir(vault_dir)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", "~nosuchuser42/vault")
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        rc = main(["hook", "session-start"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "Traceback" not in captured.err
+        assert "RuntimeError" not in captured.err
+
     def test_hook_path_warns_and_stays_fail_open(
         self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
     ):
