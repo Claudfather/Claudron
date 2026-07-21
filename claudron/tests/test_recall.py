@@ -363,7 +363,10 @@ class TestBriefBudgetEdges:
         block is the always-loaded layer — recall injects it unconditionally,
         so past W105's ceiling (160) it can carry the brief over on its own,
         and the engine will not silently drop the layer a vault declared
-        always-loaded. Enforcing the conventions budget is `validate`'s job.
+        always-loaded. Nothing hard-enforces the cap: W105 warns in *both*
+        validation tiers, so `validate --strict` surfaces an over-budget
+        `CONVENTIONS.md` and still exits 0 — a consumer needing a hard ceiling
+        gates on the warning code itself.
 
         Two halves, both contract: the overflow is bounded to that one block,
         and everything below it still degrades correctly — zero notes, no hint,
