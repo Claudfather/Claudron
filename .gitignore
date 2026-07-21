@@ -12,3 +12,6 @@ build/
 .env
 venv/
 .venv/
+
+# Pre-existing local scratch — a stale fork of CLAUDE.md, not repo guidance
+AGENTS.md

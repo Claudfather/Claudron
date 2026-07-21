@@ -178,30 +178,45 @@ def render_brief(data: dict) -> str:
             sections.append(block)
             spent += count_tokens(block)
 
-    lines = []
     header = "## Recalled context" + (
         f" — {data['project']}" if data["project"] else ""
     )
     spent += count_tokens(header)
-    # Reserve the hint's cost up front rather than appending it afterwards:
-    # a saturated brief is exactly the session where the agent most needs to
-    # know it can ask for more, and append-and-drop would silence the channel
-    # on precisely those. Costs at most one note.
-    spent += count_tokens(BRIEF_DISCOVERY_HINT)
-    for note in data["notes"]:
-        qualifier = note["type"] or "note"
-        if note["maturity"]:
-            qualifier += f", {note['maturity']}"
-        line = f"- **{note['title']}** ({qualifier}) — {note['summary']} `{note['path']}`"
-        cost = count_tokens(line)
-        if spent + cost > BRIEF_TOKEN_BUDGET:
-            break
-        lines.append(line)
-        spent += cost
+
+    def _fit(reserve_hint: bool) -> list[str]:
+        """Notes that fit, optionally holding back room for the hint."""
+        budget = spent + (count_tokens(BRIEF_DISCOVERY_HINT) if reserve_hint else 0)
+        kept = []
+        for note in data["notes"]:
+            qualifier = note["type"] or "note"
+            if note["maturity"]:
+                qualifier += f", {note['maturity']}"
+            line = (
+                f"- **{note['title']}** ({qualifier}) — "
+                f"{note['summary']} `{note['path']}`"
+            )
+            cost = count_tokens(line)
+            if budget + cost > BRIEF_TOKEN_BUDGET:
+                break
+            kept.append(line)
+            budget += cost
+        return kept
+
+    # Reserve the hint's cost up front rather than appending it afterwards: a
+    # saturated brief is exactly the session where the agent most needs to know
+    # it can ask for more, and append-and-drop silences the channel on
+    # precisely those. But the reservation must never cost a *whole* section —
+    # if holding room for the hint leaves no note at all, the notes win and the
+    # hint is dropped. Recalled context is the payload; the hint is the pointer.
+    lines = _fit(reserve_hint=True)
+    with_hint = bool(lines)
+    if not lines:
+        lines = _fit(reserve_hint=False)
 
     if lines:
-        sections.append(
-            "\n\n".join((header, "\n".join(lines), BRIEF_DISCOVERY_HINT))
-        )
+        parts = [header, "\n".join(lines)]
+        if with_hint:
+            parts.append(BRIEF_DISCOVERY_HINT)
+        sections.append("\n\n".join(parts))
 
     return "\n\n".join(sections)

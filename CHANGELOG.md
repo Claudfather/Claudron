@@ -9,9 +9,13 @@
   engine and its consumers resolved *different vaults*, so it is cut rather
   than deprecated — an alias that is read at all keeps that hazard alive.
   There is no warning phase. **Migration:** rename the variable. The single
-  softener: when no vault resolves *and* `CLAUDRON_VAULT` is set, the exit-3
-  message appends one stderr line naming the removal and the canonical name.
-  (boundary program C1, fork F3)
+  softener, on stderr: whenever `CLAUDRON_VAULT` is set and the engine resolved
+  something *else* — including a successful resolution and the session hooks —
+  one line names the removal and the canonical name. The damaging case is not
+  the failure but the silent success: 0.2.x would have used the vault the dead
+  name points at, so an unwarned 0.3.0 would write notes into a different one.
+  A dead name that agrees with what resolved stays silent. (boundary program
+  C1, fork F3)
 
 ### Added
 - **`docs/CLI_CONTRACT.md` grew the contracts it was missing.** §Environment is

@@ -43,10 +43,13 @@ Build the MCP server **only when one of these is concretely true** — not "some
 
 ## Monitor
 
-**The monitor is a machine check, not a human habit** (amended 2026-07-20).
-Claudlobby's doctor validates the door that actually exists — `claudron`
-resolvable, a vault detected, and the `claudron_compat` floor met — and its
-validator no longer asserts an MCP config the engine deliberately never shipped.
+**The monitor becomes a machine check, not a human habit** (amended
+2026-07-20). The target state: Claudlobby's doctor validates the door that
+actually exists — `claudron` resolvable, a vault detected, the
+`claudron_compat` floor met — and its validator stops asserting an MCP config
+the engine deliberately never shipped. **Not yet built.** That is boundary
+phase L1's deliverable; until it lands the human check stands, and
+`validator.py:403–413` still carries the phantom-MCP warning described below.
 Trigger (1) fires when a fleet policy is filed that those checks cannot express;
 trigger (2) fires when such a consumer is named. Claudron's side of the probe is
 `status --json` → `engine_version` (docs/CLI_CONTRACT.md §Capability probe); the
@@ -77,10 +80,10 @@ layer promises. Trigger 1 is narrowed to exactly that case above.
 Two related corrections from the same pass, for the record:
 
 - **§6's pain was a validator bug, not a missing transport.** Claudlobby's
-  `validator.py` warned vault-path ⟹ MCP config — asserting a sibling's
-  unshipped surface (register rule R6). That warning is deleted and inverted to
-  check the CLI door; it was a recurring reason MCP kept being re-proposed, and
-  it was never evidence of demand.
+  `validator.py:403–413` warns vault-path ⟹ MCP config — asserting a sibling's
+  unshipped surface (register rule R6). It is **still live**; deleting it and
+  inverting the check to the CLI door is phase L1's work. It was a recurring
+  reason MCP kept being re-proposed, and it was never evidence of demand.
 - **The honest residual named in "what C gives up" is now mitigated on both
   halves.** The vendor-neutral door has its front door: `docs/INTEGRATION.md`
   exists (it was cited here as a mitigation before it was written). And for any

@@ -38,13 +38,39 @@ def doc_table(doc: str, marker: str) -> list[list[str]]:
 
 
 def section(doc: str, header: str) -> str:
-    """Body of a ``## <header>`` section, up to the next ``## ``."""
-    return (REPO_ROOT / doc).read_text().split(f"## {header}", 1)[1].split("\n## ", 1)[0]
+    """Body of the ``## <header>`` section, up to the next ``## `` heading.
+
+    Anchored on purpose. A plain ``split("## " + header)`` matches a ``###``
+    subsection, a prose mention, or a mere prefix (``"Env"`` inside
+    ``"Environment"``) and silently returns the wrong body — a parity gate
+    reading the wrong section passes vacuously, which is worse than no gate.
+    Raises on zero or multiple matches rather than guessing.
+    """
+    text = (REPO_ROOT / doc).read_text()
+    starts = [m.end() for m in re.finditer(rf"^## {re.escape(header)}\s*$", text, re.M)]
+    if len(starts) != 1:
+        raise AssertionError(
+            f"{doc}: expected exactly one '## {header}' heading, found {len(starts)}"
+        )
+    body = text[starts[0] :]
+    end = re.search(r"^## ", body, re.M)
+    return body[: end.start()] if end else body
 
 
 def fenced_block(doc: str, header: str) -> str:
-    """The first fenced code block inside a ``## <header>`` section."""
-    return section(doc, header).split("```", 2)[1]
+    """The first fenced code block inside a ``## <header>`` section.
+
+    Reads from the section start rather than from :func:`section`'s output:
+    a ``## `` line *inside* the fence would otherwise truncate the block and
+    hide content from the gate.
+    """
+    text = (REPO_ROOT / doc).read_text()
+    starts = [m.end() for m in re.finditer(rf"^## {re.escape(header)}\s*$", text, re.M)]
+    if len(starts) != 1:
+        raise AssertionError(
+            f"{doc}: expected exactly one '## {header}' heading, found {len(starts)}"
+        )
+    return text[starts[0] :].split("```", 2)[1]
 
 
 def code_values(cell: str) -> tuple[str, ...]:

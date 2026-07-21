@@ -215,14 +215,31 @@ class TestTreeWalkDeprecation:
         assert rc == 0
         assert "deprecated" in capsys.readouterr().err
 
+    def test_plugged_root_is_not_nagged(
+        self, claudlobby_root: Path, vault_for_plug: Path, monkeypatch, capsys
+    ):
+        """Once `.claudron` exists the root has *declared* itself (§Bridge
+        file) and the walk merely locates that declaration — which is not the
+        consumer-sniff R5 forbids. Warning anyway would nag every `config` and
+        `migrate` on a correctly plugged install, i.e. the normal workflow."""
+        monkeypatch.chdir(claudlobby_root)
+        assert main(["plug", str(vault_for_plug),
+                     "--claudlobby", str(claudlobby_root)]) == 0
+        capsys.readouterr()
+        rc = main(["config"])
+        assert rc == 0
+        assert "deprecated" not in capsys.readouterr().err
+
     def test_no_warning_when_walk_finds_nothing(
         self, tmp_path: Path, monkeypatch, capsys
     ):
-        """A failed walk emits the not-found error, not a deprecation for a
-        path that was never taken."""
+        """A walk that resolves nothing must not emit a deprecation for a path
+        it never took. (`config` reports '(not found)' and exits 0.)"""
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
         rc = main(["config"])
         assert rc == 0
-        assert "deprecated" not in capsys.readouterr().err
+        captured = capsys.readouterr()
+        assert "deprecated" not in captured.err
+        assert "(not found)" in captured.out

@@ -100,20 +100,51 @@ def _detect_vault(args) -> Vault | None:
     return detect(Path(vault_hint)) if vault_hint else detect()
 
 
-def _removed_var_hint() -> str:
-    """One stderr line per removed name that is still set — the F3 softener.
+def _shadowed_removed_vars(resolved: Path | None) -> list[str]:
+    """Removed names that are set and point somewhere other than *resolved*.
+
+    These are exactly the environments the hard cut silently changes. A name
+    that is set but agrees with what actually resolved is not confusing and
+    earns no line; one that disagrees means the caller believes they addressed
+    a vault the engine ignored.
+    """
+    live = []
+    for var in REMOVED_VAULT_ENV_VARS:
+        raw = os.environ.get(var)
+        if not raw:
+            continue
+        if resolved is not None and Path(raw).expanduser().resolve() == resolved:
+            continue  # points at the vault we used anyway
+        live.append(var)
+    return live
+
+
+def _removed_var_hint(resolved: Path | None = None) -> str:
+    """The F3 softener: one line per removed name the engine is ignoring.
 
     The hard cut has no warn phase and no deprecation machinery; this is its
-    only trace, and it costs nothing until someone hits the exact confusion
-    it explains (a dotfile still exporting the dead name, no vault resolving).
+    only trace. It must fire on *every* path where the removal changes the
+    answer, not just the no-vault one — resolving a **different** vault than
+    0.2.x would have is the damaging case, and it exits 0 with a note written
+    somewhere the caller did not intend.
     """
     canonical = VAULT_ENV_VARS[0]
     return "".join(
         f"\nnote: {var} is no longer read (removed in {_ALIAS_REMOVED_IN}) "
         f"— set {canonical}"
-        for var in REMOVED_VAULT_ENV_VARS
-        if os.environ.get(var)
+        for var in _shadowed_removed_vars(resolved)
     )
+
+
+def _warn_shadowed_vault(vault: Vault | None) -> None:
+    """Emit the softener on stderr for a *successful* resolution.
+
+    stderr only, so hook fail-open and §Channels both hold: a hook's stdout is
+    injected verbatim, its stderr is not.
+    """
+    hint = _removed_var_hint(vault.root if vault else None)
+    if hint:
+        print(hint.lstrip("\n"), file=sys.stderr)
 
 
 def _resolve_vault(args) -> Vault:
@@ -124,10 +155,11 @@ def _resolve_vault(args) -> Vault:
             "no vault found\n"
             "  create one:  claudron init <path>\n"
             "  or specify:  claudron --vault <path> <command>"
-            + _removed_var_hint(),
+            + _removed_var_hint(None),
             file=sys.stderr,
         )
         sys.exit(3)  # environment error (docs/CLI_CONTRACT.md; was 2 pre-0.2.0)
+    _warn_shadowed_vault(vault)
     return vault
 
 
@@ -159,13 +191,21 @@ def _resolve_claudlobby_root(args) -> Path | None:
     """
     hint = _claudlobby_hint(args)
     cl_root = _detect_claudlobby_root(hint)
-    if cl_root is not None and hint is None:
-        print(
-            f"deprecated: resolved {cl_root} by walking for a "
-            "'library/' + 'lib/' tree shape — pass --claudlobby <path> "
-            "instead (the tree-shape walk is scheduled for removal)",
-            file=sys.stderr,
-        )
+    if cl_root is None or hint is not None:
+        return cl_root
+    if (cl_root / ".claudron").is_file():
+        # The root carries the declared artifact (§Bridge file) — the walk only
+        # located a declaration that already exists, which is not the sniff R5
+        # forbids. Warning here would nag every `config`/`migrate` on a
+        # correctly plugged install, which is the normal workflow.
+        return cl_root
+    print(
+        f"deprecated: resolved {cl_root} by walking for a "
+        "'library/' + 'lib/' tree shape — pass --claudlobby <path>, or run "
+        "'claudron plug' to write a .claudron bridge there "
+        "(the tree-shape walk is scheduled for removal)",
+        file=sys.stderr,
+    )
     return cl_root
 
 
@@ -752,8 +792,16 @@ def cmd_sync(args) -> int:
 
 def cmd_hook(args) -> int:
     """Hook entry points: lenient vault resolution (None passes through —
-    fail-open), then the guarded dispatch (run_hook owns the contract)."""
-    return run_hook(args.event, _detect_vault(args))
+    fail-open), then the guarded dispatch (run_hook owns the contract).
+
+    The removed-var softener fires here too, on stderr. A workstation whose
+    dotfile still exports the dead name otherwise loses every session brief
+    with no visible trace — the hook's only record is a line in a log nobody
+    reads. stderr is not injected into the session, so fail-open holds.
+    """
+    vault = _detect_vault(args)
+    _warn_shadowed_vault(vault)
+    return run_hook(args.event, vault)
 
 
 def cmd_hooks_install(args) -> int:

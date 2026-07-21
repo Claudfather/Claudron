@@ -68,12 +68,23 @@ exit code, never on message text** — exit codes are contract
 | **Engine ready** | Exit **0**, one JSON envelope on stdout with `ok: true`. | `data.engine_version` is the installed engine's version and `data.root` is the resolved vault. Guard any feature you need on the version. |
 
 ```bash
-# A complete probe, in four lines of shell
-if out=$(claudron status --json 2>/dev/null); then
-  version=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["engine_version"])')
-  root=$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin)["data"]["root"])')
-fi
+# A probe that distinguishes all three states
+out=$(claudron status --json 2>/dev/null); rc=$?
+case $rc in
+  0)   # engine ready — `engine_version` is absent before 0.3.0, so default it
+       read -r version root <<<"$(printf '%s' "$out" | python3 -c '
+import json,sys
+d = json.load(sys.stdin)["data"]
+print(d.get("engine_version", "0.0.0"), d["root"])')" ;;
+  3)   echo "claudron installed, no vault resolvable" >&2 ;;
+  127) echo "no claudron on PATH" >&2 ;;
+esac
 ```
+
+Two details that bite: `engine_version` **does not exist before 0.3.0**, so
+index it defensively or a pre-0.3.0 engine crashes your probe instead of
+reporting its version; and the `2>/dev/null` above discards stderr, which is
+where the engine explains an exit 3 — drop the redirect while debugging.
 
 `engine_version` and the rest of the stable `status --json` field set are
 documented in [CLI_CONTRACT.md §Capability probe](CLI_CONTRACT.md#capability-probe).
@@ -146,8 +157,9 @@ claudron lookup --json "connection pooling"
 
 - **`recall`** emits markdown on stdout, budget-capped, intended to be injected
   verbatim into an agent's context. It **abstains**: a weak match injects
-  nothing rather than padding the brief with noise. An empty vault produces
-  empty stdout.
+  nothing rather than padding the brief with noise. A vault with no matching
+  notes still emits its `CONVENTIONS.md` block if it has one — treat "empty
+  stdout" as the only reliable no-content signal, not "no output at all".
 - **`lookup --json`** emits the standard envelope with `data.results`. Use this
   when you need scores, paths, or your own ranking.
 - **Never parse human output.** Every command's human rendering is free to

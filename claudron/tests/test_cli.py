@@ -81,6 +81,57 @@ class TestVaultResolution:
         assert "CLAUDRON_VAULT_PATH" in captured.err
         assert captured.out == ""  # the hint is a diagnostic (§Channels)
 
+    def test_hint_fires_when_a_different_vault_resolves(
+        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
+    ):
+        """The damaging case, and the one exit-3 never covers: the dead var
+        points at vault A, walk-up finds vault B, and 0.2.x would have used A.
+        Exit 0 with a note landing somewhere the caller did not intend is
+        worse than failing — so the softener fires here too."""
+        other = tmp_path / "elsewhere"
+        (other / "_shared" / "knowledge").mkdir(parents=True)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(other))
+        monkeypatch.chdir(vault_dir)  # walk-up resolves vault_dir, not `other`
+        rc = main(["status", "--json"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert json.loads(captured.out)["data"]["root"] == str(vault_dir)
+        assert "no longer read" in captured.err  # and it says so
+        assert "no longer read" not in captured.out  # §Channels
+
+    def test_no_hint_when_removed_alias_agrees_with_resolution(
+        self, vault_dir: Path, monkeypatch, capsys
+    ):
+        """Set but pointing at the vault we used anyway — nothing is confusing,
+        so nothing is said. Keeps the softener from becoming ambient noise."""
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(vault_dir))
+        monkeypatch.chdir(vault_dir)
+        rc = main(["status", "--json"])
+        assert rc == 0
+        assert "no longer read" not in capsys.readouterr().err
+
+    def test_hook_path_warns_and_stays_fail_open(
+        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
+    ):
+        """A dotfile still exporting the dead name loses every session brief.
+        The hook must still exit 0 with clean stdout (fail-open + §Channels),
+        but the reason belongs on stderr — not only in a log nobody reads."""
+        import io
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(vault_dir))
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        rc = main(["hook", "session-start"])
+        assert rc == 0  # fail-open, always
+        captured = capsys.readouterr()
+        assert captured.out == ""  # injected verbatim — must stay clean
+        assert "no longer read" in captured.err
+
     def test_no_hint_when_removed_alias_unset(
         self, tmp_path: Path, monkeypatch, capsys, no_vault_env
     ):
@@ -386,7 +437,12 @@ def _env_table() -> list[list[str]]:
 
 
 class _RecordingEnv(dict):
-    """An `os.environ` stand-in that remembers which names were looked up."""
+    """An `os.environ` stand-in that remembers which names were looked up.
+
+    All three access forms are recorded, not just `.get` — a resolver reading
+    `os.environ["X"]` or testing `"X" in os.environ` would otherwise be
+    invisible to the gate (verified: it was).
+    """
 
     def __init__(self, base):
         super().__init__(base)
@@ -395,6 +451,14 @@ class _RecordingEnv(dict):
     def get(self, key, default=None):
         self.queried.append(key)
         return super().get(key, default)
+
+    def __getitem__(self, key):
+        self.queried.append(key)
+        return super().__getitem__(key)
+
+    def __contains__(self, key):
+        self.queried.append(key)
+        return super().__contains__(key)
 
     def claudron_lookups(self) -> list[str]:
         """Queried `CLAUDRON_*` names, in order, de-duplicated."""
@@ -426,8 +490,23 @@ class TestEnvironmentDocParity:
         )
         assert documented == REMOVED_VAULT_ENV_VARS
 
+    def test_removal_version_matches_the_table(self):
+        """The removal version appears in four places (the constant, the table
+        cell, the migration prose, the CHANGELOG). Pin the two that a machine
+        consumer reads: the runtime hint's version and the table's."""
+        import re
+
+        from claudron.cli import _ALIAS_REMOVED_IN
+
+        cells = [row[2] for row in _env_table() if row[2].startswith("removed")]
+        assert cells, "no removed row in the table"
+        for cell in cells:
+            found = re.search(r"(\d+\.\d+\.\d+)", cell)
+            assert found, f"removed row states no version: {cell}"
+            assert found.group(1) == _ALIAS_REMOVED_IN
+
     def test_resolver_reads_exactly_the_contract_env_names(
-        self, tmp_path: Path, monkeypatch
+        self, tmp_path: Path, monkeypatch, no_vault_env
     ):
         """The hard cut, pinned by what the resolver actually *reads*.
 

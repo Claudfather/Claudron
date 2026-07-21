@@ -9,6 +9,7 @@ from textwrap import dedent
 import pytest
 
 from claudron.cli import main
+from claudron.schema import count_tokens
 from claudron.session import BRIEF_TOKEN_BUDGET, derive_project, recall
 
 
@@ -277,3 +278,100 @@ class TestProjectDerivation:
         rc = main(["--vault", str(vault_with_projects), "recall"])
         assert rc == 0
         assert "Neon Connection Pooling Gotchas" in capsys.readouterr().out
+
+
+class TestBriefBudgetEdges:
+    """`render_brief`'s hint reservation, unit-tested at the boundary.
+
+    Reserving room for the hint before laying out notes is right — a saturated
+    brief is where the agent most needs to know it can ask for more. But the
+    reservation must never cost a whole *section*: if holding room for the hint
+    is what makes the last note not fit, the notes win. Recalled context is the
+    payload; the hint is only the pointer.
+
+    Driven through `render_brief` directly rather than through a sized vault —
+    the interesting inputs are a few tokens wide, and deriving them from note
+    bodies and CONVENTIONS.md makes the test about the fixture, not the rule.
+    """
+
+    @staticmethod
+    def _data(conventions_tokens: int, notes: int = 3):
+        return {
+            "project": None,
+            "query": "q",
+            "conventions": "# C\n\n" + " ".join(["word"] * conventions_tokens),
+            "notes": [
+                {"title": f"N{i}", "type": "knowledge", "maturity": None,
+                 "summary": "s", "path": f"p{i}.md"}
+                for i in range(notes)
+            ],
+        }
+
+    def test_notes_win_when_the_reservation_would_empty_the_section(self):
+        """The dead zone this guards: conventions large enough that exactly one
+        note fits *without* the hint and none fit *with* it. Reserving must not
+        turn that into no recalled context at all."""
+        from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
+
+        hint_cost = count_tokens(BRIEF_DISCOVERY_HINT)
+        one_note = count_tokens(
+            "- **N0** (knowledge) — s `p0.md`"
+        )
+        header = count_tokens("## Recalled context")
+        # Leave room for the header + exactly one note, but not the hint.
+        conv = BRIEF_TOKEN_BUDGET - header - one_note - 3 - (hint_cost // 2)
+        out = render_brief(self._data(conv))
+
+        assert "Recalled context" in out, "the section must not vanish"
+        assert "N0" in out, "the note that fits must render"
+        assert BRIEF_DISCOVERY_HINT not in out, "the hint yields, not the notes"
+        assert len(out.split()) <= BRIEF_TOKEN_BUDGET
+
+    def test_hint_present_when_there_is_room(self):
+        from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
+
+        out = render_brief(self._data(20))
+        assert "Recalled context" in out
+        assert BRIEF_DISCOVERY_HINT in out
+        assert len(out.split()) <= BRIEF_TOKEN_BUDGET
+
+    def test_hint_never_renders_without_notes(self):
+        """A lone hint is context spend with no recall behind it."""
+        from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
+
+        data = self._data(20, notes=0)
+        out = render_brief(data)
+        assert BRIEF_DISCOVERY_HINT not in out
+
+    @pytest.mark.parametrize("conv", [0, 20, 400, 800, 890])
+    def test_budget_holds_across_the_reservation_branches(self, conv: int):
+        """Whichever branch the reservation takes, the cap is never exceeded.
+
+        Bounded to conventions within their own budget regime — see
+        `test_oversized_conventions_still_overflow` for what happens past it.
+        """
+        from claudron.session import render_brief
+
+        out = render_brief(self._data(conv, notes=10))
+        assert len(out.split()) <= BRIEF_TOKEN_BUDGET, conv
+
+    def test_oversized_conventions_still_overflow(self):
+        """Documents a **pre-existing** gap, unchanged by the hint work.
+
+        `BRIEF_TOKEN_BUDGET` is described as a whole-brief hard cap, but the
+        conventions block is the always-loaded layer and is appended without a
+        check — so a `CONVENTIONS.md` past its own `CONVENTIONS_BUDGET` (160,
+        enforced only as validation warning W105) blows the brief budget on its
+        own. The notes layout below it still degrades correctly: zero notes and
+        no hint, rather than piling on.
+
+        Pinned so the behavior is recorded rather than rediscovered. Changing
+        it is a product decision about the always-loaded layer, not a fix to
+        make here.
+        """
+        from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
+
+        out = render_brief(self._data(BRIEF_TOKEN_BUDGET + 300, notes=10))
+        assert len(out.split()) > BRIEF_TOKEN_BUDGET  # the gap, stated
+        assert "Recalled context" not in out  # but notes degrade to nothing
+        assert BRIEF_DISCOVERY_HINT not in out
