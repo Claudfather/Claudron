@@ -25,6 +25,15 @@ from .vault import Vault
 # real work for context, so it degrades by dropping notes, never growing.
 BRIEF_TOKEN_BUDGET = 900
 
+# In-context discovery (boundary spec §10.5.2). Parking MCP gave up
+# in-context tool announcement; for any host running the engine's hooks the
+# recall brief *is* that channel — it already injects vault context every
+# session, so one line closes the loop. Front-end-neutral by design: it
+# names the engine's own doors, not any consumer's verbs.
+BRIEF_DISCOVERY_HINT = (
+    "query more: `claudron lookup <terms>` · capture: `claudron capture --stdin`"
+)
+
 # The abstention floor: a shared/fleet match below this injects nothing
 # (02-session-loop.md deliverable 1). Session policy, deliberately NOT
 # knowledge.TIER_A_THRESHOLD — that is a tier-escalation trigger that
@@ -174,6 +183,11 @@ def render_brief(data: dict) -> str:
         f" — {data['project']}" if data["project"] else ""
     )
     spent += count_tokens(header)
+    # Reserve the hint's cost up front rather than appending it afterwards:
+    # a saturated brief is exactly the session where the agent most needs to
+    # know it can ask for more, and append-and-drop would silence the channel
+    # on precisely those. Costs at most one note.
+    spent += count_tokens(BRIEF_DISCOVERY_HINT)
     for note in data["notes"]:
         qualifier = note["type"] or "note"
         if note["maturity"]:
@@ -186,6 +200,8 @@ def render_brief(data: dict) -> str:
         spent += cost
 
     if lines:
-        sections.append(header + "\n\n" + "\n".join(lines))
+        sections.append(
+            header + "\n\n" + "\n".join(lines) + "\n\n" + BRIEF_DISCOVERY_HINT
+        )
 
     return "\n\n".join(sections)

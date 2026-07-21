@@ -21,10 +21,11 @@ class TestInit:
 
 
 class TestVaultResolution:
-    """The CLI resolution chain (CLI_CONTRACT.md): --vault → $CLAUDRON_VAULT_PATH
-    → $CLAUDRON_VAULT → walk-up. PR-H (Juncture B) fixed the CLI reading only
-    CLAUDRON_VAULT — the var Claudlobby does NOT emit — silently breaking the
-    fleet's bare-hook consumption path."""
+    """The CLI resolution chain (docs/CLI_CONTRACT.md §Environment):
+    --vault → $CLAUDRON_VAULT_PATH → walk-up. `CLAUDRON_VAULT` was removed
+    in 0.3.0 (boundary program F3, hard cut): with both set and disagreeing
+    the two names resolved *different vaults* across the ecosystem, so the
+    alias is not read at all — only named back on the failure path."""
 
     def test_claudron_vault_path_resolves_from_outside(
         self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
@@ -37,12 +38,62 @@ class TestVaultResolution:
         env = json.loads(capsys.readouterr().out)
         assert env["data"]["root"] == str(vault_dir)
 
-    def test_claudron_vault_path_wins_over_claudron_vault(
+    def test_removed_alias_never_read_when_canonical_set(
         self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
     ):
+        """Both set and disagreeing: the canonical var wins outright. The
+        alias pointing at a *valid* second vault must still lose."""
+        other = tmp_path / "other-vault"
+        (other / "_shared" / "knowledge").mkdir(parents=True)
         monkeypatch.chdir(tmp_path)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(tmp_path))       # lower precedence
+        monkeypatch.setenv("CLAUDRON_VAULT", str(other))           # not read
         monkeypatch.setenv("CLAUDRON_VAULT_PATH", str(vault_dir))  # wins
+        rc = main(["status", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert env["data"]["root"] == str(vault_dir)
+
+    def test_removed_alias_alone_exits_3_with_hint(
+        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
+    ):
+        """The F3 softener: the dotfile straggler set the dead var and there
+        is no vault to walk up to — exit 3 names the removal and the new var."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(vault_dir))
+        with pytest.raises(SystemExit) as exc_info:
+            main(["status"])
+        assert exc_info.value.code == 3
+        captured = capsys.readouterr()
+        assert "CLAUDRON_VAULT is no longer read" in captured.err
+        assert "CLAUDRON_VAULT_PATH" in captured.err
+        assert captured.out == ""  # the hint is a diagnostic (§Channels)
+
+    def test_no_hint_when_removed_alias_unset(
+        self, tmp_path: Path, monkeypatch, capsys
+    ):
+        """No dead var set ⇒ the plain no-vault message, unchanged."""
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
+        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        with pytest.raises(SystemExit) as exc_info:
+            main(["status"])
+        assert exc_info.value.code == 3
+        err = capsys.readouterr().err
+        assert "no vault found" in err
+        assert "no longer read" not in err
+
+    def test_walk_up_unchanged_when_no_env(
+        self, vault_dir: Path, monkeypatch, capsys
+    ):
+        """Neither var set ⇒ walk-up from CWD, exactly as before."""
+        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.chdir(vault_dir)
         rc = main(["status", "--json"])
         assert rc == 0
         env = json.loads(capsys.readouterr().out)
@@ -64,6 +115,27 @@ class TestStatus:
         assert env["command"] == "status" and env["ok"] is True
         assert env["data"]["total_docs"] == 2
         assert "tiers" in env["data"]
+
+    def test_status_json_carries_engine_version(self, vault_dir: Path, capsys):
+        """The capability probe (docs/INTEGRATION.md step 0): consumers read
+        the engine's version off the envelope they already parse, rather than
+        each maintaining a private detection ladder."""
+        from claudron import __version__
+
+        rc = main(["--vault", str(vault_dir), "status", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert env["data"]["engine_version"] == __version__
+
+    def test_status_json_envelope_shape_unchanged(self, vault_dir: Path, capsys):
+        """engine_version is additive — the documented field set survives."""
+        rc = main(["--vault", str(vault_dir), "status", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        assert set(env) == {"ok", "command", "data", "warnings", "errors"}
+        for field in ("root", "total_docs", "total_stale", "tiers",
+                      "fleets", "projects", "engine_version"):
+            assert field in env["data"], field
 
     def test_vault_flag_survives_subparser(self, vault_dir: Path, capsys):
         """py3.14 argparse regression guard: subparser defaults must not
@@ -263,6 +335,36 @@ class TestChannelDiscipline:
         captured = capsys.readouterr()
         assert captured.out == ""
 
+    def test_removed_var_hint_never_on_stdout(
+        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
+    ):
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        monkeypatch.chdir(outside)
+        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
+        monkeypatch.setenv("CLAUDRON_VAULT", str(vault_dir))
+        with pytest.raises(SystemExit):
+            main(["lookup", "auth"])
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "no longer read" in captured.err
+
+    def test_tree_walk_deprecation_never_on_stdout(
+        self, tmp_path: Path, monkeypatch, capsys
+    ):
+        cl_root = tmp_path / "claudlobby"
+        (cl_root / "library").mkdir(parents=True)
+        (cl_root / "lib").mkdir()
+        vault = tmp_path / "vault"
+        (vault / "_shared" / "knowledge").mkdir(parents=True)
+        monkeypatch.chdir(cl_root)
+        rc = main(["plug", str(vault)])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "deprecated" in captured.err
+        assert "deprecated" not in captured.out
+        assert "plugged" in captured.out  # payload survives on stdout
+
     def test_detect_rejects_case_insensitive_marker(self, tmp_path: Path):
         """macOS regression guard: /Users/Shared must not make /Users a
         vault. A dir whose real name differs in case is not a marker."""
@@ -271,3 +373,90 @@ class TestChannelDiscipline:
         root = tmp_path / "not-a-vault"
         (root / "Shared").mkdir(parents=True)
         assert detect(root) is None
+
+
+def _contract_table(marker: str) -> list[list[str]]:
+    """Extract the doc-parity table following *marker* in docs/CLI_CONTRACT.md.
+
+    Same shape as test_schema.py's SCHEMA.md reader — the contract docs use
+    one parity mechanism, not two.
+    """
+    from pathlib import Path as _Path
+
+    repo_root = _Path(__file__).resolve().parents[2]
+    text = (repo_root / "docs" / "CLI_CONTRACT.md").read_text()
+    section = text.split(f"<!-- doc-parity: {marker} -->")[1]
+    rows: list[list[str]] = []
+    for line in section.splitlines():
+        line = line.strip()
+        if line.startswith("|"):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if not set(cells[0]) <= {"-", " "}:  # skip separator row
+                rows.append(cells)
+        elif rows:
+            break
+    return rows[1:]  # drop header
+
+
+class TestEnvironmentDocParity:
+    """CLI_CONTRACT §Environment is the ONE normative statement of the
+    vault-address contract (boundary spec §10.4 contract #4). The engine's
+    resolution ladder and the table cannot drift: consumers on three repos
+    build against the table, and the last time doc and code disagreed the
+    two names resolved different vaults (Claudron #30)."""
+
+    def test_env_rows_match_code_ladder_in_order(self):
+        from claudron.cli import VAULT_ENV_VARS
+
+        rows = _contract_table("ENVIRONMENT")
+        documented = tuple(
+            _first_code(row[1]) for row in rows if row[2] == "env"
+        )
+        assert documented == VAULT_ENV_VARS
+
+    def test_removed_rows_match_removal_constant(self):
+        from claudron.cli import REMOVED_VAULT_ENV_VARS
+
+        rows = _contract_table("ENVIRONMENT")
+        documented = tuple(
+            _first_code(row[1]) for row in rows if row[2].startswith("removed")
+        )
+        assert documented == REMOVED_VAULT_ENV_VARS
+
+    def test_removed_vars_are_not_read_by_the_resolver(self):
+        """The hard cut, pinned structurally: a removed name may appear in the
+        failure-path hint but never in the resolution chain."""
+        import inspect
+
+        from claudron.cli import REMOVED_VAULT_ENV_VARS, _detect_vault
+
+        source = inspect.getsource(_detect_vault)
+        for var in REMOVED_VAULT_ENV_VARS:
+            assert var not in source, var
+
+    def test_table_is_precedence_ordered(self):
+        """Rows 1..N are the live ladder in precedence order; removed rows
+        carry no rank."""
+        rows = _contract_table("ENVIRONMENT")
+        ranks = [row[0] for row in rows if row[0].isdigit()]
+        assert ranks == [str(i) for i in range(1, len(ranks) + 1)]
+        assert rows[0][2] == "flag"  # --vault always wins
+        assert rows[len(ranks) - 1][2] == "discovery"  # walk-up is last
+
+    def test_flags_section_defers_to_the_table(self):
+        """§Flags must point at §Environment, never restate the order (R3
+        applied at home — one normative statement, one parity gate)."""
+        from pathlib import Path as _Path
+
+        repo_root = _Path(__file__).resolve().parents[2]
+        text = (repo_root / "docs" / "CLI_CONTRACT.md").read_text()
+        flags = text.split("## Flags", 1)[1].split("\n## ", 1)[0]
+        assert "§Environment" in flags
+        assert "CLAUDRON_VAULT_PATH" not in flags
+
+
+def _first_code(cell: str) -> str:
+    """First backticked value in a table cell."""
+    import re
+
+    return re.findall(r"`([^`]+)`", cell)[0]

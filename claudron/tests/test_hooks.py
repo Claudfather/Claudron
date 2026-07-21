@@ -22,13 +22,14 @@ class TestSessionStartHook:
         out = capsys.readouterr().out
         assert "Supersede, never delete." in out
 
-    def test_fail_open_no_vault(self, tmp_path: Path, capsys, monkeypatch):
+    def test_fail_open_no_vault(
+        self, tmp_path: Path, capsys, monkeypatch, no_vault_env
+    ):
         """THE hook contract: a broken environment must never break a
         session start — exit 0, empty stdout, error logged."""
         nowhere = tmp_path / "not-a-vault"
         nowhere.mkdir()
         monkeypatch.chdir(nowhere)
-        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
         monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
         rc = main(["hook", "session-start"])
         assert rc == 0
@@ -99,9 +100,10 @@ class TestPreCompactHook:
         assert rc == 0
         assert capsys.readouterr().out == ""  # deferred, no block emitted
 
-    def test_fail_open_without_vault(self, tmp_path: Path, capsys, monkeypatch):
+    def test_fail_open_without_vault(
+        self, tmp_path: Path, capsys, monkeypatch, no_vault_env
+    ):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
         monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
         rc = main(["hook", "pre-compact"])
         assert rc == 0

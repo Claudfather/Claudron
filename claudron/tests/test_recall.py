@@ -106,6 +106,56 @@ class TestBrief:
         out = capsys.readouterr().out
         assert len(out.split()) <= BRIEF_TOKEN_BUDGET
 
+    def test_brief_carries_the_discovery_hint(self, vault_dir: Path, capsys):
+        """§10.5.2: for any host running the engine's hooks, the recall brief
+        IS the in-context discovery channel — the honest residual of parking
+        MCP. One line names both doors."""
+        from claudron.session import BRIEF_DISCOVERY_HINT
+
+        rc = main(["--vault", str(vault_dir), "recall", "--query", "auth"])
+        assert rc == 0
+        assert BRIEF_DISCOVERY_HINT in capsys.readouterr().out
+
+    def test_empty_brief_carries_no_hint(self, empty_vault: Path, capsys):
+        """An empty brief injects nothing at all — a lone hint line would be
+        context spend with no recall behind it."""
+        rc = main(["--vault", str(empty_vault), "recall"])
+        assert rc == 0
+        assert capsys.readouterr().out == ""
+
+    def test_hint_survives_a_full_budget(self, vault_dir: Path, capsys):
+        """The hint's cost is reserved before notes are laid out, so a mature
+        vault that saturates the budget still teaches the door (it costs at
+        most one note). Regression guard for append-and-drop."""
+        from claudron.session import BRIEF_DISCOVERY_HINT
+
+        base = vault_dir / "_shared" / "knowledge"
+        for i in range(40):
+            (base / f"widget-{i}.md").write_text(
+                dedent(f"""\
+                    ---
+                    title: Widget Pattern {i}
+                    type: knowledge
+                    status: current
+                    owner: t
+                    tags: [widget]
+                    created: 2026-06-01
+                    updated: 2026-06-01
+                    ---
+
+                    # Widget Pattern {i}
+
+                    A long body about widget pattern number {i} with plenty of
+                    words to make summaries meaningful and the brief heavy.
+                """)
+            )
+        rc = main(["--vault", str(vault_dir), "recall", "--query", "widget",
+                   "--limit", "40"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert BRIEF_DISCOVERY_HINT in out
+        assert len(out.split()) <= BRIEF_TOKEN_BUDGET  # counted, not exempt
+
     def test_default_recall_is_index_only(self, vault_dir: Path, capsys):
         """The implicit default (bare project name, every SessionStart) must
         not trigger the O(vault) full-text fallback; an explicit --query

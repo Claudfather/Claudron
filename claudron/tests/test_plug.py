@@ -175,3 +175,54 @@ class TestConfig:
         assert rc == 0
         out = capsys.readouterr().out
         assert "not plugged" in out
+
+
+class TestTreeWalkDeprecation:
+    """The second R5 violation (boundary spec §10.2: "the engine never knows a
+    consumer by name"). `_detect_claudlobby_root` infers a consumer from its
+    tree shape (`library/` + `lib/`); the declared alternative — `--claudlobby`
+    — already exists, so the walk is deprecated here and removed on the F3
+    schedule. Deprecate-only: resolution behavior is unchanged."""
+
+    def test_tree_walk_resolution_warns(
+        self, claudlobby_root: Path, vault_for_plug: Path, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(claudlobby_root)
+        rc = main(["plug", str(vault_for_plug)])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "deprecated" in err
+        assert "--claudlobby" in err
+        assert (claudlobby_root / ".claudron").is_file()  # still resolved
+
+    def test_explicit_flag_is_silent(
+        self, claudlobby_root: Path, vault_for_plug: Path, monkeypatch, capsys
+    ):
+        monkeypatch.chdir(claudlobby_root)  # walk would succeed — flag preempts it
+        rc = main([
+            "plug", str(vault_for_plug), "--claudlobby", str(claudlobby_root),
+        ])
+        assert rc == 0
+        assert "deprecated" not in capsys.readouterr().err
+
+    def test_config_warns_on_tree_walk(
+        self, claudlobby_root: Path, monkeypatch, capsys
+    ):
+        """Every command sharing the helper warns — `config` reads the root
+        through the same walk `plug` writes through."""
+        monkeypatch.chdir(claudlobby_root)
+        rc = main(["config"])
+        assert rc == 0
+        assert "deprecated" in capsys.readouterr().err
+
+    def test_no_warning_when_walk_finds_nothing(
+        self, tmp_path: Path, monkeypatch, capsys
+    ):
+        """A failed walk emits the not-found error, not a deprecation for a
+        path that was never taken."""
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        rc = main(["config"])
+        assert rc == 0
+        assert "deprecated" not in capsys.readouterr().err

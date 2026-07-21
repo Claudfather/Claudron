@@ -68,20 +68,54 @@ def _emit_json(command: str, data: dict, findings: list[Finding] | None = None) 
 
 
 # ── vault resolution ──────────────────────────────────────────────────
+#
+# The vault-address contract (docs/CLI_CONTRACT.md §Environment) is one
+# normative table; these two tuples are its code half, pinned by a
+# doc-parity test. Add a name to the table and to VAULT_ENV_VARS in the
+# same commit — three repos build against that table, and the last time
+# doc and code disagreed the two spellings resolved different vaults (#30).
+
+VAULT_ENV_VARS = ("CLAUDRON_VAULT_PATH",)
+"""Env names read for the vault address, in precedence order. The canonical
+name is what Claudlobby's composer emits per bot — reading it is what makes
+the CLI the fleet's contract floor."""
+
+REMOVED_VAULT_ENV_VARS = ("CLAUDRON_VAULT",)
+"""Names the engine once read and no longer does. Never consulted during
+resolution; named only on the failure path, where a straggler learns why."""
+
+_ALIAS_REMOVED_IN = "0.3.0"
 
 
 def _detect_vault(args) -> Vault | None:
-    """The resolution chain, policy-free (docs/CLI_CONTRACT.md order):
-    --vault flag → $CLAUDRON_VAULT_PATH → $CLAUDRON_VAULT → walk-up.
-    _resolve_vault adds exit-3-on-None; hooks pass None through (fail-open
-    contract). CLAUDRON_VAULT_PATH is the var Claudlobby emits per bot
-    (composer.py) — reading it is what makes the CLI the fleet's contract floor."""
-    vault_hint = (
-        getattr(args, "vault", None)
-        or os.environ.get("CLAUDRON_VAULT_PATH")
-        or os.environ.get("CLAUDRON_VAULT")
-    )
+    """The resolution chain, policy-free (docs/CLI_CONTRACT.md §Environment):
+    --vault flag → the VAULT_ENV_VARS ladder → walk-up. _resolve_vault adds
+    exit-3-on-None; hooks pass None through (fail-open contract)."""
+    vault_hint = getattr(args, "vault", None)
+    if not vault_hint:
+        for var in VAULT_ENV_VARS:
+            vault_hint = os.environ.get(var)
+            if vault_hint:
+                break
     return detect(Path(vault_hint)) if vault_hint else detect()
+
+
+def _removed_var_hint() -> str:
+    """One stderr line per removed name that is still set — the F3 softener.
+
+    The hard cut has no warn phase and no deprecation machinery; this is its
+    only trace, and it costs nothing until someone hits the exact confusion
+    it explains (a dotfile still exporting the dead name, no vault resolving).
+    """
+    live = [v for v in REMOVED_VAULT_ENV_VARS if os.environ.get(v)]
+    if not live:
+        return ""
+    canonical = VAULT_ENV_VARS[0]
+    return "".join(
+        f"\nnote: {var} is no longer read (removed in {_ALIAS_REMOVED_IN}) "
+        f"— set {canonical}"
+        for var in live
+    )
 
 
 def _resolve_vault(args) -> Vault:
@@ -91,7 +125,8 @@ def _resolve_vault(args) -> Vault:
         print(
             "no vault found\n"
             "  create one:  claudron init <path>\n"
-            "  or specify:  claudron --vault <path> <command>",
+            "  or specify:  claudron --vault <path> <command>"
+            + _removed_var_hint(),
             file=sys.stderr,
         )
         sys.exit(3)  # environment error (docs/CLI_CONTRACT.md; was 2 pre-0.2.0)
@@ -105,10 +140,30 @@ def _detect_claudlobby_root(hint: Path | None = None) -> Path | None:
     """Walk up from *hint* (or CWD) looking for a claudlobby repo root.
 
     Marker: directory containing both ``library/`` and ``lib/``.
+
+    **Deprecated when it is the walk that resolves the root.** Inferring a
+    consumer from its tree shape is the engine knowing a consumer by name
+    (boundary spec §10.2 / register rule R5) — the declared alternative,
+    ``--claudlobby <path>``, already exists and is preempted here. Behavior
+    is unchanged: this deprecates, it does not remove. Removal rides the
+    same release schedule as the CLAUDRON_VAULT cut.
     """
-    start = (hint or Path.cwd()).resolve()
+    if hint is not None:
+        start = hint.resolve()
+        for candidate in [start, *start.parents]:
+            if (candidate / "library").is_dir() and (candidate / "lib").is_dir():
+                return candidate
+        return None
+
+    start = Path.cwd().resolve()
     for candidate in [start, *start.parents]:
         if (candidate / "library").is_dir() and (candidate / "lib").is_dir():
+            print(
+                f"deprecated: resolved {candidate} by walking for a "
+                "'library/' + 'lib/' tree shape — pass --claudlobby <path> "
+                "instead (the tree-shape walk is scheduled for removal)",
+                file=sys.stderr,
+            )
             return candidate
     return None
 
@@ -268,7 +323,7 @@ def _init_personal(args, root: Path) -> int:
     print(f"  1. install the session hooks:   claudron --vault {root} hooks install --write")
     print(f"  2. add your private remote:     git -C {root} remote add origin <url> && git -C {root} push -u origin main")
     print(f"  3. on your other machine:       git clone <url> && claudron hooks install --write")
-    print(f"  4. point sessions at the vault: export CLAUDRON_VAULT={root}")
+    print(f"  4. point sessions at the vault: export {VAULT_ENV_VARS[0]}={root}")
     return 0
 
 
@@ -277,7 +332,11 @@ def cmd_status(args) -> int:
     info = status(vault, stale_days=getattr(args, "stale_days", 90))
 
     if args.json:
-        _emit_json("status", info)
+        # The capability probe (docs/INTEGRATION.md step 0). Consumers read
+        # the engine's version off the envelope they already parse for the
+        # vault path, instead of each maintaining a private detection ladder.
+        # Presentation-layer only: vault.status() stays a pure vault summary.
+        _emit_json("status", {**info, "engine_version": __version__})
         return 0
 
     print(f"vault: {info['root']}")
