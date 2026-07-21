@@ -182,6 +182,141 @@ and concurrent edits to `CONVENTIONS.md`. Two mitigations cover it: dedup
 note out of every read path until a human resolves it — so a conflict degrades
 recall rather than corrupting it.
 
+## Session-loop protocol
+
+What a host's session lifecycle owes the knowledge layer, and who owes it.
+The loop is **a protocol with roles, not a place**: no participant owns "the
+session," each owns a role in it. Anything that installs these hooks, composes
+them onto a bot, or co-inhabits the same events builds against this section.
+
+### The four roles
+
+<!-- doc-parity: SESSION_ROLES -->
+| Role | Content class | Owner | Engine event |
+|---|---|---|---|
+| `R-continuity` — the workspace brief: git state, tickets, a handoff artifact | behavior | **The front-end.** The engine ships no handler for it and never will. | — |
+| `R-recall` — the knowledge brief: durable notes, ranked and budgeted | engine op | **Claudron** | `session-start` |
+| `R-capture-prompt` — the distill nudge at compaction | engine protocol | **Claudron** defines it; exactly one participant *holds* it per session | `pre-compact` |
+| `R-sync` — pull at session start, push at session end | engine op | **Claudron** | `session-start`, `session-end` |
+
+**The briefs co-inject by design — do not merge them.** A workspace brief and
+a knowledge brief carry different content classes; two participants each
+emitting one at SessionStart is the correct arrangement, not a duplication to
+be resolved. What must not be duplicated is a *role*, and only one role is
+contended: `R-capture-prompt`.
+
+### Ordering, and the budget each brief owes
+
+- **`sync --pull` precedes `recall`.** Not an implementation detail: recall
+  reads the working tree, so recalling first briefs a second machine on state
+  it already superseded. The engine also re-detects the vault after the pull —
+  a pull can introduce whole tiers the pre-pull snapshot cannot see.
+- **Recall abstains.** A match below the relevance floor injects nothing.
+  Empty stdout is a valid brief; padding one is worse than skipping it.
+- **`sync --push` happens at session end, bounded** (below). An expired push is
+  not an error — the commits travel on the next session's push.
+- **The recall brief is capped** at `session.BRIEF_TOKEN_BUDGET`, which covers
+  everything the engine injects: the conventions block, the recalled notes, and
+  the discovery hint. It degrades by *dropping notes*, never by truncating one
+  mid-thought. The constant is the contract; its value is tuning and may change
+  without a breaking-change entry.
+  - **Stated limit.** The cap holds given a `CONVENTIONS.md` within its own
+    budget (`SCHEMA.md` §W105). That block is the always-loaded layer and is
+    injected unconditionally — past W105's ceiling it can carry the brief over
+    the cap on its own. The layers below it still degrade correctly (zero notes,
+    no hint) rather than compounding. Enforcement of the conventions budget is
+    `validate`'s job, not recall's: the engine will not silently drop the layer
+    a vault declared always-loaded.
+
+**Combined-budget rule: there is none, deliberately.** Caps are per-brief. The
+continuity brief is the front-end's to budget; the engine's brief never exceeds
+its own cap (with the limit stated above); no participant budgets the total. The
+rule is written down so that context creep at SessionStart has an owner *per
+brief* rather than no owner at all — a cross-brief budget would require one
+participant to police another's context, which no participant is entitled to do.
+
+### The single-prompt rule, and how the prompt is claimed
+
+**Exactly one `R-capture-prompt` holder per session.** Two block-prompts on one
+compaction is a defect.
+
+The claim is **structural** — nobody registers, nobody configures:
+
+1. **The engine always prompts** wherever its `pre-compact` hook is installed,
+   in text that names no front-end: it routes the agent to *its own* capture
+   door, falling back to `claudron capture --stdin`. The engine does not sniff
+   for consumers, and no environment variable, marker file, or holder field
+   exists to claim the role with. (Register rule R5: capability is declared to
+   the owner, never inferred. Here nothing needs declaring.)
+2. **A front-end that ships its own capture prompt MUST defer** when the
+   engine's `pre-compact` entry is registered. Detect it by the same identity
+   `merge_settings` keys on — a hook command ending in `hook pre-compact` — in
+   the host's hook-settings files (for Claude Code: the user, project, and local
+   `settings.json`). Detect it there and nowhere else; an engine-install probe
+   is not the same question and gets the standalone cases wrong.
+
+Both standalone modes fall out for free: with no engine entry the front-end
+prompts; with no front-end the engine prompts.
+
+> **Transitional shim (temporary, and ordered).** Until a front-end's defer
+> ships, the engine yields to one it can see in the plugin install tree. That
+> glob is the single R5 exception in the engine and is deleted on a stated
+> condition — the front-end's defer release. **The removal ordering is
+> mandatory: the engine's shim-removal release precedes or accompanies that
+> defer release.** Defer-first while the shim lives means both sides yield and
+> *nobody* prompts, silently; the reverse ordering's worst case is a bounded
+> double-prompt window, accepted deliberately.
+
+### The hook-settings snippet — normative shape
+
+`claudron hooks install` emits exactly this; a consumer that composes these
+entries itself is a **rendered copy of an owned surface and MUST carry a drift
+gate against this block** (register rule R3).
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> hook session-start"}]}],
+    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> hook pre-compact"}]}],
+    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> hook session-end"}]}]
+  }
+}
+```
+
+- **Three events, one command form:** `<executable> hook <event>`. `hook` is
+  the runtime dispatch verb Claude Code invokes; `hooks install` is the
+  installer verb a human or composer runs. Both spellings are contract.
+- **The identity rule:** a Claudron hook entry is identified by its
+  `hook <event>` command *suffix*, not by the full command string. That is what
+  `merge_settings` keys on to replace a stale entry instead of appending beside
+  it. A consumer that rewrites the command and drops the suffix gets a duplicate
+  hook running every session, not a replacement.
+- **The executable path must be absolute.** Hook context is not login shell
+  context: `PATH` frequently does not carry a venv or pipx install.
+  `hooks install` resolves it; a composer must resolve it per host too.
+
+### Fail-open, and the per-event budgets
+
+**A hook never breaks a session.** On any error — unresolvable vault, missing
+git, a stalled network, an exception class nobody anticipated — the hook emits
+nothing on stdout, appends a line to `.claudron/hooks.log`, and exits **0**.
+This is why hook stdout can be injected verbatim: the only thing that ever
+reaches it is a brief.
+
+Fail-open alone does not save a *stalled* call, so the two hooks that touch the
+network are hard-bounded:
+
+<!-- doc-parity: HOOK_TIMEOUTS -->
+| Event | Bounded operation | Budget | On expiry |
+|---|---|---|---|
+| `session-start` | `sync --pull` | `2.0s` | Pull abandoned; the brief renders from local state. |
+| `pre-compact` | none — no I/O | — | — |
+| `session-end` | `sync --push` | `10.0s` | Push abandoned; the commits travel on the next session's push. |
+
+These budgets are contract: a fleet composer sizes session startup against
+them. Diagnostics from a degraded hook go to `.claudron/hooks.log` — never to
+stdout, and never to stderr where a host might surface them as a session error.
+
 ## Flags
 
 - `--vault PATH` and `--json` are accepted by every subcommand (implemented
@@ -234,6 +369,15 @@ recall rather than corrupting it.
     write outcome that exits 1. (This `written` signal is specific to
     dedup-routed `capture`; the authoring door `new` always writes-or-errors —
     exit 0 means the note landed — so it carries no `written` field.)
+  - **Provenance rides in frontmatter, not in the body.** `--source-url URL`
+    and `--source-type {url,file,inline}` (equally, the `source_url` /
+    `source_type` keys of the `--stdin` JSON) write the SCHEMA.md optional
+    fields of the same names. Both are omitted from the note when unset.
+    `--source-type` accepts only SCHEMA.md's vocabulary; anything else is a
+    usage error (exit 2). **A consumer must not fold provenance into a body
+    line** — the first substantive body line is what the recall brief shows as
+    a note's summary, so a `Source:` line there both spends the summary and
+    couples the consumer to how that summary is picked.
   - **Programmatic writers MUST pass content via `--stdin` JSON, never `--body`
     string interpolation.** Note bodies are free text (quotes, newlines,
     `$(...)`, backticks); building a `--body "…"` shell argument truncates the

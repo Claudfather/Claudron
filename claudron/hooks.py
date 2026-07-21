@@ -1,5 +1,12 @@
 """The hook pack: Claude Code lifecycle glue for the session loop (E2).
 
+The adapter, not the protocol. What the loop promises — the four roles and
+their owners, the pull-before-recall ordering, the single-prompt rule, the
+budgets, and the composed-settings shape — is normative in
+``docs/CLI_CONTRACT.md`` §Session-loop protocol. This module implements the
+engine's three of those roles; changes to what they promise PR the contract
+first.
+
 Three events, one contract: **hooks fail open**. A hook must never break a
 session — on any error it emits nothing (SessionStart stdout is injected
 into agent context verbatim), logs to ``.claudron/hooks.log`` (or the
@@ -8,10 +15,10 @@ user's temp dir when no vault resolves), and exits 0.
 - SessionStart → ``sync --pull`` (hard timeout, offline fail-open) then
   the recall brief on stdout. Pull precedes recall or machine B briefs
   stale.
-- PreCompact → block-and-instruct once per session: prompt the agent to
-  distill durable findings through ``claudron capture``. When clauDNA is
-  installed it owns the PreCompact capture prompt (a bare ``/claudna:capture``
-  distills the session), so this hook defers — one prompt per event.
+- PreCompact → block-and-instruct once per session: route the agent to its
+  own capture door. Front-end-neutral by construction — the engine never
+  asks *who else is here* (see the shim below for the one exception, and
+  its removal condition).
 - SessionEnd → ``sync --push`` (fail open; nothing to inject).
 """
 
@@ -59,10 +66,28 @@ def _stdin_payload() -> dict:
         return {}
 
 
-def _claudna_installed() -> bool:
-    # Bounded: marketplace/plugin layout is one level deep, and the dir
-    # itself is the signal (a `**/claudna/*` glob walked the whole cache
-    # on the miss path and missed empty dirs — gauntlet finding).
+def _shim_defers_to_front_end() -> bool:
+    """**Transitional shim — delete on the condition below.**
+
+    The contract's claim mechanism is structural: the engine always prompts,
+    and a front-end shipping its own prompt defers when it finds the engine's
+    registered ``hook pre-compact`` entry (``docs/CLI_CONTRACT.md``
+    §Session-loop protocol, "Claim mechanism"). This install-tree glob is the
+    interim inverse, kept for exactly one reason: a front-end that has not yet
+    shipped its defer still prompts unconditionally, and two block-prompts on
+    one event would double up.
+
+    **Removal condition:** the front-end's defer release. **Removal ordering
+    is mandatory** — this deletion must ship at or before that release. Delete
+    it after, and both sides yield: nobody prompts, silently. (The reverse
+    ordering's worst case is a bounded double-prompt window, chosen
+    deliberately.) It is the only place in the engine that reads a consumer's
+    tree; when it goes, R5 has no residue here.
+
+    Bounded: marketplace/plugin layout is one level deep, and the dir itself
+    is the signal (a ``**/claudna/*`` glob walked the whole cache on the miss
+    path and missed empty dirs — gauntlet finding).
+    """
     plugins = Path.home() / ".claude" / "plugins"
     if not plugins.is_dir():
         return False
@@ -110,15 +135,16 @@ def hook_session_start(vault: Vault | None) -> int:
 def hook_pre_compact(vault: Vault | None) -> int:
     """Block the first compaction with the capture prompt; pass afterwards.
 
-    Defer when clauDNA is installed: its PreCompact hook owns the single
-    capture prompt (a bare ``/claudna:capture`` distills the session), and two
-    block-prompts on one event would double up. Claudron-only installs keep
-    the prompt.
+    The prompt names no front-end: it routes the agent to *its own* capture
+    door, whichever that is, and falls back to the engine's CLI. Which
+    participant holds the prompt is settled structurally by the contract's
+    claim mechanism, not by this handler looking around — except through the
+    transitional shim, which is documented at its removal condition.
     """
     payload = _stdin_payload()
     if vault is None:
         return 0
-    if _claudna_installed():
+    if _shim_defers_to_front_end():
         return 0
     session_id = str(payload.get("session_id") or "unknown")
     marker = Path(tempfile.gettempdir()) / f"claudron-precompact-{session_id}"
@@ -134,9 +160,11 @@ def hook_pre_compact(vault: Vault | None) -> int:
                 "decision": "block",
                 "reason": (
                     "Before compacting: distill this session's durable findings "
-                    "into the vault. For each durable finding, run `claudron capture "
-                    "--type knowledge --title \"...\" --body \"...\"` (dedup will route "
-                    "updates to existing notes). Then retry the compaction."
+                    "through your capture door — your capture skill if you have "
+                    "one, otherwise `claudron capture --stdin` (the finding as "
+                    "JSON on stdin, never interpolated into --body). Dedup routes "
+                    "a near-duplicate to the note that already covers it rather "
+                    "than twinning it. Then retry the compaction."
                 ),
             }
         )
