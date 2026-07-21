@@ -68,20 +68,105 @@ def _emit_json(command: str, data: dict, findings: list[Finding] | None = None) 
 
 
 # ── vault resolution ──────────────────────────────────────────────────
+#
+# The vault-address contract (docs/CLI_CONTRACT.md §Environment) is one
+# normative table; these two tuples are its code half, pinned by a
+# doc-parity test. Add a name to the table and to VAULT_ENV_VARS in the
+# same commit — three repos build against that table, and the last time
+# doc and code disagreed the two spellings resolved different vaults (#30).
+
+VAULT_ENV_VARS = ("CLAUDRON_VAULT_PATH",)
+"""Env names read for the vault address, in precedence order. The canonical
+name is what Claudlobby's composer emits per bot — reading it is what makes
+the CLI the fleet's contract floor."""
+
+REMOVED_VAULT_ENV_VARS = ("CLAUDRON_VAULT",)
+"""Names the engine once read and no longer does. Never consulted during
+resolution; named only on the failure path, where a straggler learns why."""
+
+_ALIAS_REMOVED_IN = "0.3.0"
 
 
 def _detect_vault(args) -> Vault | None:
-    """The resolution chain, policy-free (docs/CLI_CONTRACT.md order):
-    --vault flag → $CLAUDRON_VAULT_PATH → $CLAUDRON_VAULT → walk-up.
-    _resolve_vault adds exit-3-on-None; hooks pass None through (fail-open
-    contract). CLAUDRON_VAULT_PATH is the var Claudlobby emits per bot
-    (composer.py) — reading it is what makes the CLI the fleet's contract floor."""
-    vault_hint = (
-        getattr(args, "vault", None)
-        or os.environ.get("CLAUDRON_VAULT_PATH")
-        or os.environ.get("CLAUDRON_VAULT")
-    )
+    """The resolution chain, policy-free (docs/CLI_CONTRACT.md §Environment):
+    --vault flag → the VAULT_ENV_VARS ladder → walk-up. _resolve_vault adds
+    exit-3-on-None; hooks pass None through (fail-open contract)."""
+    vault_hint = getattr(args, "vault", None)
+    if not vault_hint:
+        for var in VAULT_ENV_VARS:
+            vault_hint = os.environ.get(var)
+            if vault_hint:
+                break
     return detect(Path(vault_hint)) if vault_hint else detect()
+
+
+def _shadowed_removed_vars(resolved: Path | None) -> list[str]:
+    """Removed names that are set and point somewhere other than *resolved*.
+
+    These are exactly the environments the hard cut silently changes. A name
+    that is set but agrees with what actually resolved is not confusing and
+    earns no line; one that disagrees means the caller believes they addressed
+    a vault the engine ignored.
+    """
+    live = []
+    for var in REMOVED_VAULT_ENV_VARS:
+        raw = os.environ.get(var)
+        if not raw:
+            continue
+        try:
+            # Compare what the dead name *would have resolved to*, not its raw
+            # text: 0.2.x fed this value to the same detector, so a value
+            # naming a subdirectory of the vault we used addressed that very
+            # same vault and changed nothing.
+            #
+            # Then compare by identity, not by path equality. `resolve()` does
+            # not canonicalize case, so on a case-insensitive filesystem (the
+            # macOS default) `/x/VAULT` and `/x/vault` are one directory that
+            # compares unequal. `samefile` reads st_dev/st_ino, which settles
+            # case-aliasing and symlinks together.
+            would_be = detect(Path(raw).expanduser())
+            if resolved is not None and would_be is not None:
+                if would_be.root.samefile(resolved):
+                    continue
+        except (OSError, ValueError, RuntimeError):
+            # A value we cannot even parse into a path certainly does not name
+            # the vault we used, so it shadows. Never propagate: this helper is
+            # reached from the hook path, and an exception here would turn a
+            # stale dotfile into a broken session start — a louder version of
+            # the silent failure the hint exists to prevent. (`~nouser/x`
+            # raises RuntimeError; a relative value under a deleted CWD raises
+            # OSError.)
+            pass
+        live.append(var)
+    return live
+
+
+def _removed_var_hint(resolved: Path | None = None) -> str:
+    """The F3 softener: one line per removed name the engine is ignoring.
+
+    The hard cut has no warn phase and no deprecation machinery; this is its
+    only trace. It must fire on *every* path where the removal changes the
+    answer, not just the no-vault one — resolving a **different** vault than
+    0.2.x would have is the damaging case, and it exits 0 with a note written
+    somewhere the caller did not intend.
+    """
+    canonical = VAULT_ENV_VARS[0]
+    return "".join(
+        f"\nnote: {var} is no longer read (removed in {_ALIAS_REMOVED_IN}) "
+        f"— set {canonical}"
+        for var in _shadowed_removed_vars(resolved)
+    )
+
+
+def _warn_shadowed_vault(vault: Vault | None) -> None:
+    """Emit the softener on stderr for a *successful* resolution.
+
+    stderr only, so hook fail-open and §Channels both hold: a hook's stdout is
+    injected verbatim, its stderr is not.
+    """
+    hint = _removed_var_hint(vault.root if vault else None)
+    if hint:
+        print(hint.lstrip("\n"), file=sys.stderr)
 
 
 def _resolve_vault(args) -> Vault:
@@ -91,10 +176,12 @@ def _resolve_vault(args) -> Vault:
         print(
             "no vault found\n"
             "  create one:  claudron init <path>\n"
-            "  or specify:  claudron --vault <path> <command>",
+            "  or specify:  claudron --vault <path> <command>"
+            + _removed_var_hint(None),
             file=sys.stderr,
         )
         sys.exit(3)  # environment error (docs/CLI_CONTRACT.md; was 2 pre-0.2.0)
+    _warn_shadowed_vault(vault)
     return vault
 
 
@@ -104,7 +191,8 @@ def _resolve_vault(args) -> Vault:
 def _detect_claudlobby_root(hint: Path | None = None) -> Path | None:
     """Walk up from *hint* (or CWD) looking for a claudlobby repo root.
 
-    Marker: directory containing both ``library/`` and ``lib/``.
+    Marker: directory containing both ``library/`` and ``lib/``. Policy-free
+    like ``_detect_vault``; ``_resolve_claudlobby_root`` adds the diagnostic.
     """
     start = (hint or Path.cwd()).resolve()
     for candidate in [start, *start.parents]:
@@ -113,9 +201,42 @@ def _detect_claudlobby_root(hint: Path | None = None) -> Path | None:
     return None
 
 
+def _resolve_claudlobby_root(args) -> Path | None:
+    """``_detect_claudlobby_root`` plus the tree-walk deprecation.
+
+    Inferring a consumer from its tree shape is the engine knowing a consumer
+    by name (boundary spec §10.2 / register rule R5). The declared alternative
+    — ``--claudlobby <path>`` — already exists and preempts the walk, so
+    resolving *by walk* earns one stderr line. Behavior is unchanged: this
+    deprecates, it does not remove. Removal rides the same release schedule
+    as the CLAUDRON_VAULT cut.
+    """
+    hint = _claudlobby_hint(args)
+    cl_root = _detect_claudlobby_root(hint)
+    if cl_root is None or hint is not None:
+        return cl_root
+    if _read_claudron_config(cl_root / ".claudron").get("vault"):
+        # The root carries a *valid* declared artifact (§Bridge file) — the
+        # walk only located a declaration that already exists, which is not the
+        # sniff R5 forbids. Warning here would nag every `config`/`migrate` on
+        # a correctly plugged install, i.e. the normal workflow. Existence
+        # alone is not enough: an empty `.claudron` declares nothing, and
+        # suppressing on it would have the engine claim "the declaration is
+        # present" while `config` prints "(not plugged)" in the same breath.
+        return cl_root
+    print(
+        f"deprecated: resolved {cl_root} by walking for a "
+        "'library/' + 'lib/' tree shape — pass --claudlobby <path>, or run "
+        "'claudron plug' to write a .claudron bridge there "
+        "(the tree-shape walk is scheduled for removal)",
+        file=sys.stderr,
+    )
+    return cl_root
+
+
 def _require_claudlobby_root(args, command: str) -> Path:
     """Resolve claudlobby root or exit with a clear error."""
-    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
+    cl_root = _resolve_claudlobby_root(args)
     if cl_root is None:
         print(
             f"could not find claudlobby root\n"
@@ -268,7 +389,7 @@ def _init_personal(args, root: Path) -> int:
     print(f"  1. install the session hooks:   claudron --vault {root} hooks install --write")
     print(f"  2. add your private remote:     git -C {root} remote add origin <url> && git -C {root} push -u origin main")
     print(f"  3. on your other machine:       git clone <url> && claudron hooks install --write")
-    print(f"  4. point sessions at the vault: export CLAUDRON_VAULT={root}")
+    print(f"  4. point sessions at the vault: export {VAULT_ENV_VARS[0]}={root}")
     return 0
 
 
@@ -277,7 +398,11 @@ def cmd_status(args) -> int:
     info = status(vault, stale_days=getattr(args, "stale_days", 90))
 
     if args.json:
-        _emit_json("status", info)
+        # The capability probe (docs/INTEGRATION.md step 0). Consumers read
+        # the engine's version off the envelope they already parse for the
+        # vault path, instead of each maintaining a private detection ladder.
+        # Presentation-layer only: vault.status() stays a pure vault summary.
+        _emit_json("status", {**info, "engine_version": __version__})
         return 0
 
     print(f"vault: {info['root']}")
@@ -692,8 +817,16 @@ def cmd_sync(args) -> int:
 
 def cmd_hook(args) -> int:
     """Hook entry points: lenient vault resolution (None passes through —
-    fail-open), then the guarded dispatch (run_hook owns the contract)."""
-    return run_hook(args.event, _detect_vault(args))
+    fail-open), then the guarded dispatch (run_hook owns the contract).
+
+    The removed-var softener fires here too, on stderr. A workstation whose
+    dotfile still exports the dead name otherwise loses every session brief
+    with no visible trace — the hook's only record is a line in a log nobody
+    reads. stderr is not injected into the session, so fail-open holds.
+    """
+    vault = _detect_vault(args)
+    _warn_shadowed_vault(vault)
+    return run_hook(args.event, vault)
 
 
 def cmd_hooks_install(args) -> int:
@@ -847,7 +980,7 @@ def _claudlobby_hint(args) -> Path | None:
 
 
 def cmd_config(args) -> int:
-    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
+    cl_root = _resolve_claudlobby_root(args)
 
     info: dict = {"claudlobby_root": str(cl_root) if cl_root else None}
 

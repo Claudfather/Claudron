@@ -208,7 +208,7 @@ class TestHookDrivenLoop:
         work.mkdir(parents=True)
         (tmp_path / "work" / "storydump" / ".git").mkdir()
         monkeypatch.chdir(work)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(b))
+        monkeypatch.setenv("CLAUDRON_VAULT_PATH", str(b))
         monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
         assert main(["hook", "session-start"]) == 0
         assert "Pool Exhaustion Fix" in capsys.readouterr().out

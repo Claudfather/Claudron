@@ -1,4 +1,8 @@
-"""Fixture vaults for claudron tests."""
+"""Fixture vaults for claudron tests.
+
+Fixtures only — pytest auto-injects everything defined here by name. The
+doc-parity readers are plain imports and live in ``doc_parity.py``.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +12,7 @@ from textwrap import dedent
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from .doc_parity import REPO_ROOT
 
 
 @pytest.fixture
@@ -243,3 +247,18 @@ def shared_vault(tmp_path: Path) -> Path:
     """)
     )
     return root
+
+
+@pytest.fixture
+def no_vault_env(monkeypatch):
+    """Clear every env name the vault-address contract defines.
+
+    Derived from the contract ladder (`cli.VAULT_ENV_VARS`) plus the names it
+    has retired, so a test asserting "nothing resolves from the environment"
+    stays honest as the table changes — and does not quietly pass on a
+    developer machine that exports the canonical name.
+    """
+    from claudron.cli import REMOVED_VAULT_ENV_VARS, VAULT_ENV_VARS
+
+    for var in (*VAULT_ENV_VARS, *REMOVED_VAULT_ENV_VARS):
+        monkeypatch.delenv(var, raising=False)

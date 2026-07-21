@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from .doc_parity import REPO_ROOT, code_values, doc_table, fenced_block
 from claudron.schema import (
     CATALOG,
     LOOKUP_EXCLUDED,
@@ -22,7 +23,6 @@ from claudron.schema import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = json.loads((FIXTURES / "expected.json").read_text())
 
 
@@ -85,31 +85,8 @@ class TestReferenceVault:
 
 
 def _doc_table(marker: str) -> list[list[str]]:
-    """Extract the doc-parity table following *marker* in SCHEMA.md."""
-    text = (REPO_ROOT / "SCHEMA.md").read_text()
-    section = text.split(f"<!-- doc-parity: {marker} -->")[1]
-    rows = []
-    for line in section.splitlines():
-        line = line.strip()
-        if line.startswith("|"):
-            cells = [c.strip() for c in line.strip("|").split("|")]
-            if not set(cells[0]) <= {"-", " "}:  # skip separator row
-                rows.append(cells)
-        elif rows:
-            break
-    return rows[1:]  # drop header
-
-
-def _values(cell: str) -> tuple[str, ...]:
-    """Backticked value list from a table cell -> tuple of values."""
-    return tuple(re.findall(r"`([^`]+)`", cell))
-
-
-def _tree_block(doc: str, header: str) -> str:
-    """The first fenced code block under a '## <header>' line in *doc*."""
-    text = (REPO_ROOT / doc).read_text()
-    after = text.split(f"## {header}", 1)[1]
-    return after.split("```", 2)[1]
+    """The doc-parity table following *marker* in SCHEMA.md."""
+    return doc_table("SCHEMA.md", marker)
 
 
 class TestDocParity:
@@ -123,8 +100,8 @@ class TestDocParity:
         assert {r[0] for r in rows} == set(STATUS_VOCAB)
         for note_type, canonical, terminal, legacy in rows:
             vocab = STATUS_VOCAB[note_type]
-            assert _values(canonical) == vocab["canonical"], note_type
-            assert _values(terminal) == vocab["terminal"], note_type
+            assert code_values(canonical) == vocab["canonical"], note_type
+            assert code_values(terminal) == vocab["terminal"], note_type
             doc_aliases = set(re.findall(r"`(\w+)` →", legacy))
             assert doc_aliases == set(vocab["legacy"]), note_type
 
@@ -154,8 +131,8 @@ class TestDocParity:
         TYPE_DIRS defines. Closes the gap VAULT-STRUCTURE.md discloses (the two
         trees were previously unguarded — only the tables above were)."""
         tiers = {d.split("/", 1)[0] for d in TYPE_DIRS.values()}
-        schema_tree = _tree_block("SCHEMA.md", "Vault directory taxonomy")
-        vault_tree = _tree_block("VAULT-STRUCTURE.md", "Directory contract")
+        schema_tree = fenced_block("SCHEMA.md", "Vault directory taxonomy")
+        vault_tree = fenced_block("VAULT-STRUCTURE.md", "Directory contract")
         for tier in tiers:
             # whole dir entry, not a loose substring: `x_runbooks/` must not
             # satisfy `runbooks/` (a lookbehind rejects a leading name char).
@@ -230,3 +207,40 @@ class TestDateEdges:
         fm.update({"title": "T", "type": "knowledge", "status": "current", "owner": "x"})
         findings = validate_note(fm, "", strict=True, path="t.md")
         assert not [f for f in findings if f.code == "E005"]
+
+
+class TestDocParityReaders:
+    """The readers behind every parity gate. A reader that silently returns the
+    wrong text makes its gate pass vacuously — worse than having no gate."""
+
+    def test_fenced_block_never_reaches_into_a_later_section(self, tmp_path, monkeypatch):
+        from claudron.tests import doc_parity
+
+        monkeypatch.setattr(doc_parity, "REPO_ROOT", tmp_path)
+        (tmp_path / "T.md").write_text(
+            "## Directory contract\n\nProse only, no fence here.\n\n"
+            "## Something else\n\n```\nWRONG-BLOCK\n```\n"
+        )
+        with pytest.raises(AssertionError, match="no fenced block of its own"):
+            doc_parity.fenced_block("T.md", "Directory contract")
+
+    def test_fenced_block_tolerates_a_heading_inside_the_fence(
+        self, tmp_path, monkeypatch
+    ):
+        from claudron.tests import doc_parity
+
+        monkeypatch.setattr(doc_parity, "REPO_ROOT", tmp_path)
+        (tmp_path / "T.md").write_text(
+            "## Directory contract\n\n```\nvault/\n## not-a-heading\n  runbooks/\n```\n"
+            "\n## Next\n"
+        )
+        block = doc_parity.fenced_block("T.md", "Directory contract")
+        assert "runbooks/" in block  # not truncated at the in-fence '## '
+
+    def test_section_rejects_ambiguity(self, tmp_path, monkeypatch):
+        from claudron.tests import doc_parity
+
+        monkeypatch.setattr(doc_parity, "REPO_ROOT", tmp_path)
+        (tmp_path / "D.md").write_text("## Flags\n\nstale\n\n## Flags\n\nreal\n")
+        with pytest.raises(AssertionError, match="expected exactly one"):
+            doc_parity.section("D.md", "Flags")
