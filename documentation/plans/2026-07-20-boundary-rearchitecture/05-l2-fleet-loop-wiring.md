@@ -1,11 +1,11 @@
 ---
-title: "L2 — Wire the fleet loop: engine hooks + claim env per vault-wired bot"
+title: "L2 — Wire the fleet loop: engine hooks per vault-wired bot"
 type: plan
 status: draft
 owner: chris
 tags: [plan, claudlobby, session, hooks, fleet]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-07-21
 ---
 
 # L2 — Wire the fleet loop (Claudlobby)
@@ -15,9 +15,15 @@ updated: 2026-07-20
 The largest payoff of the program (§10.5.1's verification finding): fleet bots currently run **no
 Claudron session loop** — no pull-before-recall, no SessionEnd push; vault sync on a fleet host is
 unowned. This phase makes the loop a composition concern: `claudron_vault_path` set ⇒ the composer
-installs the engine's hooks into the bot's settings and sets the claim env (`CLAUDRON_CAPTURE_OWNER=
-claudna`, since the plugin is a fleet default) per the C2 protocol. Declarative, per-bot,
-fail-open — F2 lean (a): per-bot standard hooks, no new machinery.
+installs the engine's hooks into the bot's settings, per the C2 protocol. Declarative, per-bot,
+fail-open — F2 as locked: per-bot standard hooks, no new machinery.
+
+> **Corrected 2026-07-21 (title + this summary).** Both previously said the composer also "sets the
+> claim env (`CLAUDRON_CAPTURE_OWNER=claudna`)" — residue from F1's pre-ratification env-claim
+> lean. **F1 locked the *structural* mechanism instead: there is no claim env, and L2 composes
+> nothing for it.** The engine always prompts where its PreCompact hook is installed; clauDNA's
+> hook defers when it finds that hook registered. Step 3 and the Verification Checklist were
+> already correct; the title and summary were not. Flagged by the C2 session on hand-off.
 
 ## Evidence
 
