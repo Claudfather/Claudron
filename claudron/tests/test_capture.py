@@ -85,6 +85,102 @@ class TestCaptureCreates:
         assert fm["type"] == "decision" and fm["tags"] == ["adr"]
 
 
+class TestCaptureProvenance:
+    """`source_url` / `source_type` carried into frontmatter (Claudron #44).
+
+    SCHEMA.md has typed both fields since v1; capture dropped them, so every
+    consumer with a provenance to record folded it into a body line — coupling
+    itself to how `session.py:_summary` picks a summary. The fields are the
+    transport; the body line was never one.
+    """
+
+    def _capture(self, vault_dir: Path, capsys, *extra: str) -> dict:
+        rc = main(["--vault", str(vault_dir), "capture", "--type", "knowledge",
+                   "--title", "Pool Exhaustion", "--body", "Ship it.",
+                   "--owner", "bot-1", "--json", *extra])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        fm, _, err = parse_note(Path(env["data"]["path"]).read_text())
+        assert err is None
+        return fm
+
+    def test_flags_land_in_frontmatter_and_strict_validate(
+        self, vault_dir: Path, capsys
+    ):
+        fm = self._capture(
+            vault_dir, capsys,
+            "--source-url", "https://example.com/a?x=1", "--source-type", "url",
+        )
+        assert fm["source_url"] == "https://example.com/a?x=1"
+        assert fm["source_type"] == "url"
+        assert main(["validate", "--strict",
+                     str(vault_dir / "_shared" / "knowledge")]) == 0
+
+    def test_stdin_keys_land_too(self, vault_dir: Path, capsys, monkeypatch):
+        """Programmatic writers pass JSON on stdin; the fields must reach them
+        by the same door as every other capture field."""
+        import io
+
+        finding = {"type": "knowledge", "title": "Ingested Article",
+                   "body": "B.", "owner": "bot-2",
+                   "source_url": "https://example.com/b", "source_type": "url"}
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(finding)))
+        assert main(["--vault", str(vault_dir), "capture", "--stdin", "--json"]) == 0
+        env = json.loads(capsys.readouterr().out)
+        fm, _, _ = parse_note(Path(env["data"]["path"]).read_text())
+        assert fm["source_url"] == "https://example.com/b"
+        assert fm["source_type"] == "url"
+
+    def test_absent_when_not_supplied(self, vault_dir: Path, capsys):
+        """Optional means absent, not empty. A blank `source_url:` would make
+        every unsourced note look sourced-but-unknown."""
+        fm = self._capture(vault_dir, capsys)
+        assert "source_url" not in fm and "source_type" not in fm
+
+    def test_url_needing_yaml_quoting_round_trips(self, vault_dir: Path, capsys):
+        """Frontmatter is hand-assembled; a URL that YAML would re-read as
+        something else must come back byte-identical."""
+        tricky = "https://example.com/a #b"
+        fm = self._capture(vault_dir, capsys, "--source-url", tricky)
+        assert fm["source_url"] == tricky
+
+    def test_source_type_is_the_schema_vocabulary(self, vault_dir: Path, capsys):
+        """SCHEMA.md types the field `url | file | inline`. The door does not
+        mint values outside its own ratified vocabulary — an out-of-vocabulary
+        value is a usage error, not an unvalidatable note on disk."""
+        with pytest.raises(SystemExit) as exc:
+            main(["--vault", str(vault_dir), "capture", "--type", "knowledge",
+                  "--title", "T", "--body", "B.", "--source-type", "article"])
+        assert exc.value.code == 2
+
+    def test_stdin_source_type_obeys_the_same_vocabulary(
+        self, vault_dir: Path, capsys, monkeypatch
+    ):
+        """The *machine* spelling is the one that has to hold.
+
+        `choices` on the flag guards the human path; the contract sends every
+        programmatic writer through `--stdin`, so a check that lives only in
+        argparse leaves the door that matters wide open — and writes a note
+        whose `source_type` the schema does not define.
+        """
+        import io
+
+        finding = {"type": "knowledge", "title": "Smuggled Type", "body": "B.",
+                   "owner": "bot-3", "source_type": "article"}
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(finding)))
+        rc = main(["--vault", str(vault_dir), "capture", "--stdin"])
+        assert rc == 2
+        assert "source_type" in capsys.readouterr().err
+        assert not list((vault_dir / "_shared" / "knowledge").glob("smuggled*"))
+
+    def test_no_last_verified_stamp(self, vault_dir: Path, capsys):
+        """Deferred to #54/#55 — the field's meaning is 'structurally verified',
+        and nothing here verifies anything. Stamping it at capture time would
+        make every unverified note claim verification."""
+        fm = self._capture(vault_dir, capsys, "--source-url", "https://x/y")
+        assert "last_verified" not in fm
+
+
 class TestCaptureDedup:
     """Dedup routes, never hard-rejects (E3 contract, cycle-1 fold)."""
 

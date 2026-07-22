@@ -88,8 +88,8 @@ this table is authoritative). Update it in the PR that changes a phase's state.
 | # | State | As of | Evidence |
 |---|---|---|---|
 | C1 | ✅ shipped | 2026-07-21 | Claudron #79 → `219b440`, released v0.3.0 |
-| D1 | 🟡 in flight — **partial** | 2026-07-21 | clauDNA #253; **steps 4 + 5 deferred behind C2** (F1 ordering + `--source-url` doesn't exist yet) → follow-up owed |
-| C2 | ⬜ next — critical path | — | unblocks D1's follow-ups and L2 |
+| D1 | 🟡 in flight — **partial** | 2026-07-21 | clauDNA #253; **steps 4 + 5 deferred behind C2** (F1 ordering + `--source-url` doesn't exist yet) → follow-up owed, tracked as clauDNA #254 |
+| C2 | 🟡 in flight | 2026-07-21 | Claudron PR (branch `feat/c2-session-protocol`); absorbs #81 (C1 residue) as its step 5. **The shim removal is not in it** — that deletion is its own release, and F1's ordering rule binds it to clauDNA #254's defer |
 | L1 | ⬜ ready | — | gated on program gate 2 (the #511/#512/#513 re-scope) |
 | X1 | 🟡 partial | 2026-07-21 | Claudron half merged in #79; sibling halves await PRs from the `docs/boundary-claude-md-seams` branches |
 | L2 · L3 · D2 · L4 | ⬜ not started | — | downstream |
