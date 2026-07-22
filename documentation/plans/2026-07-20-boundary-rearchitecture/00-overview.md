@@ -55,12 +55,21 @@ hidden: C2 retires the hooks sniff; C1 deprecates the Claudlobby tree-walk (`cli
 
 **Program gates.** (1) *Wave-1 entry:* boundary spec §10 placements ratified and forks F1–F8 locked
 — the ironclad review cycle is the ratification venue; no approval-gated SSOT amendment merges
-before its fork is locked. (2) *Issue-tracker reconciliation (wave-1 task):* execute Claudlobby
-#654's promised re-scope of #511/#512/#513, close-or-re-scope #513/#251, and reconcile the in-flight
-#560–564 branch work with L-phase scope before wave-1 Claudlobby PRs open. (3) *Post-wave-2
-checkpoint:* after L2 soaks on the dogfood fleet (~a week), record notes-captured and recall/lookup
-counts — "wiring landed" and "mission advanced" are verified separately before wave-3 effort is
-spent.
+before its fork is locked. **[discharged 2026-07-20.]** (2) *Issue-tracker reconciliation (wave-1
+task):* execute Claudlobby #654's promised re-scope of #511/#512/#513, close-or-re-scope #513/#251,
+and reconcile the in-flight #560–564 branch work with L-phase scope before wave-1 Claudlobby PRs
+open. **[discharged 2026-07-22: #511/#512 re-scoped to CLI-verb framing (MCP-fragment scope parked);
+#513/#251 closed as mooted by decision C.]** (3) *Post-wave-2 checkpoint:* after L2 soaks on the
+dogfood fleet, verify the loop actually accumulates knowledge before wave-3 effort is spent —
+"wiring landed" and "mission advanced" are verified separately. **Soak criteria (transplanted from
+the retired Claudlobby #513, ≥2-week soak on a ≥25-note corpus):** (i) lookup fires on ≥50% of
+dispatches; (ii) ≥3 observed hit-used-in-output instances (impact, not activity); (iii) dispatch
+P95 within 10% of baseline; (iv) cold-start + RSS within the fleet's budgets; (v) weekly
+vault-hygiene sweep returns zero hits; (vi) flat counters trigger a doctor check before being read
+as non-adoption. *Soak-fail branch:* stay opt-in, make mechanical injection the default query path,
+re-run. Honesty line: this is n=1 dogfood evidence — holding until a second operator demands the
+loop is a legitimate outcome, not a failure. Publish the counters to Claudron #14/#17 (the
+ecosystem's first ≥2-writer field data on the F8 write-chokepoint bet).
 
 ## Companion plans
 
@@ -88,11 +97,13 @@ this table is authoritative). Update it in the PR that changes a phase's state.
 | # | State | As of | Evidence |
 |---|---|---|---|
 | C1 | ✅ shipped | 2026-07-21 | Claudron #79 → `219b440`, released v0.3.0 |
-| D1 | 🟡 in flight — **partial** | 2026-07-21 | clauDNA #253; **steps 4 + 5 deferred behind C2** (F1 ordering + `--source-url` doesn't exist yet) → follow-up owed, tracked as clauDNA #254 |
-| C2 | 🟡 in flight | 2026-07-21 | Claudron PR (branch `feat/c2-session-protocol`); absorbs #81 (C1 residue) as its step 5. **The shim removal is not in it** — that deletion is its own release, and F1's ordering rule binds it to clauDNA #254's defer |
-| L1 | ⬜ ready | — | gated on program gate 2 (the #511/#512/#513 re-scope) |
-| X1 | 🟡 partial | 2026-07-21 | Claudron half merged in #79; sibling halves await PRs from the `docs/boundary-claude-md-seams` branches |
-| L2 · L3 · D2 · L4 | ⬜ not started | — | downstream |
+| D1 | ✅ shipped (partial by design) | 2026-07-22 | clauDNA #253 merged; **steps 4 + 5 carried to clauDNA #254** (F1 ordering: the defer ships at/after the shim-removal release; `--source-url` now exists post-C2) |
+| C2 | ✅ shipped | 2026-07-22 | Claudron #84 → `b6363a2`; closed #44 + #81; CHANGELOG `Deprecated` anchor for the shim in place (clauDNA #254 keys on it). **Shim removal is its own release — tracked as Claudron #85**, F1-ordered before #254's defer |
+| L1 | 🟡 in review | 2026-07-22 | Claudlobby #665 (mergeable); program gate 2 discharged — #511/#512 re-scoped, #513/#251 closed (decision C) |
+| X1 | 🟡 in review | 2026-07-22 | Claudron root+seams merged in #79; sibling PRs open — clauDNA #255, Claudlobby #664; Claudron mission-hygiene rider #82 |
+| L2 · L3 · D2 · L4 | ⬜ not started | — | downstream; L2 unblocked by C2 (protocol + snippet shape are contract text) |
+
+**Open follow-up trackers** (owned, out of any single phase): Claudron #85 (F1 shim removal — the F1-ordered release), clauDNA #254 (D1 steps 4+5), Claudron #83 (no CI — the register's drift gates don't run on PRs), clauDNA #256 (`project-template/CLAUDE.md` lacks the vault seam). Program gate 2 is discharged (above); gate 3 (post-wave-2 checkpoint) now carries #513's soak criteria (below).
 
 | # | Phase | Repo | Size | Delivers |
 |---|---|---|---|---|
@@ -119,6 +130,10 @@ this table is authoritative). Update it in the PR that changes a phase's state.
 | D2 | S | C1 (INTEGRATION/contract docs to cite; drift-gate precedent is clauDNA's own output-guide §3) | L4 |
 | L4 | S | L1 | D2 |
 | X1 | M | — (content ratified by §10; texts exist on the landing branches) | everything |
+
+**Progress (2026-07-22):** the contract-authoring spine is shipped — **C1, D1, C2 merged**; L1
+(#665) and X1 (#255/#664/#82) in review; both program gates that fenced wave 1 are discharged. L2
+is unblocked. The critical-path prerequisite (C2's protocol + snippet shape as contract text) is met.
 
 **Critical path:** C1 → C2 → L2 (the fleet loop is the largest payoff and sits deepest).
 **Wave 1** (kills the live fractures): C1, L1, D1, X1 — after the wave-1 entry gate (forks locked).
