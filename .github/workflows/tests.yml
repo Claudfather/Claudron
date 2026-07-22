@@ -23,4 +23,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e '.[dev]'
+      # Parts of the suite (init --personal's seed commit, the sync round-trip)
+      # shell out to `git commit`; a bare runner has no user identity and
+      # refuses to auto-guess one, so provide one before running the tests.
+      - name: Configure git identity for the test suite
+        run: |
+          git config --global user.email "ci@claudron.invalid"
+          git config --global user.name "Claudron CI"
       - run: pytest -q
