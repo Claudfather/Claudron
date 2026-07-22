@@ -17,8 +17,8 @@ user's temp dir when no vault resolves), and exits 0.
   stale.
 - PreCompact → block-and-instruct once per session: route the agent to its
   own capture door. Front-end-neutral by construction — the engine never
-  asks *who else is here* (see the shim below for the one exception, and
-  its removal condition).
+  asks *who else is here*; a front-end shipping its own prompt defers by
+  detecting the engine's registered ``hook pre-compact`` entry.
 - SessionEnd → ``sync --push`` (fail open; nothing to inject).
 """
 
@@ -66,34 +66,6 @@ def _stdin_payload() -> dict:
         return {}
 
 
-def _shim_defers_to_front_end() -> bool:
-    """**Transitional shim — delete on the condition below.**
-
-    The contract's claim mechanism is structural: the engine always prompts,
-    and a front-end shipping its own prompt defers when it finds the engine's
-    registered ``hook pre-compact`` entry (``docs/CLI_CONTRACT.md``
-    §Session-loop protocol, "Claim mechanism"). This install-tree glob is the
-    interim inverse, kept for exactly one reason: a front-end that has not yet
-    shipped its defer still prompts unconditionally, and two block-prompts on
-    one event would double up.
-
-    **Removal condition:** the front-end's defer release. **Removal ordering
-    is mandatory** — this deletion must ship at or before that release. Delete
-    it after, and both sides yield: nobody prompts, silently. (The reverse
-    ordering's worst case is a bounded double-prompt window, chosen
-    deliberately.) It is the only place in the engine that reads a consumer's
-    tree; when it goes, R5 has no residue here.
-
-    Bounded: marketplace/plugin layout is one level deep, and the dir itself
-    is the signal (a ``**/claudna/*`` glob walked the whole cache on the miss
-    path and missed empty dirs — gauntlet finding).
-    """
-    plugins = Path.home() / ".claude" / "plugins"
-    if not plugins.is_dir():
-        return False
-    return any(plugins.glob("*/claudna")) or any(plugins.glob("*/*/claudna"))
-
-
 def session_start_brief(vault: Vault) -> str:
     """The order-sensitive SessionStart composition: bounded pull, THEN
     recall (pull must precede recall or machine B briefs stale — the
@@ -138,13 +110,12 @@ def hook_pre_compact(vault: Vault | None) -> int:
     The prompt names no front-end: it routes the agent to *its own* capture
     door, whichever that is, and falls back to the engine's CLI. Which
     participant holds the prompt is settled structurally by the contract's
-    claim mechanism, not by this handler looking around — except through the
-    transitional shim, which is documented at its removal condition.
+    claim mechanism, not by this handler looking around: the engine always
+    prompts where its hook is installed, and a front-end shipping its own
+    prompt defers when it finds that registered ``hook pre-compact`` entry.
     """
     payload = _stdin_payload()
     if vault is None:
-        return 0
-    if _shim_defers_to_front_end():
         return 0
     session_id = str(payload.get("session_id") or "unknown")
     marker = Path(tempfile.gettempdir()) / f"claudron-precompact-{session_id}"

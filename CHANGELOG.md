@@ -33,17 +33,20 @@
   shipping its own prompt defers when it finds the engine's registered
   `hook pre-compact` entry. (boundary program C2, fork F1)
 
-### Deprecated
-- **The PreCompact plugin-install-tree glob is a transitional shim, scheduled
-  for deletion.** It is the engine's last piece of consumer-sniffing (R5) and
-  survives only until a front-end's defer ships. **Release ordering is
-  mandatory and this is the entry to key on: the release that deletes the shim
-  must precede or accompany the front-end's defer release.** Defer-first while
-  the shim lives means both sides yield and *nobody* prompts, silently; the
-  reverse ordering's worst case is a bounded double-prompt window, accepted
-  deliberately. The end-state test is written and skip-marked — the removal
-  release flips it on. (boundary program C2, fork F1; clauDNA #253/#254 is the
-  waiting consumer)
+### Removed
+- **The PreCompact plugin-install-tree glob is gone — the engine no longer
+  sniffs for a front-end.** It was the engine's last piece of consumer-name
+  sniffing (register rule R5); with it deleted, `hooks.py` names no consumer and
+  the engine **always prompts** where its PreCompact hook is installed. The
+  end-state test C2 wrote and skip-marked is now enabled. **Behavior change for
+  co-installed hosts:** a host running both the engine's hook and a front-end
+  that still prompts unconditionally now sees the engine's prompt too — a
+  bounded double-prompt window until that front-end ships its defer, accepted
+  deliberately (the reverse — both sides yielding so *nobody* prompts, silently
+  — is the failure F1's ordering prevents). **Release ordering is mandatory:
+  this removal must precede or accompany the front-end's defer release** — it is
+  the release clauDNA #254's defer keys on. (boundary program, fork F1; #85;
+  clauDNA #253/#254 is the waiting consumer)
 
 ## 0.3.0 — 2026-07-20
 

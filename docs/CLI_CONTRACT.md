@@ -261,14 +261,16 @@ The claim is **structural** — nobody registers, nobody configures:
 Both standalone modes fall out for free: with no engine entry the front-end
 prompts; with no front-end the engine prompts.
 
-> **Transitional shim (temporary, and ordered).** Until a front-end's defer
-> ships, the engine yields to one it can see in the plugin install tree. That
-> glob is the single R5 exception in the engine and is deleted on a stated
-> condition — the front-end's defer release. **The removal ordering is
-> mandatory: the engine's shim-removal release precedes or accompanies that
-> defer release.** Defer-first while the shim lives means both sides yield and
-> *nobody* prompts, silently; the reverse ordering's worst case is a bounded
-> double-prompt window, accepted deliberately.
+> **History — the transitional shim (removed).** Through the transition to the
+> structural claim above, the engine carried one R5 exception: a glob of the
+> plugin install tree, by which it yielded to a front-end it could see there
+> before that front-end shipped its own defer. It was **removed** in the
+> shim-removal release (#85); the claim is now structural end-to-end and the
+> engine names no consumer. The removal ordering is recorded here because a
+> consumer's defer keys on it: the shim-removal release had to **precede or
+> accompany** the front-end's defer release. Defer-first while the shim lived
+> meant both sides yield and *nobody* prompts, silently; removal-first risks
+> only a bounded double-prompt window, accepted deliberately.
 
 ### The hook-settings snippet — normative shape
 
