@@ -62,15 +62,49 @@ class SyncError(Exception):
     these to exit 3; conflicts are NOT errors, they are reported results."""
 
 
+# Fallback commit identity for the engine's OWN commits — sync's commit and
+# init's seed commit. On a host with no configured git identity (a fresh Pi, a
+# container, CI), git refuses to auto-guess one and the commit fails, silently
+# dropping vault writes — and those low-config hosts are exactly the ones the
+# fleet loop targets (#91). We inject this for `commit` ONLY when no identity is
+# configured; a user's own identity is preserved whenever present.
+_FALLBACK_IDENTITY = ("-c", "user.name=Claudron", "-c", "user.email=claudron@claudron.invalid")
+
+
+def _has_git_identity(root: Path) -> bool:
+    """True when a commit identity (user.name AND user.email) is configured for
+    *root* at any scope. A plain `git config` read — not run_git — so it never
+    recurses through the commit-identity injection below."""
+    for key in ("user.name", "user.email"):
+        try:
+            got = subprocess.run(
+                ["git", "-C", str(root), "config", key],
+                capture_output=True, text=True,
+            )
+        except (FileNotFoundError, PermissionError):
+            return False
+        if got.returncode != 0 or not got.stdout.strip():
+            return False
+    return True
+
+
 def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
     """The package git invoker: guarded subprocess with SyncError-typed
     environment failures (git missing/not executable, timeouts). Every
     *vault-scoped* git call goes through this — the one deliberate
     exception is cli._derive_owner's global `git config` lookup, which
-    must not receive `-C root` and carries its own guard."""
+    must not receive `-C root` and carries its own guard.
+
+    A `commit` on a host with no configured git identity gets a fallback
+    identity injected (:data:`_FALLBACK_IDENTITY`) so the engine's commits
+    never silently fail on a bare host (#91); a configured identity always
+    wins."""
+    prefix: list[str] = []
+    if args and args[0] == "commit" and not _has_git_identity(root):
+        prefix = list(_FALLBACK_IDENTITY)
     try:
         return subprocess.run(
-            ["git", "-C", str(root), *args],
+            ["git", "-C", str(root), *prefix, *args],
             capture_output=True, text=True, timeout=timeout,
         )
     except (FileNotFoundError, PermissionError) as exc:
