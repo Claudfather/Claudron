@@ -261,16 +261,10 @@ The claim is **structural** — nobody registers, nobody configures:
 Both standalone modes fall out for free: with no engine entry the front-end
 prompts; with no front-end the engine prompts.
 
-> **History — the transitional shim (removed).** Through the transition to the
-> structural claim above, the engine carried one R5 exception: a glob of the
-> plugin install tree, by which it yielded to a front-end it could see there
-> before that front-end shipped its own defer. It was **removed** in the
-> shim-removal release (#85); the claim is now structural end-to-end and the
-> engine names no consumer. The removal ordering is recorded here because a
-> consumer's defer keys on it: the shim-removal release had to **precede or
-> accompany** the front-end's defer release. Defer-first while the shim lived
-> meant both sides yield and *nobody* prompts, silently; removal-first risks
-> only a bounded double-prompt window, accepted deliberately.
+> The R5 plugin-glob shim that formerly bridged this transition was **removed in
+> #85**; the claim is now structural end-to-end. A consumer's defer release keys
+> on that removal release — ordering and rationale are in the CHANGELOG
+> (`Removed`); clauDNA #254 is the waiting consumer.
 
 ### The hook-settings snippet — normative shape
 

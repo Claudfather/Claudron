@@ -105,7 +105,7 @@ class TestPreCompactHook:
         assert "/reflect" not in out["reason"]  # retired skill, never referenced
 
     def test_prompt_names_no_front_end(
-        self, vault_dir: Path, capsys, monkeypatch, fake_home
+        self, vault_dir: Path, capsys, monkeypatch
     ):
         """R5 at the surface that reaches an agent: the block reason routes
         through *your* capture door, whichever it is. A front-end name here
@@ -129,7 +129,7 @@ class TestPreCompactHook:
         assert out["decision"] == "block"
 
     def test_second_compaction_passes(
-        self, vault_dir: Path, capsys, monkeypatch, fake_home
+        self, vault_dir: Path, capsys, monkeypatch
     ):
         session = f"sess-{uuid.uuid4()}"
         assert "block" in self._run(vault_dir, capsys, monkeypatch, session)
