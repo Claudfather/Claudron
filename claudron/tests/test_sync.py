@@ -85,6 +85,39 @@ class TestSyncRoundTrip:
         assert rc == 3
         assert "not a git repository" in capsys.readouterr().err
 
+    def test_commits_without_a_configured_git_identity(self, tmp_path, monkeypatch):
+        """#91: the engine commits on the operator's behalf, so a host with no
+        git identity (fresh Pi / container / CI) must still commit — run_git
+        injects a fallback identity for its own commits. Without the fix, git
+        refuses to auto-guess and the commit is silently lost."""
+        from claudron.sync import _has_git_identity, run_git, sync
+        from claudron.vault import detect
+
+        # Isolate from any ambient identity (global/system config + env vars).
+        home = tmp_path / "home"
+        home.mkdir()
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(home / "nogitconfig"))
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", str(home / "nogitconfig-sys"))
+        for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
+                    "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+            monkeypatch.delenv(var, raising=False)
+
+        root = tmp_path / "vault"
+        (root / "_shared" / "knowledge").mkdir(parents=True)
+        run_git(root, "init", "--initial-branch=main")
+        # Forbid git from auto-deriving an identity from hostname/username, so a
+        # missing identity truly fails a commit (as on a locked-down host).
+        run_git(root, "config", "user.useConfigOnly", "true")
+        assert not _has_git_identity(root)  # precondition: genuinely identity-less
+
+        (root / "_shared" / "knowledge" / "n.md").write_text(
+            "---\ntitle: N\ntype: knowledge\nstatus: current\n"
+            "owner: t\ncreated: 2026-07-01\n---\n\n# N\n\nbody\n"
+        )
+        result = sync(detect(root), pull=False, push=False)
+        assert result.committed, f"commit dropped on an identity-less host: {result.detail}"
+
     def test_sync_json_envelope(self, synced_pair, capsys):
         a, _ = synced_pair
         rc = main(["--vault", str(a), "sync", "--json"])
