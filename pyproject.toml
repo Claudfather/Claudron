@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claudron"
-version = "0.3.0"
+version = "0.4.0"
 description = "Markdown-based knowledge engine for Claude Code agent fleets"
 authors = [{ name = "Chris Rogers" }]
 readme = "README.md"
