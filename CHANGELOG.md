@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-07-23
 
 ### Added
 - **`docs/CLI_CONTRACT.md` §Session-loop protocol** — the session loop is now
