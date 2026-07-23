@@ -1,11 +1,11 @@
 ---
 title: "Boundary re-architecture — implementing §10 across Claudron · clauDNA · Claudlobby"
 type: plan
-status: draft
+status: complete
 owner: chris
 tags: [plan, epic, boundaries, architecture, claudron, claudna, claudlobby]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-07-23
 ---
 
 # Boundary re-architecture — overview
@@ -96,14 +96,21 @@ this table is authoritative). Update it in the PR that changes a phase's state.
 
 | # | State | As of | Evidence |
 |---|---|---|---|
-| C1 | ✅ shipped | 2026-07-21 | Claudron #79 → `219b440`, released v0.3.0 |
-| D1 | ✅ shipped (partial by design) | 2026-07-22 | clauDNA #253 merged; **steps 4 + 5 carried to clauDNA #254** (F1 ordering: the defer ships at/after the shim-removal release; `--source-url` now exists post-C2) |
-| C2 | ✅ shipped | 2026-07-22 | Claudron #84 → `b6363a2`; closed #44 + #81; CHANGELOG `Deprecated` anchor for the shim in place (clauDNA #254 keys on it). **Shim removal is its own release — tracked as Claudron #85**, F1-ordered before #254's defer |
-| L1 | 🟡 in review | 2026-07-22 | Claudlobby #665 (mergeable); program gate 2 discharged — #511/#512 re-scoped, #513/#251 closed (decision C) |
-| X1 | 🟡 in review | 2026-07-22 | Claudron root+seams merged in #79; sibling PRs open — clauDNA #255, Claudlobby #664; Claudron mission-hygiene rider #82 |
-| L2 · L3 · D2 · L4 | ⬜ not started | — | downstream; L2 unblocked by C2 (protocol + snippet shape are contract text) |
+| C1 | ✅ shipped · released **v0.3.0** | 2026-07-21 | Claudron #79 → `219b440` |
+| C2 | ✅ shipped · released **v0.4.0** | 2026-07-23 | Claudron #84 → `b6363a2`; the F1 glob shim removed in #85/#90 (`ef503cf` — engine no longer sniffs for a front-end), released in **v0.4.0** (#93) |
+| D1 | ✅ shipped | 2026-07-23 | clauDNA #253 (steps 1–3) + #264 (steps 4+5 — F1 capture-prompt defer + F7 provenance; closed #254). Hook `SHIM_REMOVAL_RELEASE="0.4.0"` **matches the cut release**, so the consumer-defer is safely ordered (defers only at engine ≥ 0.4.0, which owns the neutral prompt — no "both yield, nobody prompts" gap) |
+| L1 | ✅ shipped | 2026-07-22 | Claudlobby #665 (validator inversion; COMPAT_FLOOR wired; phantom-MCP deleted) |
+| X1 | ✅ shipped | 2026-07-22 | Claudron #79 (root + seams) + mission-hygiene rider #82; clauDNA #255; Claudlobby #664 |
+| L2 | ✅ shipped · **live** | 2026-07-23 | Claudlobby #679; **activated** by the `[vault]` pin bump to `@v0.4.0` (#685, closed #680) — the loop now composes against an engine that resolves `CLAUDRON_VAULT_PATH` and defers to the engine's PreCompact prompt |
+| L3 | ✅ shipped | 2026-07-23 | Claudlobby #683 (22 referential lessons → vault; 3 behavior notes → `library/protocols/`; no compose-from-vault renderer, F4) |
+| D2 | ✅ shipped | 2026-07-23 | clauDNA #263 (closure-triage ledger + Q-closure authoring rule) |
+| L4 | ✅ shipped | 2026-07-23 | Claudlobby #684 (folds #682 — R3 hook-snippet parity gate + honest N-bot contention + rename-map + boundary invariants now run in CI's `vault-tests` lane) |
 
-**Open follow-up trackers** (owned, out of any single phase): Claudron #85 (F1 shim removal — the F1-ordered release), clauDNA #254 (D1 steps 4+5), Claudron #83 (no CI — the register's drift gates don't run on PRs), clauDNA #256 (`project-template/CLAUDE.md` lacks the vault seam). Program gate 2 is discharged (above); gate 3 (post-wave-2 checkpoint) now carries #513's soak criteria (below).
+**Program status: COMPLETE.** All nine phases shipped across the three repos. Claudron **v0.4.0** was cut (C1 + C2 + the F1 shim removal + F7 provenance + the sync-identity fix #91) and the Claudlobby `[vault]` pin bumped to `@v0.4.0` (#685) — the single step that took the L2 fleet session loop from dormant to live. Every wave left all three repos independently releasable, as designed; the two locked cuts (F3's `CLAUDRON_VAULT` alias in C1, F1's shim in v0.4.0) both landed with their release ordering respected.
+
+**Closed follow-up trackers:** Claudron #85 (shim removal — released v0.4.0), #83 (CI now runs the register's drift gates); clauDNA #254 (D1 steps 4+5 — via #264); Claudlobby #680 (loop dormancy — pin bumped), #682 (R3 gate was CI-dead — `vault-tests` lane now runs it). Both program gate 2 (issue-tracker reconciliation) and gate 3 (post-wave-2 checkpoint: wiring landed **and** verified — the loop composes and the parity/contention gates are green) are discharged.
+
+**Remaining backlog** (explicitly deferred, non-blocking — none gate the program or the release): Claudron #88 (`status --json` rebuilds+writes the index — a read-verb that writes in place), clauDNA #256 (`project-template/CLAUDE.md` lacks the vault seam), Claudlobby #681 (consolidate the three `shutil.which(claudron)` probes). **Separate track, owned by chris:** the vault-nesting migration (Claudlobby #602/#609) — the recursive `local/<system>/<fleet>/` containment restructuring — is sequenced *after* this program; Claudron's P1 nested-scanner half already merged (#49).
 
 | # | Phase | Repo | Size | Delivers |
 |---|---|---|---|---|
@@ -131,9 +138,12 @@ this table is authoritative). Update it in the PR that changes a phase's state.
 | L4 | S | L1 | D2 |
 | X1 | M | — (content ratified by §10; texts exist on the landing branches) | everything |
 
-**Progress (2026-07-22):** the contract-authoring spine is shipped — **C1, D1, C2 merged**; L1
-(#665) and X1 (#255/#664/#82) in review; both program gates that fenced wave 1 are discharged. L2
-is unblocked. The critical-path prerequisite (C2's protocol + snippet shape as contract text) is met.
+**Progress (2026-07-23) — COMPLETE:** all nine phases are merged across the three repos and Claudron
+**v0.4.0** is released; the Claudlobby `[vault]` pin bump to `@v0.4.0` (#685) took the L2 fleet loop
+from dormant to live. Both program gates that fenced wave 1 are discharged, and gate 3 (the
+post-wave-2 checkpoint — wiring landed *and* verified) is met: the loop composes against a
+vault-resolving engine and the R3 hook-snippet parity + N-bot contention gates are green in CI's
+`vault-tests` lane. Per-phase evidence is in the authoritative status ledger above.
 
 **Critical path:** C1 → C2 → L2 (the fleet loop is the largest payoff and sits deepest).
 **Wave 1** (kills the live fractures): C1, L1, D1, X1 — after the wave-1 entry gate (forks locked).
