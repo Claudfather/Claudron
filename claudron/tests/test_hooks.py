@@ -24,10 +24,12 @@ PROTOCOL = "Session-loop protocol"
 
 @pytest.fixture
 def fake_home(tmp_path: Path, monkeypatch):
-    """A HOME the transitional shim can glob for real.
+    """An isolated HOME so a test can materialize a plugin install tree
+    without touching the developer's real one.
 
-    The shim reads `~/.claude/plugins`; stubbing the function under test
-    would pin nothing about the mechanism the removal release deletes.
+    The engine no longer reads `~/.claude/plugins` — the F1 shim that did is
+    gone — but the end-state test still builds that tree here to prove the
+    engine ignores it, and isolation keeps the mkdir out of the real home.
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -72,13 +74,14 @@ class TestSessionStartHook:
 
 
 class TestPreCompactHook:
-    """F1's transitional-state matrix (boundary program C2).
+    """F1's end state (boundary program C2 wrote the matrix; the shim-removal
+    release, #85, reached it).
 
     The engine **always prompts** where its PreCompact hook is installed and
-    never sniffs a consumer — with exactly one exception, the transitional
-    shim, which survives only until the front-end's defer release ships
-    (`CLI_CONTRACT.md` §Session-loop protocol). Both cells are pinned so the
-    removal release is a visible behavior change, not a silent one.
+    never sniffs a consumer — the plugin install tree no longer changes the
+    outcome. A front-end shipping its own prompt defers structurally by
+    detecting the engine's registered `hook pre-compact` entry
+    (`CLI_CONTRACT.md` §Session-loop protocol).
     """
 
     def _run(self, vault_dir: Path, capsys, monkeypatch, session=None) -> str:
@@ -94,14 +97,15 @@ class TestPreCompactHook:
     def test_prompts_when_no_front_end_is_installed(
         self, vault_dir: Path, capsys, monkeypatch, fake_home
     ):
-        """Shim finds nothing ⇒ the engine prompts. Bare-Claudron install."""
+        """No plugin install tree present ⇒ the engine prompts. Bare-Claudron
+        install."""
         out = json.loads(self._run(vault_dir, capsys, monkeypatch))
         assert out["decision"] == "block"
         assert "claudron capture --stdin" in out["reason"]
         assert "/reflect" not in out["reason"]  # retired skill, never referenced
 
     def test_prompt_names_no_front_end(
-        self, vault_dir: Path, capsys, monkeypatch, fake_home
+        self, vault_dir: Path, capsys, monkeypatch
     ):
         """R5 at the surface that reaches an agent: the block reason routes
         through *your* capture door, whichever it is. A front-end name here
@@ -110,26 +114,14 @@ class TestPreCompactHook:
         assert "claudna" not in out["reason"].lower()
         assert "capture door" in out["reason"]  # the neutral routing phrase
 
-    def test_shim_defers_while_it_lives(
-        self, vault_dir: Path, capsys, monkeypatch, fake_home
-    ):
-        """The transitional shim, pinned by its real mechanism: a plugin dir
-        present ⇒ the engine yields, so a front-end still shipping its own
-        unconditional prompt doesn't double up before its defer release."""
-        (fake_home / ".claude" / "plugins" / "marketplace" / "claudna").mkdir(
-            parents=True
-        )
-        assert self._run(vault_dir, capsys, monkeypatch) == ""
-
-    @pytest.mark.skip(
-        reason="F1 end state: flips on in the release that deletes the shim — "
-        "which must precede or accompany the front-end's defer release"
-    )
     def test_end_state_prompts_in_both_cells(
         self, vault_dir: Path, capsys, monkeypatch, fake_home
     ):
-        """Written now, enabled by the removal release: with the shim gone the
-        engine prompts in *both* cells and the plugin dir stops mattering."""
+        """The F1 end state, now live (this is the removal release): with the
+        shim gone the engine prompts even with a plugin install tree present —
+        the tree stops mattering. Its dual (no tree ⇒ prompt) is
+        `test_prompts_when_no_front_end_is_installed`; together they pin both
+        cells."""
         (fake_home / ".claude" / "plugins" / "marketplace" / "claudna").mkdir(
             parents=True
         )
@@ -137,7 +129,7 @@ class TestPreCompactHook:
         assert out["decision"] == "block"
 
     def test_second_compaction_passes(
-        self, vault_dir: Path, capsys, monkeypatch, fake_home
+        self, vault_dir: Path, capsys, monkeypatch
     ):
         session = f"sess-{uuid.uuid4()}"
         assert "block" in self._run(vault_dir, capsys, monkeypatch, session)

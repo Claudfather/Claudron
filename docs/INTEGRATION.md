@@ -224,10 +224,13 @@ bind an integration that ships its **own** capture prompt:
   compaction, you must defer when the engine's `pre-compact` entry is
   registered — detected by a hook command ending in `hook pre-compact` in the
   host's settings files. Both prompting is a defect; the protocol section
-  specifies the detection exactly. **Read that section's transitional note
-  before you ship the defer:** while the engine still carries its shim, a defer
-  that ships first means both sides yield and *nobody* prompts. The release
-  ordering is stated there and it binds you.
+  specifies the detection exactly. The engine now prompts unconditionally where
+  its hook is installed (the earlier R5 shim that yielded to a detected
+  front-end was removed in #85), so a front-end's defer keys on that
+  shim-removal engine release: ship your defer at or after it. Deferring against
+  an older engine that still carries the shim means both sides yield and
+  *nobody* prompts — the ordering rationale is in the engine CHANGELOG
+  (`Removed`).
 - **Composed hook entries are a rendered copy.** If you generate the settings
   block yourself instead of running `hooks install`, gate it against the shape
   in that section (register rule R3) — a drifted copy silently runs stale hooks
