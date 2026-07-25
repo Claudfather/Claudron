@@ -88,6 +88,10 @@ Claudron works standalone as a knowledge engine. Commands marked with **(claudlo
 | `validate` | Lint notes against `SCHEMA.md` — lenient by default, `--strict` = the authoring/engine tier |
 | `status` | Vault contents and health summary (incl. conflict quarantine) |
 | `lookup` | Search vault knowledge by title, tags, or content |
+| `related` | Notes linked to/from a note (wikilink graph); `--hops 1` or `2` |
+| `links` | Report broken wikilinks and orphan notes (`--broken` / `--orphans`) |
+| `graph` | Export the wikilink graph — interactive HTML, or `--json` |
+| `promote` | Set a note's maturity: `draft` / `verified` / `canonical` |
 | `index` | Build or rebuild the frontmatter index |
 | `version` | Print version |
 | `fleet add` | Scaffold a fleet overlay inside the vault |
