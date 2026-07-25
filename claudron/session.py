@@ -20,7 +20,7 @@ from .vault import Vault
 
 # Whole-brief hard cap (count_tokens proxy, same as
 # schema.CONVENTIONS_BUDGET — which caps just the conventions component at
-# ≤160; this caps the whole brief). Conventions first, then project notes,
+# ≤120 soft / ≤160 hard; this caps the whole brief). Conventions first, then project notes,
 # then shared matches until the budget is spent — the brief competes with
 # real work for context, so it degrades by dropping notes, never growing.
 BRIEF_TOKEN_BUDGET = 900
@@ -106,7 +106,7 @@ def recall(
         # Quarantine applies here too: CONVENTIONS.md bypasses the tier
         # walker (injected, not retrieved), so the parse-time guard never
         # sees it — without this check a conflicted CONVENTIONS.md would
-        # inject raw markers into every session brief (gauntlet finding).
+        # inject raw markers into every session brief.
         if has_conflict_markers(text):
             conventions = None
         else:

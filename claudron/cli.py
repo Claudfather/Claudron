@@ -187,7 +187,7 @@ def _resolve_vault(args) -> Vault:
             + _removed_var_hint(None),
             file=sys.stderr,
         )
-        sys.exit(3)  # environment error (docs/CLI_CONTRACT.md; was 2 pre-0.2.0)
+        sys.exit(3)  # environment error (docs/CLI_CONTRACT.md)
     _warn_shadowed_vault(vault)
     return vault
 
@@ -251,7 +251,7 @@ def _require_claudlobby_root(args, command: str) -> Path:
             f"  specify with: claudron {command} --claudlobby <path>",
             file=sys.stderr,
         )
-        sys.exit(3)  # environment error (docs/CLI_CONTRACT.md; was 2 pre-0.2.0)
+        sys.exit(3)  # environment error (docs/CLI_CONTRACT.md)
     return cl_root
 
 
@@ -622,7 +622,7 @@ def _derive_owner(args) -> str:
             return name
     except (OSError, subprocess.TimeoutExpired):
         # TimeoutExpired is a SubprocessError, NOT an OSError — without
-        # naming it, the timeout guard guards nothing (review minor 6).
+        # naming it, the timeout guard guards nothing.
         pass
     return os.environ.get("USER", "unknown")
 

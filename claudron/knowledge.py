@@ -110,7 +110,7 @@ def _stamp(fm: dict) -> str:
 
     The single home of this derivation — the index and E4's future
     notes.updated column must use it too, or recency sorting and ranking
-    silently diverge (simplify-panel finding)."""
+    silently diverge."""
     return str(fm.get("updated") or fm.get("created") or "")
 
 
@@ -568,8 +568,8 @@ def _collect_all_docs(
     # Unrecognized root dirs (the `other:` hatch). A `.claudron-system` container
     # is a recognized tier, not `other:` — exclude it so its nested fleets and
     # shared/ bucket are not over-swept here. Its shared/ is classified `system:`
-    # by note_tiers and indexed for Tier-A recall; P1 deliberately does NOT add
-    # it to this Tier-B general union (recall-union policy deferred to #601/#47).
+    # by note_tiers and indexed for Tier-A recall; system-container shared/ is
+    # Tier-A-only, excluded from the Tier-B recall union.
     # Flat vaults have no systems, so `recognized` == the flat-fleet set and
     # this is byte-identical to before. Hoist the property once — it rebuilds a
     # set on every access (O(n²) if read in-loop).

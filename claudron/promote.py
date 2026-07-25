@@ -90,9 +90,9 @@ def promote(
 
     # One lock over read→write→index (same critical section as capture/append):
     # a concurrent writer must not stale the index between our read and rewrite.
-    # NOTE (E5 PR2): this guarded-mutate skeleton mirrors engine.append_addendum;
-    # when --to-tier lands as the 3rd note-mutator, extract a shared
-    # engine._guarded_mutate(mutate, refresh) primitive (rule of three).
+    # This mirrors engine.append_addendum's guarded-mutate skeleton;
+    # extract a shared engine._guarded_mutate(mutate, refresh) when a 3rd
+    # in-place note-mutator lands (rule of three).
     with vault_write_lock(vault):
         original = note_path.read_text()
         fm_before, _body, _err = parse_note(original)

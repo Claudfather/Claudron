@@ -1,9 +1,9 @@
 """The write engine: compose, validate, dedup, write — one path in.
 
-The shared seam the roadmap names (cycle-1): `claudron capture` (CLI),
-`claudron new` (its composer), and E3's MCP `claudron_write` all go through
-this module, so N writers get one validate/dedup implementation. Nothing
-writes a note into a vault except through here.
+The shared seam the roadmap names (cycle-1): `claudron capture` (CLI) and
+`claudron new` (its composer) go through this module, so N writers get one
+validate/dedup implementation; E3's future MCP `claudron_write` will join
+them. Nothing writes a note into a vault except through here.
 
 Dedup **routes, never hard-rejects**: a near-duplicate becomes a
 ``suggest_update``/``suggest_supersede`` result returned to the caller —
@@ -14,7 +14,7 @@ The write path also *maintains* the index: after a note lands, its entry
 is appended and ``index.json`` rewritten last (mtime ≥ the note's), so the
 next write loads the index instead of rebuilding it. Without this, every
 capture stales the index and fleet writes degrade to Θ(vault) each —
-Θ(N²) over a vault's life (gauntlet finding).
+Θ(N²) over a vault's life.
 """
 
 from __future__ import annotations

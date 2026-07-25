@@ -589,7 +589,7 @@ def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None)
             # Name the actual condition — a frontmatter conflict would
             # otherwise misdiagnose as generic E004 and a body-only
             # conflict would validate CLEAN while being quarantined from
-            # search everywhere else (gauntlet finding).
+            # search everywhere else.
             return [
                 Finding(
                     code="E004",

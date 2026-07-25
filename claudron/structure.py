@@ -2,7 +2,7 @@
 
 The structure sibling of :mod:`claudron.schema`'s frontmatter lens: schema.py
 lints note *content*, this lints the vault's *shape* against VAULT-STRUCTURE.md
-(P1 of the vault-structure contract). :func:`check_structure` is pure and
+(the vault-structure contract). :func:`check_structure` is pure and
 read-only; :func:`fix_structure` is the opt-in, creation-only, contained repair
 path behind ``validate --fix`` — it never moves or deletes, and never escapes
 the vault root.
@@ -109,7 +109,7 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
     # skip and the USER_RESERVED continue, so the non-fleet names that can still
     # be "recognized" are: a non-dot infra dir (__pycache__), named by
     # _INFRA_SKIP without re-adding the reserved names that already continued
-    # out; and an opt-in `.claudron-system` container (P1) — a valid top-level
+    # out; and an opt-in `.claudron-system` container — a valid top-level
     # dir, never an S3. Its nested fleets live one level down, so this top-level
     # walk never reaches them (they cannot be a false S3 either).
     known = vault.recognized_top_level | _INFRA_SKIP

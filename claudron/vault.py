@@ -1,4 +1,4 @@
-"""Vault detection, scaffolding, validation, and status.
+"""Vault detection, scaffolding, status, and tenancy.
 
 A vault is a directory containing ``_shared/`` (or ``shared/``) at its
 root. Detection walks up from a starting path (like git walks up looking
@@ -43,7 +43,7 @@ SKIP_DIRS = frozenset(
 
 SHARED_MARKERS = ("_shared", "shared")
 
-# Opt-in marker FILE (Claudlobby#602 P1). A top-level dir carrying it is a
+# Opt-in marker FILE. A top-level dir carrying it is a
 # *system container*: it holds nested fleets one level down (`<system>/<fleet>/
 # fleet.yaml`) plus its own `<system>/shared/` knowledge bucket. A vault with no
 # such marker is flat and scans byte-identically to before — the invariant.
@@ -52,8 +52,7 @@ SYSTEM_MARKER = ".claudron-system"
 # Single source of truth for the shared tier tree: keys are the tiers that
 # status/index/search walk; values are on-disk filing subdirs (scaffolded
 # nested, walked as one tier — rglob sweeps them in the tier's pass).
-# `planning` was added in E1 (SCHEMA.md), deliberately reversing issue #4 —
-# vault-level planning docs are content.
+# `planning` is a content tier — vault-level planning docs are knowledge.
 SHARED_TIERS: dict[str, tuple[str, ...]] = {
     "knowledge": (),
     "decisions": (),
@@ -180,10 +179,10 @@ class Vault:
         Nested fleet names are deliberately excluded: ``_scan_vault`` folds a
         nested fleet into ``fleets`` under its BARE name, but that name is not a
         top-level dir. Including it would shadow an unrelated same-named
-        top-level dir out of the other:/S3 hatch — silent data loss
-        (Claudlobby#602 review). A flat fleet's dir is ``root/<name>`` (parent
-        IS the root); a nested fleet's is ``root/<system>/<name>`` (parent is
-        the system dir), so ``path.parent == self.root`` selects flat fleets."""
+        top-level dir out of the other:/S3 hatch — silent data loss. A flat
+        fleet's dir is ``root/<name>`` (parent IS the root); a nested
+        fleet's is ``root/<system>/<name>`` (parent is the system dir), so
+        ``path.parent == self.root`` selects flat fleets."""
         flat_fleets = {
             name for name, path in self.fleets.items() if path.parent == self.root
         }
@@ -287,7 +286,7 @@ def _scan_vault(root: Path) -> Vault:
     # Discover fleet overlays (dirs containing fleet.yaml) and opt-in system
     # containers (dirs carrying a .claudron-system marker; their nested fleets
     # live one level down). A flat vault has no markers, so `systems` stays
-    # empty and this is byte-identical to the pre-P1 flat-fleet loop.
+    # empty and this is byte-identical to the flat-fleet loop.
     fleets: dict[str, Path] = {}
     systems: dict[str, Path] = {}
     nested: list[tuple[str, Path]] = []  # deferred: fold AFTER flat fleets
