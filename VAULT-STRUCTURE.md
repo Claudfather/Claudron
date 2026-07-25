@@ -147,8 +147,8 @@ so any agent filing here meets the boundary in-context.
   Claudron's resolution (`Vault.shared`), not a literal path — which is what keeps
   the hub's name cheap to change.
 - **Merge + precedence.** A query returns the union of `_shared/`, the operator's
-  `projects/` notes, and fleet notes, ranked by tier priority (`tier_priority`,
-  function-local in `lookup()`, `claudron/knowledge.py`) — the top three
+  `projects/` notes, and fleet notes, ranked by tier priority (`_tier_rank` / `_TIER_RANK`,
+  module-level in `claudron/knowledge.py`) — the top three
   `project > fleet > shared` of the precedence `SCHEMA.md` §Wikilinks applies to
   link ambiguity.
 - **Single-tenant pooling is intended.** Because one vault = one tenant, a query

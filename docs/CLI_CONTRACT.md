@@ -330,12 +330,11 @@ stdout, and never to stderr where a host might surface them as a session error.
 | Group | Commands |
 |---|---|
 | vault | `init`, `status`, `validate`, `index` |
-| notes | `new`, `lookup`, `related`, `links` |
+| notes | `new`, `lookup`, `related`, `links`, `graph` |
 | session | `recall`, `capture`, `sync`, `hooks` *(E2)* |
 | fleet | `fleet add`, `fleet list` |
 | integration | `plug`, `unplug`, `config`, `migrate` |
-| curation | `promote`, `review` *(E5)* |
-| packs | `pack …`, `scenarios export` *(E6)* |
+| curation | `promote` *(E5)* |
 
 ## Command-specific contracts
 
