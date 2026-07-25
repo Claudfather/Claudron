@@ -7,6 +7,8 @@ Public API::
     vault = detect()                        # walk up from CWD
     results = lookup("auth", vault=vault)   # search vault knowledge
     resolved = resolve_wikilinks(text, vault=vault)  # [[wikilink]] → note refs
+
+Types: `Vault`, `KnowledgeDoc`, `KnowledgeResult` (return types).
 """
 
 from __future__ import annotations

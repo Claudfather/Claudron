@@ -37,7 +37,7 @@ from .vault import Vault, detect
 
 SESSION_START_PULL_TIMEOUT = 2.0  # seconds — the SessionStart latency budget
 SESSION_END_PUSH_TIMEOUT = 10.0  # bounded teardown — a hang isn't an error,
-# so fail-open alone can't save a stalled push (gauntlet finding)
+# so fail-open alone can't save a stalled push
 
 
 def _log(vault: Vault | None, event: str, message: str) -> None:
@@ -161,9 +161,9 @@ def run_hook(event: str, vault: Vault | None) -> int:
     """THE fail-open boundary: whatever goes wrong inside a handler —
     including exception classes the inner guards never anticipated — a
     hook exits 0 with nothing on stdout. One guard at the boundary
-    instead of per-call try blocks of mismatched breadth (gauntlet
-    finding: a PermissionError from the git layer escaped the narrow
-    SyncError catch and would have broken the session)."""
+    instead of per-call try blocks of mismatched breadth (a PermissionError
+    from the git layer escaped the narrow SyncError catch and would have
+    broken the session)."""
     try:
         return _HOOK_HANDLERS[event](vault)
     except Exception as exc:
@@ -204,8 +204,8 @@ def settings_snippet(executable: str) -> dict:
 def _is_claudron_hook(entry: dict, event_cmd: str) -> bool:
     """A claudron hook's identity is (event, ours) — NOT the literal
     command string. Keying on the full path made a moved venv/pipx path
-    append a duplicate entry instead of replacing the stale one (gauntlet
-    finding: the exact portability scenario absolute paths exist for)."""
+    append a duplicate entry instead of replacing the stale one (the
+    exact portability scenario absolute paths exist for)."""
     return any(
         str(h.get("command", "")).endswith(f"hook {event_cmd}")
         for h in (entry.get("hooks") or [])

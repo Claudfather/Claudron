@@ -76,7 +76,7 @@ treated as the type default), `created` (ISO date `YYYY-MM-DD`).
 
 **Universal — required for agent-written notes:** `owner` (the writing
 bot/agent identity; provenance). Human authors may omit it. The write paths
-(`claudron new`, `capture`, MCP `write`) always populate it.
+(`claudron new`, `capture`) always populate it.
 
 **Universal — recommended:** `updated` (ISO date; `init --adopt` backfills
 from file mtime), `tags` (list of strings).

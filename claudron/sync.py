@@ -10,7 +10,7 @@ schema.has_conflict_markers) until resolved.
 The quarantine scan is bounded to what the pull actually changed
 (``ORIG_HEAD..HEAD`` on a clean pull, unmerged files on a conflict) — a
 no-op pull reads zero notes, which keeps the SessionStart hook O(changed),
-not O(vault) (gauntlet finding).
+not O(vault).
 
 Single-writer-per-machine is the E2 assumption; cross-machine
 serialization happens here at the git layer. Hooks call the halves
