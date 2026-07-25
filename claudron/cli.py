@@ -1204,6 +1204,13 @@ def main(argv=None) -> int:
     json_parent.add_argument(
         "--json", action="store_true", help="Emit the standard JSON envelope"
     )
+    # --claudlobby shared by plug/unplug/config. migrate keeps its own inline
+    # copy: a parent injects its options ahead of directly-added ones, which
+    # would move migrate's --claudlobby (currently last) to first in --help.
+    claudlobby_parent = argparse.ArgumentParser(add_help=False)
+    claudlobby_parent.add_argument(
+        "--claudlobby", default=None, help="Claudlobby root (default: auto-detect)"
+    )
 
     # init
     p_init = sub.add_parser(
@@ -1451,24 +1458,19 @@ def main(argv=None) -> int:
     sub.add_parser("version", help="Print version", parents=[json_parent])
 
     # plug
-    p_plug = sub.add_parser("plug", help="Register vault with claudlobby")
-    p_plug.add_argument("vault_path", help="Path to vault")
-    p_plug.add_argument(
-        "--claudlobby", default=None, help="Claudlobby root (default: auto-detect)"
+    p_plug = sub.add_parser(
+        "plug", help="Register vault with claudlobby", parents=[claudlobby_parent]
     )
+    p_plug.add_argument("vault_path", help="Path to vault")
 
     # unplug
-    p_unplug = sub.add_parser("unplug", help="Disconnect vault from claudlobby")
-    p_unplug.add_argument(
-        "--claudlobby", default=None, help="Claudlobby root (default: auto-detect)"
+    p_unplug = sub.add_parser(
+        "unplug", help="Disconnect vault from claudlobby", parents=[claudlobby_parent]
     )
 
     # config
     p_config = sub.add_parser(
-        "config", help="Show resolved config", parents=[json_parent]
-    )
-    p_config.add_argument(
-        "--claudlobby", default=None, help="Claudlobby root (default: auto-detect)"
+        "config", help="Show resolved config", parents=[json_parent, claudlobby_parent]
     )
 
     # fleet
