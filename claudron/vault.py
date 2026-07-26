@@ -209,11 +209,12 @@ def _dir_named(parent: Path, name: str) -> bool:
         return False
 
 
-def _child_dirs(parent: Path) -> Iterator[Path]:
-    """Yield *parent*'s eligible child dirs — sorted, skipping SKIP_DIRS and
-    dotfiles. The single definition of a "scannable" vault directory."""
+def _child_dirs(parent: Path, *, skip: frozenset[str] = SKIP_DIRS) -> Iterator[Path]:
+    """Yield *parent*'s eligible child dirs — sorted, skipping *skip* (default
+    ``SKIP_DIRS``) and dotfiles. The single definition of a "scannable" vault
+    directory; pass ``skip=frozenset()`` to include reserved names."""
     for d in sorted(parent.iterdir()):
-        if d.is_dir() and d.name not in SKIP_DIRS and not d.name.startswith("."):
+        if d.is_dir() and d.name not in skip and not d.name.startswith("."):
             yield d
 
 
@@ -277,11 +278,7 @@ def _scan_vault(root: Path) -> Vault:
     projects: dict[str, Path] = {}
     projects_dir = root / "projects"
     if projects_dir.is_dir():
-        projects = {
-            d.name: d
-            for d in sorted(projects_dir.iterdir())
-            if d.is_dir() and not d.name.startswith(".")
-        }
+        projects = {d.name: d for d in _child_dirs(projects_dir, skip=frozenset())}
 
     # Discover fleet overlays (dirs containing fleet.yaml) and opt-in system
     # containers (dirs carrying a .claudron-system marker; their nested fleets

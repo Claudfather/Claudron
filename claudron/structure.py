@@ -18,7 +18,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from .schema import Finding
-from .vault import SKIP_DIRS, Vault, _dir_named, is_within_root, scaffold_shared_tree
+from .vault import (
+    SKIP_DIRS,
+    Vault,
+    _child_dirs,
+    _dir_named,
+    is_within_root,
+    scaffold_shared_tree,
+)
 
 # Infra names inside SKIP_DIRS that a human never collides with and must never
 # surface in a user-facing message. The user-facing reserved set is the
@@ -117,9 +124,7 @@ def check_structure(vault: Vault, *, strict: bool = False) -> list[Finding]:
     # dir). S2 raw-walks the root deliberately: vault.fleets pre-filters
     # reserved names out (vault._scan_vault), so this is the audit-time
     # backstop for the vector `fleet add` already guards at write time.
-    for child in sorted(root.iterdir()):
-        if not child.is_dir() or child.name.startswith("."):
-            continue
+    for child in _child_dirs(root, skip=frozenset()):
         if _reserved_slot(root, child):
             if (child / "fleet.yaml").is_file():
                 emit(

@@ -357,8 +357,8 @@ def parse_note(text: str) -> tuple[dict | None, str, str | None]:
 # ── per-note validation ───────────────────────────────────────────────
 
 
-def _tier(code: str, strict: bool) -> tuple[str, str] | None:
-    """Resolve a catalog code for the active tier.
+def _resolve_code(code: str, strict: bool) -> tuple[str, str] | None:
+    """Resolve a catalog code for the active validation tier (strict/lenient).
 
     Returns (emitted_code, severity) or None when the code is n/a in this
     tier. A "→ X" deferral emits code X with X's severity — deferrals only
@@ -412,7 +412,7 @@ def validate_note(
                 line_of[key] = i
 
     def emit(code: str, message: str, field: str | None = None) -> None:
-        resolved = _tier(code, strict)
+        resolved = _resolve_code(code, strict)
         if resolved is None:
             return
         emitted, severity = resolved
