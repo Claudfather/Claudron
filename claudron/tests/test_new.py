@@ -276,3 +276,22 @@ class TestReferenceVaultFixture:
         assert (reference_vault / "_shared" / "decisions").is_dir()
         # It's a copy — mutations don't touch the repo's examples/
         (reference_vault / "_shared" / "knowledge" / "scratch.md").write_text("x")
+
+
+class TestNewTagsGrammar:
+    """`new --tags` uses the one tags grammar (docs/CLI_CONTRACT.md): comma
+    split, whitespace stripped, empty segments dropped — a padded flag value
+    no longer lands a literal `" b"` tag in the note."""
+
+    def test_tags_flag_strips_and_drops_empty_segments(
+        self, vault_dir: Path, capsys
+    ):
+        rc = main(
+            ["--vault", str(vault_dir), "new", "knowledge", "Tag Grammar Note",
+             "--owner", "tester", "--tags", "a, b,,c", "--json"]
+        )
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        fm, _, err = parse_note(Path(env["data"]["path"]).read_text())
+        assert err is None
+        assert fm["tags"] == ["a", "b", "c"]
