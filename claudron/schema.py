@@ -141,6 +141,20 @@ def ladder_index(maturity: str) -> int:
     return MATURITY_VALUES.index(maturity) if maturity in MATURITY_VALUES else -1
 
 
+def _as_str_list(value) -> list[str]:
+    """Coerce a frontmatter scalar-or-list to a list of strings — the one
+    home of the `tags:` / `aliases:` shape tolerance. A YAML scalar (`tags:
+    foo`, or a stray non-string like `tags: 5`) is one value: without the
+    coercion a consumer iterating the field walks a string's characters
+    (scoring saw `tags: foo` as ['f','o','o']) or crashes on a non-iterable.
+    Falsy → []."""
+    if not value:
+        return []
+    if isinstance(value, (list, tuple)):
+        return [str(v) for v in value]
+    return [str(value)]
+
+
 def claimed_names(mapping: dict) -> list[str]:
     """Lowercased title + aliases a note claims — the name set wikilink
     resolution and dedup both key on. One home (used by write-time dedup

@@ -21,6 +21,7 @@ from typing import NamedTuple
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     LOOKUP_EXCLUDED,
+    _as_str_list,
     content_fingerprint,
     has_conflict_markers,
     ladder_index,
@@ -124,12 +125,9 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
         return None  # quarantined until a human resolves (stateless)
     fm, body = parse_frontmatter(text)
     title = fm.get("title") or _derive_title(path.stem)
-    tags = fm.get("tags") or []
-    if isinstance(tags, str):
-        tags = [tags]
     return KnowledgeDoc(
         title=title,
-        tags=[str(t) for t in tags],
+        tags=_as_str_list(fm.get("tags")),
         body=body.rstrip(),
         source_path=path,
         tier=tier,
@@ -149,17 +147,10 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
     the entry shape (build_index and the write engine's incremental update
     both construct entries through this). ``content_hash`` is the
     title-independent body fingerprint dedup keys on alongside the title."""
-    # Coerce a scalar `aliases:` to a list here (the single home): otherwise a
-    # note written `aliases: Foo` (a YAML string, not a list) lands as "Foo" and
-    # every consumer that iterates it — wikilink resolution, lookup scoring —
-    # walks its characters instead of the alias.
-    aliases = fm.get("aliases") or []
-    if isinstance(aliases, str):
-        aliases = [aliases]
     return {
         "title": fm.get("title") or _derive_title(md.stem),
-        "tags": fm.get("tags") or [],
-        "aliases": [str(a) for a in aliases],
+        "tags": _as_str_list(fm.get("tags")),
+        "aliases": _as_str_list(fm.get("aliases")),
         "status": fm.get("status", "active"),
         "updated": _stamp(fm),
         "expires": str(fm.get("expires", "")),
