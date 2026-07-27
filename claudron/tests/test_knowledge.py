@@ -9,7 +9,14 @@ from textwrap import dedent
 
 
 from claudron.vault import SCHEMA_VERSION, clear_stale_cache, detect
-from claudron.knowledge import _collect_all_docs, build_index, load_index, lookup
+from claudron.knowledge import (
+    _collect_all_docs,
+    _parse_doc,
+    build_index,
+    index_entry,
+    load_index,
+    lookup,
+)
 
 _NOTE = (
     "---\ntitle: {title}\ntype: knowledge\nstatus: current\nowner: c\n"
@@ -50,6 +57,66 @@ class TestNestedSystemUnion:
         silently vanishes from recall."""
         docs = _collect_all_docs(detect(nested_fleet_shadow_vault))
         assert any(d.tier == "other:experiments" for d in docs)
+
+
+class TestScalarFrontmatterCoercion:
+    """#101: a scalar `tags:` / `aliases:` is one value, never a character
+    sequence — both parse paths (Tier-A `index_entry`, Tier-B `_parse_doc`)
+    route through `_as_str_list`."""
+
+    def _write_scalar_note(self, vault_dir: Path) -> None:
+        (vault_dir / "_shared" / "knowledge" / "scalar-tagged.md").write_text(
+            dedent("""\
+            ---
+            title: Scalar Tagged Note
+            type: knowledge
+            status: current
+            tags: singleton
+            ---
+
+            Nothing else searchable here.
+            """)
+        )
+
+    def test_scalar_tag_scores_as_a_tag(self, vault_dir: Path):
+        """The #101 bug: the raw scalar char-exploded in scoring, so the
+        full tag word could never match. Fails on the pre-fix code."""
+        self._write_scalar_note(vault_dir)
+        vault = detect(vault_dir)
+        results = lookup("singleton", vault)
+        assert results and results[0].match_type == "tag"
+
+    def test_index_entry_coerces_scalar_tags(self):
+        entry = index_entry({"tags": "solo"}, "b", Path("t.md"), "shared", Path("."))
+        assert entry["tags"] == ["solo"]
+
+    def test_index_entry_scalar_aliases_still_coerced(self):
+        entry = index_entry({"aliases": "Foo"}, "b", Path("t.md"), "shared", Path("."))
+        assert entry["aliases"] == ["Foo"]
+
+    def test_non_string_scalar_does_not_crash_either_tier(self, vault_dir: Path):
+        """`tags: 5` (YAML int): pre-fix Tier B iterated an int → TypeError;
+        both tiers now coerce to ["5"]."""
+        note = vault_dir / "_shared" / "knowledge" / "int-tagged.md"
+        note.write_text(
+            dedent("""\
+            ---
+            title: Int Tagged Note
+            type: knowledge
+            status: current
+            tags: 5
+            ---
+
+            Body.
+            """)
+        )
+        assert _parse_doc(note, "shared").tags == ["5"]
+        assert index_entry({"tags": 5}, "b", Path("t.md"), "shared", Path("."))["tags"] == ["5"]
+
+    def test_parse_doc_scalar_tags_unchanged(self, vault_dir: Path):
+        self._write_scalar_note(vault_dir)
+        note = vault_dir / "_shared" / "knowledge" / "scalar-tagged.md"
+        assert _parse_doc(note, "shared").tags == ["singleton"]
 
 
 class TestScoring:
