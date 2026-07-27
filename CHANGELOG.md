@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed
+- **knowledge.py scoring/resolution internals de-duplicated and typed ([#106](https://github.com/Claudfather/Claudron/issues/106), [#107](https://github.com/Claudfather/Claudron/issues/107)).** The tag-exact/tag-partial/filename scoring triple — byte-identical between `_score_index_entry`'s single-phrase block and its per-token loop — now lives once in `_score_term(...)`, with the blocks' only real differences (title weight; whether the word-boundary bonus applies) as keyword arguments. `ResolutionIndex = tuple` becomes a `NamedTuple` (`by_title` / `by_alias` / `by_slug`), so the 3-map shape is visible in the type and `resolve_target` reads fields by name; tuple behavior (unpacking, immutability) is unchanged. Behavior-preservation proven two ways: a 132-case scoring+resolution battery (exact/substr/boundary/tag/partial/filename/multi-token/cap paths; title→alias→slug fall-through with tier-then-path tiebreaks) is byte-identical between main and this change, and the full suite stays green.
+
 ## 0.4.0 — 2026-07-23
 
 ### Added

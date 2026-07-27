@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import NamedTuple
 
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
@@ -336,11 +337,45 @@ def index_divergence(vault: "Vault", *, quarantined: set[str] | None = None) -> 
 # ── scoring ──────────────────────────────────────────────────────────
 
 
+def _score_term(
+    term: str,
+    title: str,
+    tags: list[str],
+    filename: str,
+    *,
+    title_weight: int,
+    boundary_bonus: int = 0,
+) -> tuple[int, str]:
+    """Score one lowercased term against an entry's title/tags/filename.
+
+    Shared by both `_score_index_entry` passes; they differ only in
+    `title_weight` and whether `boundary_bonus` applies.
+    """
+    total = 0
+    best_type = "none"
+    if term in title:
+        total += title_weight
+        if boundary_bonus and _is_word_boundary_match(term, title):
+            total += boundary_bonus
+        best_type = "title"
+    if any(term == t for t in tags):
+        total += W_TAG_EXACT
+        if best_type == "none":
+            best_type = "tag"
+    if any(term in t for t in tags) and not any(term == t for t in tags):
+        total += W_TAG_PARTIAL
+        if best_type == "none":
+            best_type = "tag"
+    if term in filename:
+        total += W_FILENAME
+        if best_type == "none":
+            best_type = "filename"
+    return total, best_type
+
+
 def _score_index_entry(query: str, entry: dict) -> tuple[int, str]:
     """Score a single index entry against *query*. Returns (score, match_type)."""
     q = query.lower()
-    total = 0
-    best_type = "none"
 
     title = entry.get("title", "").lower()
     tags = [str(t).lower() for t in entry.get("tags", [])]
@@ -354,24 +389,14 @@ def _score_index_entry(query: str, entry: dict) -> tuple[int, str]:
         return min(W_ALIAS_EXACT, SCORE_CAP), "alias"
 
     # Single phrase substring (word-boundary matches score higher)
-    if q in title:
-        total += W_TITLE_SUBSTR
-        if _is_word_boundary_match(q, title):
-            total += W_WORD_BOUNDARY_BONUS
-        best_type = "title"
-    if any(q == t for t in tags):
-        total += W_TAG_EXACT
-        if best_type == "none":
-            best_type = "tag"
-    if any(q in t for t in tags) and not any(q == t for t in tags):
-        total += W_TAG_PARTIAL
-        if best_type == "none":
-            best_type = "tag"
-    if q in filename:
-        total += W_FILENAME
-        if best_type == "none":
-            best_type = "filename"
-
+    total, best_type = _score_term(
+        q,
+        title,
+        tags,
+        filename,
+        title_weight=W_TITLE_SUBSTR,
+        boundary_bonus=W_WORD_BOUNDARY_BONUS,
+    )
     if total > 0:
         return min(total, SCORE_CAP), best_type
 
@@ -381,22 +406,12 @@ def _score_index_entry(query: str, entry: dict) -> tuple[int, str]:
         token_total = 0
         token_type = "none"
         for token in tokens:
-            if token in title:
-                token_total += W_TITLE_WORD_OVERLAP
-                if token_type == "none":
-                    token_type = "title"
-            if any(token == t for t in tags):
-                token_total += W_TAG_EXACT
-                if token_type == "none":
-                    token_type = "tag"
-            if any(token in t for t in tags) and not any(token == t for t in tags):
-                token_total += W_TAG_PARTIAL
-                if token_type == "none":
-                    token_type = "tag"
-            if token in filename:
-                token_total += W_FILENAME
-                if token_type == "none":
-                    token_type = "filename"
+            term_total, term_type = _score_term(
+                token, title, tags, filename, title_weight=W_TITLE_WORD_OVERLAP
+            )
+            token_total += term_total
+            if token_type == "none":
+                token_type = term_type
         if token_total > 0:
             return min(token_total, SCORE_CAP), token_type
 
@@ -619,12 +634,16 @@ def wikilink_targets(text: str) -> list[str]:
     return list(seen.values())
 
 
-# The resolution index: three lowercased name→entries maps (title, alias, slug),
-# kept SEPARATE so the SCHEMA title→alias→slug fall-through can be honored (a
-# title match must beat an alias match on a different note). Built once per
-# vault; the graph-wide caller (``related``/``build_edges``) reuses one index
-# across every note rather than rebuilding it per call.
-ResolutionIndex = tuple
+class ResolutionIndex(NamedTuple):
+    """Three lowercased name→entries maps, kept SEPARATE so the SCHEMA
+    title→alias→slug fall-through can be honored (a title match must beat an
+    alias match on a different note). Built once per vault; the graph-wide
+    caller (``related``/``build_edges``) reuses one index across every note
+    rather than rebuilding it per call."""
+
+    by_title: dict[str, list[dict]]
+    by_alias: dict[str, list[dict]]
+    by_slug: dict[str, list[dict]]
 
 
 def build_resolution_index(entries: list[dict]) -> ResolutionIndex:
@@ -640,7 +659,7 @@ def build_resolution_index(entries: list[dict]) -> ResolutionIndex:
         slug = str(e.get("slug") or e.get("filename") or "").lower()
         if slug:
             by_slug.setdefault(slug, []).append(e)
-    return by_title, by_alias, by_slug
+    return ResolutionIndex(by_title, by_alias, by_slug)
 
 
 def resolve_target(target: str, index: ResolutionIndex) -> dict | None:
@@ -651,9 +670,10 @@ def resolve_target(target: str, index: ResolutionIndex) -> dict | None:
     where SCHEMA leaves same-tier ties unspecified — to the note path (a stable,
     walk-order-independent tiebreak, so reindexing never silently reassigns a
     link)."""
-    by_title, by_alias, by_slug = index
     key = target.lower()
-    matches = by_title.get(key) or by_alias.get(key) or by_slug.get(key)
+    matches = (
+        index.by_title.get(key) or index.by_alias.get(key) or index.by_slug.get(key)
+    )
     if not matches:
         return None
     return min(
