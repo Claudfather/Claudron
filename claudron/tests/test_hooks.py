@@ -171,7 +171,7 @@ class TestGauntletPins:
         anticipated still exit 0 with clean stdout."""
         import claudron.hooks as hooks_mod
 
-        def _boom(vault):
+        def _boom(vault, payload):
             raise PermissionError("git exists but is not executable")
 
         monkeypatch.setitem(hooks_mod._HOOK_HANDLERS, "session-start", _boom)

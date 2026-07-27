@@ -92,19 +92,15 @@ def session_start_brief(vault: Vault) -> str:
     return render_brief(recall(vault, project=derive_project()))
 
 
-def hook_session_start(vault: Vault | None) -> int:
+def hook_session_start(vault: Vault, payload: dict) -> int:
     """Emit the session brief on stdout (fail-open, like every hook)."""
-    _stdin_payload()  # drain stdin per the hook protocol
-    if vault is None:
-        _log(None, "session-start", "no vault resolvable — nothing injected")
-        return 0
     brief = session_start_brief(vault)
     if brief:
         print(brief)
     return 0
 
 
-def hook_pre_compact(vault: Vault | None) -> int:
+def hook_pre_compact(vault: Vault, payload: dict) -> int:
     """Block the first compaction with the capture prompt; pass afterwards.
 
     The prompt names no front-end: it routes the agent to *its own* capture
@@ -114,9 +110,6 @@ def hook_pre_compact(vault: Vault | None) -> int:
     prompts where its hook is installed, and a front-end shipping its own
     prompt defers when it finds that registered ``hook pre-compact`` entry.
     """
-    payload = _stdin_payload()
-    if vault is None:
-        return 0
     session_id = str(payload.get("session_id") or "unknown")
     marker = Path(tempfile.gettempdir()) / f"claudron-precompact-{session_id}"
     if marker.exists():
@@ -143,15 +136,17 @@ def hook_pre_compact(vault: Vault | None) -> int:
     return 0
 
 
-def hook_session_end(vault: Vault | None) -> int:
+def hook_session_end(vault: Vault, payload: dict) -> int:
     """Push the session's vault changes; fail open (nothing to inject)."""
-    _stdin_payload()
-    if vault is None:
-        return 0
     try:
         result = sync(vault, pull=False, push=True, timeout=SESSION_END_PUSH_TIMEOUT)
         if not result.ok:
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
+    # Deliberate, not a residual guard the boundary makes redundant: a
+    # vault without a working git setup raises SyncError on every push, so
+    # this is the expected-degradation logger ("skipped", symmetric with the
+    # pull side's catch in session_start_brief) — the boundary's "failed
+    # open" line stays reserved for genuinely unanticipated failures.
     except SyncError as exc:
         _log(vault, "session-end", f"sync --push skipped: {exc}")
     return 0
@@ -163,9 +158,15 @@ def run_hook(event: str, vault: Vault | None) -> int:
     hook exits 0 with nothing on stdout. One guard at the boundary
     instead of per-call try blocks of mismatched breadth (a PermissionError
     from the git layer escaped the narrow SyncError catch and would have
-    broken the session)."""
+    broken the session). The boundary also owns the wire prologue every
+    handler used to repeat: drain the stdin payload, then no-op (exit 0)
+    when no vault resolved."""
     try:
-        return _HOOK_HANDLERS[event](vault)
+        payload = _stdin_payload()
+        if vault is None:
+            _log(None, event, "no vault resolvable — nothing to do")
+            return 0
+        return _HOOK_HANDLERS[event](vault, payload)
     except Exception as exc:
         _log(vault, event, f"hook failed open: {exc!r}")
         return 0
