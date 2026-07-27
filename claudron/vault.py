@@ -22,6 +22,7 @@ from .schema import (
     STALENESS_DONE,
     has_conflict_markers,
     parse_note,
+    set_frontmatter_field,
     split_fence,
 )
 
@@ -398,8 +399,10 @@ def backfill_updated(root: Path) -> int:
 
     The one sanctioned mutation (docs/CLI_CONTRACT.md), at adoption time
     only — it is the remedy for the W101 wall a legacy docs tree would
-    otherwise produce. Line-level insert after ``created:`` (or at the
-    fence top); never re-serializes YAML, so user formatting is preserved.
+    otherwise produce. The stamp goes in via
+    :func:`schema.set_frontmatter_field` — line-level, after ``created:``
+    (or at the fence top); never re-serializes YAML, so user formatting
+    is preserved.
     Scoped to the note tiers (:func:`note_tiers`), never a bare
     ``root.rglob`` — else it would rewrite a fleet's library/voices/runtime
     overlay content, which are not notes. Returns the number of files touched.
@@ -415,20 +418,10 @@ def backfill_updated(root: Path) -> int:
             if err is not None or not fm or "updated" in fm:
                 continue
             stamp = datetime.fromtimestamp(md.stat().st_mtime).date().isoformat()
-            lines = text.splitlines(keepends=True)
-            insert_at = None
-            for i, line in enumerate(lines[1:], start=1):
-                if line.rstrip("\r\n") == "---":
-                    insert_at = i  # fence end — fallback position
-                    break
-                if line.split(":", 1)[0].strip() == "created":
-                    insert_at = i + 1
-                    break
-            if insert_at is None:
-                continue
-            lines.insert(insert_at, f"updated: {stamp}\n")
-            md.write_text("".join(lines))
-            touched += 1
+            new = set_frontmatter_field(text, "updated", stamp)
+            if new != text:
+                md.write_text(new)
+                touched += 1
     return touched
 
 
@@ -621,25 +614,20 @@ def _is_stale(path: Path, today: date, default_ttl_days: int) -> bool:
 def parse_frontmatter(text: str) -> tuple[dict, str]:
     """Split markdown into (frontmatter dict, body str).
 
-    Returns ``({}, text)`` if no frontmatter present.
+    Returns ``({}, text)`` if no frontmatter present. The fence walk is
+    :func:`schema.split_fence`; this stays the lenient vault-walk parser —
+    plain ``safe_load``, and anything unparseable (unclosed fence, YAML
+    error, non-mapping frontmatter) degrades to no-frontmatter.
     """
-    if not text.startswith("---\n") and not text.startswith("---\r\n"):
-        return {}, text
-    lines = text.splitlines(keepends=True)
-    end = None
-    for i, line in enumerate(lines[1:], start=1):
-        if line.rstrip("\r\n") == "---":
-            end = i
-            break
-    if end is None:
+    raw, body, _ = split_fence(text)
+    if raw is None:
         return {}, text
     try:
-        fm = yaml.safe_load("".join(lines[1:end])) or {}
+        fm = yaml.safe_load(raw) or {}
     except yaml.YAMLError:
         return {}, text
     if not isinstance(fm, dict):
         return {}, text
-    body = "".join(lines[end + 1 :]).lstrip("\n")
     return fm, body
 
 

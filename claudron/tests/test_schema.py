@@ -18,6 +18,7 @@ from claudron.schema import (
     TYPE_DIRS,
     Finding,
     parse_note,
+    set_frontmatter_field,
     validate_note,
     validate_path,
 )
@@ -267,3 +268,34 @@ class TestDocParityReaders:
         (tmp_path / "D.md").write_text("## Flags\n\nstale\n\n## Flags\n\nreal\n")
         with pytest.raises(AssertionError, match="expected exactly one"):
             doc_parity.section("D.md", "Flags")
+
+
+class TestSetFrontmatterField:
+    """The write-side primitive is line-level and top-level-only: indented
+    nested-mapping lines never match *field* — replacing one would de-indent
+    it and corrupt the mapping (adopt-backfill and the engine addendum stamp
+    both feed real notes through this call)."""
+
+    def test_nested_field_line_is_not_matched(self):
+        text = (
+            "---\ntitle: f\ncreated: 2026-01-02\n"
+            "metadata:\n  updated: 2020-01-01\n---\nB\n"
+        )
+        out = set_frontmatter_field(text, "updated", "2026-07-26")
+        assert "metadata:\n  updated: 2020-01-01\n" in out  # nested block intact
+        assert "created: 2026-01-02\nupdated: 2026-07-26\n" in out
+
+    def test_nested_field_before_created_still_inserts_after_created(self):
+        text = (
+            "---\ntitle: g\nmetadata:\n  updated: 2020-01-01\n"
+            "created: 2026-01-03\n---\nB\n"
+        )
+        out = set_frontmatter_field(text, "updated", "2026-07-26")
+        assert "metadata:\n  updated: 2020-01-01\n" in out
+        assert "created: 2026-01-03\nupdated: 2026-07-26\n" in out
+
+    def test_top_level_replace_still_wins(self):
+        text = "---\ntitle: d\nupdated: 2020-05-05\n---\nB\n"
+        out = set_frontmatter_field(text, "updated", "2026-07-26")
+        assert "updated: 2026-07-26\n" in out
+        assert "2020-05-05" not in out
