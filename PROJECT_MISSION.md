@@ -66,7 +66,7 @@ A hive mind any agent fleet can run locally and optionally federate.
 - Adding any hosted dependency to the default install path
 - Changes to MCP tool surface (additions, signature changes)
 - Federation work or any cross-tenant query capability (deliberately out of scope for v1)
-- Adopting a non-SQLite storage backend for the index
+- Replacing the derived JSON index (`.claudron/index.json`) with a different storage backend — including graduating it to the deferred SQLite mirror (E4, #18)
 
 ## Success metrics
 
@@ -82,7 +82,7 @@ A hive mind any agent fleet can run locally and optionally federate.
 
 - **Hosted vault storage.** Vaults are git repos owned by tenants. We are not running storage for anyone's knowledge base.
 - **A central registry of public packs.** Discovery is informal at first — GitHub topics, README links, word of mouth. A central registry can come later if needed; building it now is premature.
-- **A graph database backend.** SQLite + an edges table is plenty for the scale Claudron targets. Real graph DBs (Neo4j etc.) add operational burden without proportional value at this scale.
+- **A graph database backend.** The derived JSON index plus bot-written wikilink edges is plenty for the scale Claudron targets — with a SQLite mirror + edges table as the deferred ceiling if scale ever demands it (E4, #18). Real graph DBs (Neo4j etc.) add operational burden without proportional value at this scale.
 - **LLM-driven entity extraction at indexing time.** GraphRAG-style pipelines that use LLMs to build the graph are interesting but cost money, add latency, and aren't necessary when bots are writing wikilinks themselves.
 - **A human-facing browse UI.** Obsidian, VS Code, and any other markdown editor work fine for human browsing. We won't build a custom UI for a problem already solved.
 - **Real-time multi-writer collaboration.** Git's last-write-wins handles the multi-writer case for our scale. Conflict resolution UIs and operational transforms are overkill for the agent-fleet use case.
