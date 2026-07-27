@@ -177,84 +177,41 @@ class TestConfig:
         assert "not plugged" in out
 
 
-class TestTreeWalkDeprecation:
-    """The second R5 violation (boundary spec §10.2: "the engine never knows a
-    consumer by name"). `_detect_claudlobby_root` infers a consumer from its
-    tree shape (`library/` + `lib/`); the declared alternative — `--claudlobby`
-    — already exists, so the walk is deprecated here and removed on the F3
-    schedule. Deprecate-only: resolution behavior is unchanged."""
+class TestTreeWalkResolution:
+    """`plug`/`config`/`migrate` still auto-detect the claudlobby root by
+    walking up for a `library/` + `lib/` tree shape (`_detect_claudlobby_root`)
+    when no `--claudlobby` is given. The 0.3.0-era deprecation nag that rode on
+    that walk retired with the CLAUDRON_VAULT softener (#102) -- the walk now
+    resolves silently; `--claudlobby <path>` remains the declared address."""
 
-    def test_tree_walk_resolution_warns(
+    def test_plug_resolves_by_walk_silently(
         self, claudlobby_root: Path, vault_for_plug: Path, monkeypatch, capsys
     ):
         monkeypatch.chdir(claudlobby_root)
         rc = main(["plug", str(vault_for_plug)])
         assert rc == 0
-        err = capsys.readouterr().err
-        assert "deprecated" in err
-        assert "--claudlobby" in err
-        assert (claudlobby_root / ".claudron").is_file()  # still resolved
+        captured = capsys.readouterr()
+        assert (claudlobby_root / ".claudron").is_file()  # resolved by walk
+        assert "deprecated" not in captured.err  # nag retired
 
-    def test_explicit_flag_is_silent(
-        self, claudlobby_root: Path, vault_for_plug: Path, monkeypatch, capsys
-    ):
-        monkeypatch.chdir(claudlobby_root)  # walk would succeed — flag preempts it
-        rc = main([
-            "plug", str(vault_for_plug), "--claudlobby", str(claudlobby_root),
-        ])
-        assert rc == 0
-        assert "deprecated" not in capsys.readouterr().err
-
-    def test_config_warns_on_tree_walk(
+    def test_config_resolves_by_walk_silently(
         self, claudlobby_root: Path, monkeypatch, capsys
     ):
-        """Every command sharing the helper warns — `config` reads the root
-        through the same walk `plug` writes through."""
         monkeypatch.chdir(claudlobby_root)
         rc = main(["config"])
         assert rc == 0
-        assert "deprecated" in capsys.readouterr().err
+        captured = capsys.readouterr()
+        assert "(not found)" not in captured.out  # root resolved by walk
+        assert "deprecated" not in captured.err
 
-    def test_plugged_root_is_not_nagged(
-        self, claudlobby_root: Path, vault_for_plug: Path, monkeypatch, capsys
-    ):
-        """Once `.claudron` exists the root has *declared* itself (§Bridge
-        file) and the walk merely locates that declaration — which is not the
-        consumer-sniff R5 forbids. Warning anyway would nag every `config` and
-        `migrate` on a correctly plugged install, i.e. the normal workflow."""
-        monkeypatch.chdir(claudlobby_root)
-        assert main(["plug", str(vault_for_plug),
-                     "--claudlobby", str(claudlobby_root)]) == 0
-        capsys.readouterr()
-        rc = main(["config"])
-        assert rc == 0
-        assert "deprecated" not in capsys.readouterr().err
-
-    def test_no_warning_when_walk_finds_nothing(
+    def test_config_not_found_when_walk_finds_nothing(
         self, tmp_path: Path, monkeypatch, capsys
     ):
-        """A walk that resolves nothing must not emit a deprecation for a path
-        it never took. (`config` reports '(not found)' and exits 0.)"""
         elsewhere = tmp_path / "elsewhere"
         elsewhere.mkdir()
         monkeypatch.chdir(elsewhere)
         rc = main(["config"])
         assert rc == 0
         captured = capsys.readouterr()
-        assert "deprecated" not in captured.err
         assert "(not found)" in captured.out
-
-    def test_empty_bridge_file_does_not_suppress(
-        self, claudlobby_root: Path, monkeypatch, capsys
-    ):
-        """Existence is not a declaration. An empty `.claudron` declares no
-        vault, so suppressing on it would have the engine claim the declared
-        artifact is present while `config` prints '(not plugged)' in the same
-        output."""
-        (claudlobby_root / ".claudron").write_text("# nothing declared here\n")
-        monkeypatch.chdir(claudlobby_root)
-        rc = main(["config"])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert "deprecated" in captured.err
-        assert "(not plugged)" in captured.out
+        assert "deprecated" not in captured.err

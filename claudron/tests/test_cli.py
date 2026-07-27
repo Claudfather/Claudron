@@ -11,7 +11,6 @@ import pytest
 
 from .doc_parity import code_values, doc_table, section
 from claudron.cli import (
-    REMOVED_VAULT_ENV_VARS,
     VAULT_ENV_VARS,
     _detect_vault,
     main,
@@ -32,16 +31,15 @@ class TestInit:
 
 class TestVaultResolution:
     """The CLI resolution chain (docs/CLI_CONTRACT.md §Environment):
-    --vault → $CLAUDRON_VAULT_PATH → walk-up. `CLAUDRON_VAULT` was removed
-    in 0.3.0 (boundary program F3, hard cut): with both set and disagreeing
-    the two names resolved *different vaults* across the ecosystem, so the
-    alias is not read at all — only named back on the failure path."""
+    --vault -> $CLAUDRON_VAULT_PATH -> walk-up. `CLAUDRON_VAULT` was removed
+    in 0.3.0 (boundary program F3, hard cut) and is now fully inert -- never
+    read, and no longer named on any path (the migration softener retired
+    once the window closed, #102)."""
 
     def test_claudron_vault_path_resolves_from_outside(
         self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
     ):
-        monkeypatch.chdir(tmp_path)  # cwd outside the vault (the bot-runtime case)
-        monkeypatch.delenv("CLAUDRON_VAULT", raising=False)
+        monkeypatch.chdir(tmp_path)  # cwd outside the vault (bot-runtime case)
         monkeypatch.setenv("CLAUDRON_VAULT_PATH", str(vault_dir))
         rc = main(["status", "--json"])
         assert rc == 0
@@ -51,8 +49,8 @@ class TestVaultResolution:
     def test_removed_alias_never_read_when_canonical_set(
         self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
     ):
-        """Both set and disagreeing: the canonical var wins outright. The
-        alias pointing at a *valid* second vault must still lose."""
+        """The removed alias, set to a *valid* second vault, still loses to the
+        canonical var -- proof it is not consulted during resolution at all."""
         other = tmp_path / "other-vault"
         (other / "_shared" / "knowledge").mkdir(parents=True)
         monkeypatch.chdir(tmp_path)
@@ -63,11 +61,12 @@ class TestVaultResolution:
         env = json.loads(capsys.readouterr().out)
         assert env["data"]["root"] == str(vault_dir)
 
-    def test_removed_alias_alone_exits_3_with_hint(
+    def test_removed_alias_alone_exits_3_silently(
         self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
     ):
-        """The F3 softener: the dotfile straggler set the dead var and there
-        is no vault to walk up to — exit 3 names the removal and the new var."""
+        """Only the dead var set, nothing to walk up to. The hard cut is
+        complete: exit 3 with the plain no-vault message and no migration
+        hint -- the retired softener leaves no trace on any path."""
         outside = tmp_path / "outside"
         outside.mkdir()
         monkeypatch.chdir(outside)
@@ -77,168 +76,14 @@ class TestVaultResolution:
             main(["status"])
         assert exc_info.value.code == 3
         captured = capsys.readouterr()
-        assert "CLAUDRON_VAULT is no longer read" in captured.err
-        assert "CLAUDRON_VAULT_PATH" in captured.err
-        assert captured.out == ""  # the hint is a diagnostic (§Channels)
-
-    def test_hint_fires_when_a_different_vault_resolves(
-        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
-    ):
-        """The damaging case, and the one exit-3 never covers: the dead var
-        points at vault A, walk-up finds vault B, and 0.2.x would have used A.
-        Exit 0 with a note landing somewhere the caller did not intend is
-        worse than failing — so the softener fires here too."""
-        other = tmp_path / "elsewhere"
-        (other / "_shared" / "knowledge").mkdir(parents=True)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(other))
-        monkeypatch.chdir(vault_dir)  # walk-up resolves vault_dir, not `other`
-        rc = main(["status", "--json"])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert json.loads(captured.out)["data"]["root"] == str(vault_dir)
-        assert "no longer read" in captured.err  # and it says so
-        assert "no longer read" not in captured.out  # §Channels
-
-    def test_no_hint_when_removed_alias_agrees_with_resolution(
-        self, vault_dir: Path, monkeypatch, capsys
-    ):
-        """Set but pointing at the vault we used anyway — nothing is confusing,
-        so nothing is said. Keeps the softener from becoming ambient noise."""
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(vault_dir))
-        monkeypatch.chdir(vault_dir)
-        rc = main(["status", "--json"])
-        assert rc == 0
-        assert "no longer read" not in capsys.readouterr().err
-
-    def test_agreement_is_by_resolution_not_by_string(
-        self, vault_dir: Path, monkeypatch, capsys
-    ):
-        """A value naming a *subdirectory* of the vault still addressed that
-        vault under 0.2.x — the same detector ran on it. Comparing raw strings
-        warned this user, who has nothing to fix. Agreement is decided by what
-        the dead name would have resolved to, not by how it was spelled."""
-        sub = vault_dir / "projects" / "foo"
-        sub.mkdir(parents=True)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(sub))
-        monkeypatch.chdir(sub)
-        rc = main(["status", "--json"])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert json.loads(captured.out)["data"]["root"] == str(vault_dir)
-        assert "no longer read" not in captured.err
-
-    def test_agreement_survives_a_case_insensitive_filesystem(
-        self, vault_dir: Path, monkeypatch, capsys
-    ):
-        """On macOS's default case-insensitive APFS, `.../VAULT` and
-        `.../vault` are the same directory (same inode). A string compare
-        warned; resolving through the detector does not. Skipped where the
-        filesystem really is case-sensitive."""
-        shouty = vault_dir.parent / vault_dir.name.upper()
-        if vault_dir.name == shouty.name or not shouty.is_dir():
-            pytest.skip("case-sensitive filesystem — no aliasing to test")
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(shouty))
-        monkeypatch.chdir(vault_dir)
-        rc = main(["status", "--json"])
-        assert rc == 0
-        assert "no longer read" not in capsys.readouterr().err
-
-    @pytest.mark.parametrize(
-        "bad_value",
-        ["~nosuchuser42/vault", "relative/not/absolute", "~" * 300, ""],
-        ids=["unexpandable-user", "relative", "absurd-tilde", "empty"],
-    )
-    def test_hostile_removed_var_never_raises(
-        self, vault_dir: Path, monkeypatch, capsys, bad_value: str
-    ):
-        """Whatever the dead name holds, resolution must not explode.
-
-        The comparison behind the softener runs on the hook path, *outside*
-        `run_hook`'s fail-open guard. `~nouser/x` raises RuntimeError from
-        `expanduser()`, which turned a stale dotfile into a broken session
-        start — a louder version of the silent failure the hint exists to
-        prevent. Whether a given value warns is decided by resolution (see the
-        agreement tests); what this pins is that none of them raise.
-        """
-        monkeypatch.chdir(vault_dir)  # a vault DOES resolve — the risky branch
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", bad_value)
-        rc = main(["status", "--json"])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert json.loads(captured.out)["data"]["root"] == str(vault_dir)
-        assert "Traceback" not in captured.err
-
-    def test_unresolvable_removed_var_shadows(
-        self, vault_dir: Path, monkeypatch, capsys
-    ):
-        """A value that cannot name any vault cannot name the one we used, so
-        it shadows and warns — the dotfile-straggler case."""
-        monkeypatch.chdir(vault_dir)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", "~nosuchuser42/vault")
-        rc = main(["status", "--json"])
-        assert rc == 0
-        assert "no longer read" in capsys.readouterr().err
-
-    def test_hook_stays_fail_open_on_unparseable_removed_var(
-        self, vault_dir: Path, monkeypatch, capsys
-    ):
-        """The same input on the hook path: exit 0, clean stdout, no traceback."""
-        import io
-
-        monkeypatch.chdir(vault_dir)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", "~nosuchuser42/vault")
-        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
-        rc = main(["hook", "session-start"])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert "Traceback" not in captured.err
-        assert "RuntimeError" not in captured.err
-
-    def test_hook_path_warns_and_stays_fail_open(
-        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
-    ):
-        """A dotfile still exporting the dead name loses every session brief.
-        The hook must still exit 0 with clean stdout (fail-open + §Channels),
-        but the reason belongs on stderr — not only in a log nobody reads."""
-        import io
-
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        monkeypatch.chdir(outside)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(vault_dir))
-        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
-        rc = main(["hook", "session-start"])
-        assert rc == 0  # fail-open, always
-        captured = capsys.readouterr()
-        assert captured.out == ""  # injected verbatim — must stay clean
-        assert "no longer read" in captured.err
-
-    def test_no_hint_when_removed_alias_unset(
-        self, tmp_path: Path, monkeypatch, capsys, no_vault_env
-    ):
-        """No dead var set ⇒ the plain no-vault message, unchanged."""
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        monkeypatch.chdir(outside)
-        with pytest.raises(SystemExit) as exc_info:
-            main(["status"])
-        assert exc_info.value.code == 3
-        err = capsys.readouterr().err
-        assert "no vault found" in err
-        assert "no longer read" not in err
+        assert "no vault found" in captured.err
+        assert "no longer read" not in captured.err  # softener retired
+        assert captured.out == ""
 
     def test_walk_up_unchanged_when_no_env(
         self, vault_dir: Path, monkeypatch, capsys, no_vault_env
     ):
-        """Neither var set ⇒ walk-up from CWD, exactly as before."""
+        """Neither var set => walk-up from CWD, exactly as before."""
         monkeypatch.chdir(vault_dir)
         rc = main(["status", "--json"])
         assert rc == 0
@@ -487,36 +332,6 @@ class TestChannelDiscipline:
         captured = capsys.readouterr()
         assert captured.out == ""
 
-    def test_removed_var_hint_never_on_stdout(
-        self, vault_dir: Path, tmp_path: Path, monkeypatch, capsys
-    ):
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        monkeypatch.chdir(outside)
-        monkeypatch.delenv("CLAUDRON_VAULT_PATH", raising=False)
-        monkeypatch.setenv("CLAUDRON_VAULT", str(vault_dir))
-        with pytest.raises(SystemExit):
-            main(["lookup", "auth"])
-        captured = capsys.readouterr()
-        assert captured.out == ""
-        assert "no longer read" in captured.err
-
-    def test_tree_walk_deprecation_never_on_stdout(
-        self, tmp_path: Path, monkeypatch, capsys
-    ):
-        cl_root = tmp_path / "claudlobby"
-        (cl_root / "library").mkdir(parents=True)
-        (cl_root / "lib").mkdir()
-        vault = tmp_path / "vault"
-        (vault / "_shared" / "knowledge").mkdir(parents=True)
-        monkeypatch.chdir(cl_root)
-        rc = main(["plug", str(vault)])
-        assert rc == 0
-        captured = capsys.readouterr()
-        assert "deprecated" in captured.err
-        assert "deprecated" not in captured.out
-        assert "plugged" in captured.out  # payload survives on stdout
-
     def test_detect_rejects_case_insensitive_marker(self, tmp_path: Path):
         """macOS regression guard: /Users/Shared must not make /Users a
         vault. A dir whose real name differs in case is not a marker."""
@@ -581,36 +396,13 @@ class TestEnvironmentDocParity:
         )
         assert documented == VAULT_ENV_VARS
 
-    def test_removed_rows_match_removal_constant(self):
-        documented = tuple(
-            code_values(row[1])[0]
-            for row in _env_table()
-            if row[2].startswith("removed")
-        )
-        assert documented == REMOVED_VAULT_ENV_VARS
-
-    def test_removal_version_matches_the_table(self):
-        """The removal version appears in four places (the constant, the table
-        cell, the migration prose, the CHANGELOG). Pin the two that a machine
-        consumer reads: the runtime hint's version and the table's."""
-        import re
-
-        from claudron.cli import _ALIAS_REMOVED_IN
-
-        cells = [row[2] for row in _env_table() if row[2].startswith("removed")]
-        assert cells, "no removed row in the table"
-        for cell in cells:
-            found = re.search(r"(\d+\.\d+\.\d+)", cell)
-            assert found, f"removed row states no version: {cell}"
-            assert found.group(1) == _ALIAS_REMOVED_IN
-
     def test_resolver_reads_exactly_the_contract_env_names(
         self, tmp_path: Path, monkeypatch, no_vault_env
     ):
         """The hard cut, pinned by what the resolver actually *reads*.
 
         Grepping `_detect_vault`'s source is not enough: re-adding the removed
-        name by iterating `REMOVED_VAULT_ENV_VARS` leaves no literal behind and
+        name by iterating a constant leaves no literal behind and
         slips a text check (verified — it does). Recording the lookups catches
         both spellings, and pins the ladder to the table in the same assert.
         """

@@ -93,27 +93,16 @@ yields a path wins, and a hit is never re-checked against a lower row.
 | 1 | `--vault PATH` | flag | Explicit; wins over everything. Accepted by every subcommand. |
 | 2 | `CLAUDRON_VAULT_PATH` | env | **The canonical name.** What Claudlobby's composer emits per bot; what any integrator should set. |
 | 3 | walk up from CWD | discovery | Ascend from the working directory for a `_shared/` (or `shared/`) marker, the way git ascends for `.git/`. |
-| — | `CLAUDRON_VAULT` | removed (0.3.0) | **Not read.** Was a second spelling of row 2; see the migration note below. |
 
 A path that resolves but is not a vault (no `_shared/`) is not a fallback —
 resolution stops and the command exits 3. When nothing resolves, `claudron`
 exits **3** with the no-vault message on stderr.
 
-**Migration — `CLAUDRON_VAULT` (removed in 0.3.0).** The name was read as a
-lower-precedence alias of `CLAUDRON_VAULT_PATH` through 0.2.x. It was removed
-rather than deprecated: with both set and disagreeing, engine and consumers
-resolved *different vaults*, and an alias that is read at all keeps that hazard
-alive. There is no warning phase.
-
-The one trace it leaves, on **stderr** only: when `CLAUDRON_VAULT` is set and
-the engine resolved something *else*, one line names the removal and the
-canonical name. That covers both confusing outcomes — no vault resolving
-(appended to the exit-3 message) **and** a *successful* resolution of a
-different vault than 0.2.x would have chosen. The second is the damaging one:
-it exits 0, so an unwarned caller writes notes into a vault they did not
-intend. Hook invocations warn too, on stderr, which is never injected into a
-session. A `CLAUDRON_VAULT` that agrees with the vault actually resolved is
-not confusing and stays silent, so this never becomes ambient noise.
+**`CLAUDRON_VAULT` (removed in 0.3.0).** An earlier lower-precedence spelling of
+`CLAUDRON_VAULT_PATH`, removed rather than deprecated: read at all, a second
+name that disagreed with the canonical one resolved a *different vault*. It is
+not read, is not in the table above, and carries no warning. Rename any
+straggler to `CLAUDRON_VAULT_PATH`.
 
 **Consumer obligations.**
 
@@ -122,7 +111,7 @@ not confusing and stays silent, so this never becomes ambient noise.
   succeeding where the engine's fails is worse than both failing.
 - `SHARED_DOCS_PATH` is **clauDNA's fallback-mode variable**, not part of this
   contract. It addresses a raw documentation tree when no engine is present, is
-  never consulted on an engine path, and is out of scope for this removal.
+  never consulted on an engine path, and is out of scope here.
 - Do not invent additional names. A new address source is a change to this
   table, PR'd here first (register rule R4).
 
