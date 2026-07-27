@@ -183,11 +183,13 @@ def content_fingerprint(body: str) -> str:
 
 
 def set_frontmatter_field(text: str, field: str, value: str) -> str:
-    """Line-level frontmatter upsert: replace *field*'s line if present,
-    else insert after ``created:``, else before the closing fence. Never
-    re-serializes YAML — the note's own formatting is preserved. The single
-    write-side fm-surgery primitive (adopt-backfill and addendum both use
-    it)."""
+    """Line-level frontmatter upsert: replace *field*'s top-level line if
+    present, else insert after ``created:``, else before the closing fence.
+    Only unindented lines are field candidates — an indented nested-mapping
+    line never matches (replacing one would de-indent it and corrupt the
+    mapping). Never re-serializes YAML — the note's own formatting is
+    preserved. The single write-side fm-surgery primitive (adopt-backfill
+    and addendum both use it)."""
     if not text.startswith("---"):
         return text
     lines = text.splitlines(keepends=True)
@@ -197,6 +199,8 @@ def set_frontmatter_field(text: str, field: str, value: str) -> str:
             if insert_at is None:
                 insert_at = i
             break
+        if line[:1].isspace():
+            continue  # continuation/nested lines carry no top-level key
         key = line.split(":", 1)[0].strip()
         if key == field:
             replace_at = i
