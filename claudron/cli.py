@@ -15,6 +15,7 @@ from .schema import (
     SOURCE_TYPES,
     TYPES,
     Finding,
+    _as_str_list,
     slugify,
     validate_path,
 )
@@ -627,6 +628,18 @@ def _derive_owner(args) -> str:
     return os.environ.get("USER", "unknown")
 
 
+def _tags_arg(value) -> list[str] | None:
+    """Normalize a tags input — the --tags flag or a --stdin key — to a tag
+    list (docs/CLI_CONTRACT.md: one grammar on both spellings). A string is
+    comma-separated (whitespace-stripped, empty segments dropped); an array
+    is taken element-wise; any other scalar is one tag (schema._as_str_list
+    totalizes it, matching the read side). Falsy → None, preserving
+    callers' or-chain fallback."""
+    if isinstance(value, str):
+        value = [t.strip() for t in value.split(",") if t.strip()]
+    return _as_str_list(value) or None
+
+
 def cmd_new(args) -> int:
     vault = _resolve_vault(args)
     title = args.title
@@ -653,7 +666,7 @@ def cmd_new(args) -> int:
             note_type=args.type,
             title=title,
             owner=_derive_owner(args),
-            tags=args.tags.split(",") if args.tags else None,
+            tags=_tags_arg(args.tags),
         )
     )
 
@@ -705,9 +718,7 @@ def cmd_capture(args) -> int:
     if not note_type or not title:
         print("capture requires --type and --title (or --stdin JSON)", file=sys.stderr)
         return 2
-    tags = finding.get("tags") or (
-        [t.strip() for t in args.tags.split(",")] if args.tags else None
-    )
+    tags = _tags_arg(finding.get("tags")) or _tags_arg(args.tags)
     owner = finding.get("owner") or _derive_owner(args)
 
     # Both spellings of a field get the same door. argparse guards `choices`

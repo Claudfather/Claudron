@@ -377,6 +377,11 @@ stdout, and never to stderr where a host might surface them as a session error.
     line** — the first substantive body line is what the recall brief shows as
     a note's summary, so a `Source:` line there both spends the summary and
     couples the consumer to how that summary is picked.
+  - **`tags` takes one grammar on both spellings.** The `--tags` flag and the
+    `tags` key of the `--stdin` JSON normalize identically: a string is
+    comma-separated (split, whitespace-stripped, empty segments dropped); a
+    JSON array is taken element-wise. A bare scalar is one tag — never a
+    character sequence.
   - **Programmatic writers MUST pass content via `--stdin` JSON, never `--body`
     string interpolation.** Note bodies are free text (quotes, newlines,
     `$(...)`, backticks); building a `--body "…"` shell argument truncates the

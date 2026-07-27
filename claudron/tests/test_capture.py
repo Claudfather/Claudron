@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 from textwrap import dedent
@@ -380,3 +381,43 @@ class TestContentAwareDedup:
             second.action != "created"
         ), f"identical content under a new title silently duplicated: {second.action}"
         assert second.action in ("suggest_update", "suggest_supersede")
+
+
+class TestCaptureStdinTags:
+    """`tags` takes one grammar on both spellings (docs/CLI_CONTRACT.md): the
+    --stdin key normalizes exactly like the --tags flag — a comma string
+    splits, an array passes element-wise, a scalar is one tag. Never a
+    character sequence walked into the note."""
+
+    def _capture_fm(self, vault_dir, capsys, monkeypatch, title, tags_value):
+        payload = {"type": "knowledge", "title": title, "body": "Body.",
+                   "owner": "t", "tags": tags_value}
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
+        rc = main(["--vault", str(vault_dir), "capture", "--stdin", "--json"])
+        assert rc == 0
+        env = json.loads(capsys.readouterr().out)
+        p = Path(env["data"]["path"])
+        note = p if p.is_absolute() else vault_dir / p
+        fm, _, err = parse_note(note.read_text())
+        assert err is None
+        return fm
+
+    def test_stdin_comma_string_splits_not_char_explodes(
+        self, vault_dir: Path, capsys, monkeypatch
+    ):
+        fm = self._capture_fm(
+            vault_dir, capsys, monkeypatch, "Comma Probe", "alpha,beta"
+        )
+        assert fm["tags"] == ["alpha", "beta"]
+
+    def test_stdin_array_passes_element_wise(
+        self, vault_dir: Path, capsys, monkeypatch
+    ):
+        fm = self._capture_fm(vault_dir, capsys, monkeypatch, "Array Probe", ["x", "y"])
+        assert fm["tags"] == ["x", "y"]
+
+    def test_stdin_scalar_is_one_tag_not_a_crash(
+        self, vault_dir: Path, capsys, monkeypatch
+    ):
+        fm = self._capture_fm(vault_dir, capsys, monkeypatch, "Scalar Probe", 5)
+        assert fm["tags"] == ["5"]
