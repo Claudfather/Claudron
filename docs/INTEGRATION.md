@@ -42,9 +42,8 @@ reproducible — `@main` tracks head and will move under you.
 introduced the capability probe (`engine_version`) and removed the
 `CLAUDRON_VAULT` environment name. Confirm what you actually got by probing
 (next section) rather than trusting the pin. A consumer that must also support
-`0.2.x` should read [§Environment](CLI_CONTRACT.md#environment)'s migration note
-first: on those versions there is no `engine_version` field and both
-environment names are read.
+`0.2.x` should read [§Environment](CLI_CONTRACT.md#environment) first: on those
+versions there is no `engine_version` field and both environment names are read.
 
 ---
 

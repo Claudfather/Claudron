@@ -253,12 +253,13 @@ def shared_vault(tmp_path: Path) -> Path:
 def no_vault_env(monkeypatch):
     """Clear every env name the vault-address contract defines.
 
-    Derived from the contract ladder (`cli.VAULT_ENV_VARS`) plus the names it
-    has retired, so a test asserting "nothing resolves from the environment"
-    stays honest as the table changes — and does not quietly pass on a
-    developer machine that exports the canonical name.
+    Derived from the contract ladder (`cli.VAULT_ENV_VARS`) so a test asserting
+    "nothing resolves from the environment" stays honest as the table changes —
+    and does not quietly pass on a developer machine that exports the canonical
+    name. `CLAUDRON_VAULT` (removed 0.3.0) is not read, so a stray export cannot
+    shadow a fixture that never consults it.
     """
-    from claudron.cli import REMOVED_VAULT_ENV_VARS, VAULT_ENV_VARS
+    from claudron.cli import VAULT_ENV_VARS
 
-    for var in (*VAULT_ENV_VARS, *REMOVED_VAULT_ENV_VARS):
+    for var in VAULT_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
