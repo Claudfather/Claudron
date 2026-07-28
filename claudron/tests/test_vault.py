@@ -13,6 +13,7 @@ from claudron.vault import (
     init,
     is_within_root,
     note_tiers,
+    scan_quarantine,
     status,
 )
 
@@ -559,3 +560,69 @@ class TestScopedStaleness:
         os.utime(note, (idx_mtime + 200, idx_mtime + 200))
         clear_stale_cache()
         assert index_is_stale(vault, index_path) is True
+
+
+class TestQuarantineScanScope:
+    """#130: ``scan_quarantine`` walked a bare ``root.rglob`` over the whole
+    vault root. On a Claudlobby-provisioned vault that root also holds every
+    fleet's ``runtime/`` -- 238k files on a real box -- so ``status`` never
+    returned, and ``/claudna:capture`` (which reads a Step 0 status envelope)
+    was shut fleet-wide by its own health check.
+
+    The scan must share the indexer's tier scope (``note_tiers``) -- the same
+    fix #41 applied to adopt-backfill -- WITHOUT inheriting its name filter.
+    ``iter_markdown_files`` skips ``CONVENTIONS.md`` by name (``_SKIP_NAMES``),
+    and a conflicted CONVENTIONS.md is the file that matters most: it is the
+    always-injected layer. That filter is the whole reason the bare walk
+    existed, so widening the walk was never the answer -- dropping the name
+    filter on a scoped walk is.
+
+    Only the first test is red against the bare walk; the rest are the coverage
+    guards that must stay green through the scoping (they are what would catch
+    a fix that bought speed by quietly seeing less).
+    """
+
+    CONFLICT = (
+        "---\ntitle: N\n---\n\n<<<<<<< HEAD\nours\n=======\n"
+        "theirs\n>>>>>>> other\n"
+    )
+
+    def _vault(self, tmp_path: Path) -> Path:
+        root = tmp_path / "local"
+        (root / "_shared" / "knowledge").mkdir(parents=True)
+        fleet = root / "myfleet"
+        (fleet / "shared" / "knowledge").mkdir(parents=True)
+        (fleet / "fleet.yaml").write_text("fleet: {name: myfleet}")
+        # Claudlobby overlay content: the subtree that is enormous in production
+        # and must never be descended.
+        (fleet / "runtime" / "bots" / "bot1" / "memory").mkdir(parents=True)
+        return root
+
+    def test_does_not_descend_a_fleets_runtime(self, tmp_path: Path):
+        """The 238k-file subtree. Red against the bare ``root.rglob``."""
+        root = self._vault(tmp_path)
+        buried = root / "myfleet" / "runtime" / "bots" / "bot1" / "memory" / "n.md"
+        buried.write_text(self.CONFLICT)
+        assert scan_quarantine(detect(root)) == []
+
+    def test_still_catches_conflicted_shared_root_conventions(self, tmp_path: Path):
+        """``note_tiers`` yields ``_shared/<subdir>``, so the vault-root
+        CONVENTIONS.md one level up belongs to no tier -- it needs naming."""
+        root = self._vault(tmp_path)
+        (root / "_shared" / "CONVENTIONS.md").write_text(self.CONFLICT)
+        assert scan_quarantine(detect(root)) == ["_shared/CONVENTIONS.md"]
+
+    def test_still_catches_conflicted_fleet_conventions(self, tmp_path: Path):
+        """A fleet's ``shared/`` IS a tier base, but the tier walker skips this
+        file by name -- so this passes only if the scoped walk drops the
+        ``_SKIP_NAMES`` filter."""
+        root = self._vault(tmp_path)
+        (root / "myfleet" / "shared" / "CONVENTIONS.md").write_text(self.CONFLICT)
+        assert scan_quarantine(detect(root)) == ["myfleet/shared/CONVENTIONS.md"]
+
+    def test_still_catches_conflicted_root_level_note(self, tmp_path: Path):
+        """A stray note at the vault root belongs to no tier. The bare walk saw
+        it; a scoped walk must not narrow coverage silently."""
+        root = self._vault(tmp_path)
+        (root / "stray.md").write_text(self.CONFLICT)
+        assert scan_quarantine(detect(root)) == ["stray.md"]

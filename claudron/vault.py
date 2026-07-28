@@ -104,12 +104,17 @@ SCHEMA_VERSION = 4  # bump when index.json entry shape changes (mismatch forces 
 _SKIP_NAMES = NON_NOTE_FILES | {"CONVENTIONS.md"}
 
 
-def iter_markdown_files(base: Path):
-    """Yield .md file paths under *base*, skipping non-note files (``_SKIP_NAMES``)."""
+def iter_markdown_files(base: Path, *, skip_non_notes: bool = True):
+    """Yield .md file paths under *base*, skipping non-note files (``_SKIP_NAMES``).
+
+    ``skip_non_notes=False`` yields those too. The quarantine scan is the one
+    caller that wants them: ``_SKIP_NAMES`` drops ``CONVENTIONS.md``, and a
+    conflicted CONVENTIONS.md is the file that matters most to catch.
+    """
     if not base.is_dir():
         return
     for md in sorted(base.rglob("*.md")):
-        if md.name not in _SKIP_NAMES:
+        if not skip_non_notes or md.name not in _SKIP_NAMES:
             yield md
 
 
@@ -546,21 +551,49 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     }
 
 
+def _quarantine_candidates(vault: Vault) -> list[Path]:
+    """Every markdown file a full-vault quarantine scan must read.
+
+    Scoped to the indexer's note tiers, never a bare ``root.rglob``: the vault
+    root can also hold a fleet's ``runtime/`` (Claudlobby overlay content),
+    which is hundreds of thousands of files on a real box and turns this scan
+    into a hang. Same scope fix #41 applied to adopt-backfill.
+
+    The tiers are walked with ``skip_non_notes=False``, which is the whole
+    point -- the note walk drops ``CONVENTIONS.md`` via ``_SKIP_NAMES``, and a
+    conflicted CONVENTIONS.md is exactly the file this scan exists to catch. So
+    the broad walk was never buying scope, it was buying one filename back.
+
+    Two paths belong to no tier and are named so the scoping cannot narrow
+    coverage in silence: the vault-root ``CONVENTIONS.md`` (tiers start a level
+    down, at ``_shared/<subdir>``) and stray root-level notes -- one directory
+    listing, never a descent.
+    """
+    found: set[Path] = set()
+    for base, _tier in note_tiers(vault):
+        found.update(
+            md
+            for md in iter_markdown_files(base, skip_non_notes=False)
+            if ".git" not in md.parts
+        )
+    found.add(vault.shared / "CONVENTIONS.md")
+    found.update(vault.root.glob("*.md"))
+    return sorted(found)
+
+
 def scan_quarantine(vault: Vault, paths: list[str] | None = None) -> list[str]:
     """Vault-relative paths of notes carrying unresolved conflict markers.
 
     The single home of the quarantine scan. *paths* restricts the scan
     (sync passes the pull's changed files so a no-op pull reads nothing);
-    None scans the whole vault (status). Deliberately covers files the
+    None scans every note tier (status). Deliberately covers files the
     tier walker skips — a conflicted CONVENTIONS.md matters most, it is
     the always-injected layer.
     """
     if paths is not None:
         candidates = [vault.root / p for p in paths if p.endswith(".md")]
     else:
-        candidates = [
-            md for md in sorted(vault.root.rglob("*.md")) if ".git" not in md.parts
-        ]
+        candidates = _quarantine_candidates(vault)
     hits: list[str] = []
     for md in candidates:
         try:
