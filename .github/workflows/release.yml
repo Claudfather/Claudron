@@ -1,0 +1,36 @@
+name: Release to PyPI
+
+# Publishes on version tags via PyPI Trusted Publishing (OIDC) — no API
+# token stored anywhere. One-time setup on pypi.org: project `claudron` →
+# Publishing → add GitHub publisher (owner Claudfather, repo Claudron,
+# workflow release.yml, environment pypi).
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e '.[dev]'
+      - run: pytest -q
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write  # OIDC for trusted publishing
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
