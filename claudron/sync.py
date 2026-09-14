@@ -236,7 +236,13 @@ def sync(
             # is asymmetric: a refused pull is a logged no-op, an attempted one
             # can replay dozens of commits onto the wrong base and be killed
             # half-way through (#147).
-            if run_git(root, "status", "--porcelain", timeout=t).stdout.strip():
+            # Re-read only when a commit was actually attempted: with nothing
+            # to commit the tree was already clean and nothing here has written
+            # to it since. SessionStart runs on a 2s budget and that is the
+            # common path, so this saves a git invocation on every clean sync.
+            if porcelain and run_git(
+                root, "status", "--porcelain", timeout=t
+            ).stdout.strip():
                 # The commit above did not take, so the tree is still dirty and
                 # git would refuse the rebase anyway — but it would refuse
                 # *after* deciding to start one. Stop here instead, and say
