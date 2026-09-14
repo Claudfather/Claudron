@@ -62,6 +62,18 @@ class SyncError(Exception):
     these to exit 3; conflicts are NOT errors, they are reported results."""
 
 
+class SyncTimeout(SyncError):
+    """A git op that exceeded its budget.
+
+    A *subclass*, so every existing ``except SyncError`` keeps catching it —
+    but callers that care can now tell the two apart, and they must: an
+    unavailable git changes nothing on disk, while a timeout can kill git
+    part-way through a rebase replay. That is the only failure here that
+    leaves the repository inconsistent, and it leaves **no conflict markers**
+    to show for it (#147).
+    """
+
+
 # Fallback commit identity for the engine's OWN commits — sync's commit and
 # init's seed commit. On a host with no configured git identity (a fresh Pi, a
 # container, CI), git refuses to auto-guess one and the commit fails, silently
@@ -110,7 +122,7 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     except (FileNotFoundError, PermissionError) as exc:
         raise SyncError(f"git is unavailable: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise SyncError(f"git {' '.join(args)} timed out") from exc
+        raise SyncTimeout(f"git {' '.join(args)} timed out") from exc
 
 
 def _changed_md(root: Path, spec: list[str]) -> list[str]:
@@ -119,6 +131,43 @@ def _changed_md(root: Path, spec: list[str]) -> list[str]:
     if out.returncode != 0:
         return []
     return [p for p in out.stdout.splitlines() if p.endswith(".md")]
+
+
+def _git_dir(root: Path, t: float) -> Path | None:
+    """The vault's absolute ``.git`` directory, or None when git cannot answer
+    (which is also how "not a git repository" is detected)."""
+    out = run_git(root, "rev-parse", "--git-dir", timeout=t)
+    if out.returncode != 0:
+        return None
+    p = Path(out.stdout.strip())
+    return p if p.is_absolute() else root / p
+
+
+def _interrupted_state(root: Path, git_dir: Path | None, t: float) -> str | None:
+    """Why this repository is mid-surgery, or None when it is not.
+
+    Two independent facts, because they miss in opposite directions: the rebase
+    directories catch a stop, and the detached HEAD catches a repository left
+    on a bare SHA with no rebase at all. Checking either alone leaves a real
+    state unseen.
+
+    The reason this needs its own predicate rather than a ``--porcelain`` read:
+    a stopped rebase has **zero unmerged paths**, so every scoped porcelain
+    query reads perfectly clean while HEAD is detached (#147). Nothing already
+    in this module could see it.
+    """
+    if git_dir is not None:
+        for marker, what in (
+            ("rebase-merge", "a rebase is stopped part-way"),
+            ("rebase-apply", "a rebase or `git am` is stopped part-way"),
+            ("MERGE_HEAD", "a merge is in progress"),
+        ):
+            if (git_dir / marker).exists():
+                return what
+    if run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD",
+               timeout=t).returncode != 0:
+        return "HEAD is detached"
+    return None
 
 
 def sync(
@@ -140,7 +189,8 @@ def sync(
     lock and deadlock every concurrent capture on the machine."""
     root = vault.root
     t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
-    if run_git(root, "rev-parse", "--git-dir", timeout=t).returncode != 0:
+    git_dir = _git_dir(root, t)
+    if git_dir is None:
         raise SyncError(f"vault is not a git repository: {root}")
 
     result = SyncResult()
@@ -151,6 +201,21 @@ def sync(
     # machine (the local-writer race the lock exists for; cross-machine
     # serialization still happens at the git layer below).
     with vault_write_lock(vault):
+        # Refuse to touch a repository that is mid-surgery, before writing
+        # anything to it. A stopped rebase detaches HEAD, and a commit made on
+        # a detached HEAD is reachable from no branch at all — which is how
+        # four bots' work spent four hours one `--abort` away from vanishing,
+        # while every check anyone ran reported the tree clean (#147).
+        # Reporting and stopping is the whole remedy: repairing a stopped
+        # rebase stays the human's call, exactly as on the conflict path below.
+        interrupted = _interrupted_state(root, git_dir, t)
+        if interrupted:
+            result.detail = (
+                f"refusing to sync: {interrupted} — nothing was written; "
+                "resolve the repository first"
+            )
+            return result
+
         # Commit any working-tree changes first — captures don't commit, sync
         # owns the commit so notes actually travel. Every call is bounded by t
         # so a wedged git releases the lock instead of holding it forever.
@@ -166,29 +231,79 @@ def sync(
             result.committed = commit.returncode == 0
 
         if pull:
-            pulled = run_git(root, "pull", "--rebase", "origin", "HEAD", timeout=t)
-            if pulled.returncode != 0:
-                # Conflict (or no remote). The rebase stays stopped with markers
-                # in the working tree — the standard resolve/--continue flow;
-                # sync never aborts it (aborting would erase the markers the
-                # human is supposed to see). Scan only the unmerged files.
-                result.quarantined = scan_quarantine(
-                    vault, paths=_changed_md(root, ["--diff-filter=U"])
-                )
+            # A rebase must not be *started* unless it is safe to finish. Both
+            # checks below are refusals rather than attempts, because the cost
+            # is asymmetric: a refused pull is a logged no-op, an attempted one
+            # can replay dozens of commits onto the wrong base and be killed
+            # half-way through (#147).
+            if run_git(root, "status", "--porcelain", timeout=t).stdout.strip():
+                # The commit above did not take, so the tree is still dirty and
+                # git would refuse the rebase anyway — but it would refuse
+                # *after* deciding to start one. Stop here instead, and say
+                # which of the two things went wrong.
                 result.detail = (
-                    "pull hit conflicts — markers left for the human; conflicted "
-                    "notes are quarantined from search until resolved"
-                    if result.quarantined
-                    else f"pull failed: {pulled.stderr.strip()[:200]}"
+                    "pull skipped: the working tree is not clean after the "
+                    "pre-pull commit, so a rebase cannot be started safely"
                 )
                 return result
-            result.pulled = True
-            # A clean pull can still land markers committed elsewhere — scan
-            # exactly what the pull changed (no-op pull: ORIG_HEAD absent or
-            # equal to HEAD → zero files → zero reads).
-            result.quarantined = scan_quarantine(
-                vault, paths=_changed_md(root, ["ORIG_HEAD..HEAD"])
+            upstream = run_git(
+                root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                "@{upstream}", timeout=t,
             )
+            if upstream.returncode != 0:
+                # A branch that has never been pushed has nothing to rebase
+                # onto. This is the ordinary first-push case, so the PUSH below
+                # still runs — only the pull is skipped. The old `origin HEAD`
+                # refspec hid this state entirely by rebasing onto the remote's
+                # default branch instead.
+                result.detail = (
+                    "pull skipped: this branch has no upstream to rebase onto"
+                )
+            else:
+                # Bare `pull --rebase` rebases onto THIS branch's own upstream.
+                # Naming `origin HEAD` resolved HEAD *on the remote*, where it
+                # is a symbolic ref to the default branch — so on any
+                # non-default branch it rebased onto origin/main and queued the
+                # entire divergence rather than the handful of unpushed
+                # commits it reads as meaning (#147).
+                try:
+                    pulled = run_git(root, "pull", "--rebase", timeout=t)
+                except SyncTimeout as exc:
+                    # The third case the returncode branch below cannot cover:
+                    # git was killed mid-replay, so there is no returncode and
+                    # no conflict markers. Saying so is the entire fix for the
+                    # silence that let this run six weeks unnoticed.
+                    left = _interrupted_state(root, git_dir, t)
+                    result.detail = (
+                        f"{exc} — {left}; left for the human"
+                        if left
+                        else f"{exc} — repository left consistent"
+                    )
+                    return result
+                if pulled.returncode != 0:
+                    # Conflict (or no remote). The rebase stays stopped with
+                    # markers in the working tree — the standard
+                    # resolve/--continue flow; sync never aborts it (aborting
+                    # would erase the markers the human is supposed to see).
+                    # Scan only the unmerged files.
+                    result.quarantined = scan_quarantine(
+                        vault, paths=_changed_md(root, ["--diff-filter=U"])
+                    )
+                    result.detail = (
+                        "pull hit conflicts — markers left for the human; "
+                        "conflicted notes are quarantined from search until "
+                        "resolved"
+                        if result.quarantined
+                        else f"pull failed: {pulled.stderr.strip()[:200]}"
+                    )
+                    return result
+                result.pulled = True
+                # A clean pull can still land markers committed elsewhere —
+                # scan exactly what the pull changed (no-op pull: ORIG_HEAD
+                # absent or equal to HEAD → zero files → zero reads).
+                result.quarantined = scan_quarantine(
+                    vault, paths=_changed_md(root, ["ORIG_HEAD..HEAD"])
+                )
 
         if push:
             pushed = run_git(root, "push", "origin", "HEAD", timeout=t)

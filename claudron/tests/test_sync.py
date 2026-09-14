@@ -13,6 +13,8 @@ import pytest
 
 from claudron.cli import main
 from claudron.schema import has_conflict_markers
+from claudron.sync import SyncTimeout, sync
+from claudron.vault import detect
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
@@ -296,3 +298,176 @@ class TestConflictMarkers:
             "Conflicts insert `<<<<<<< HEAD` at line starts.\n"
         )
         assert not has_conflict_markers(text)
+
+
+def _note(title: str) -> str:
+    return (
+        f"---\ntitle: {title}\ntype: knowledge\nstatus: current\n"
+        "owner: t\ncreated: 2026-07-01\nupdated: 2026-07-01\n"
+        f"---\n\n# {title}\n\nBody.\n"
+    )
+
+
+@pytest.fixture
+def feature_branch_vault(tmp_path: Path) -> Path:
+    """Machine A on a feature branch that has its OWN upstream, while `main`
+    has moved ahead on the remote.
+
+    This is the shape #147 was found in, and the divergence asymmetry is the
+    whole point: the branch is 1 commit ahead of *its own* upstream and 4
+    ahead of *main*, so a rebase onto the wrong base is visible in the result
+    rather than needing the command to be inspected.
+    """
+    remote = tmp_path / "remote.git"
+    remote.mkdir()
+    _git(remote, "init", "--bare", "--initial-branch=main")
+
+    a = tmp_path / "machine-a"
+    _git(tmp_path, "clone", str(remote), str(a))
+    main(["init", str(a), "--adopt"])
+    _git(a, "add", "-A")
+    _git(a, "commit", "-m", "seed")
+    _git(a, "push", "origin", "main")
+
+    _git(a, "checkout", "-b", "feature")
+    (a / "_shared" / "knowledge" / "feature-note.md").write_text(_note("Feature Note"))
+    _git(a, "add", "-A")
+    _git(a, "commit", "-m", "feature work")
+    _git(a, "push", "-u", "origin", "feature")
+
+    mover = tmp_path / "mover"
+    _git(tmp_path, "clone", str(remote), str(mover))
+    for i in range(3):
+        (mover / f"main-only-{i}.md").write_text("x\n")
+        _git(mover, "add", "-A")
+        _git(mover, "commit", "-m", f"main-only-{i}")
+    _git(mover, "push", "origin", "main")
+    return a
+
+
+class TestRefusesToStartABadRebase:
+    """#147 — `sync` must not begin a rebase it cannot safely finish."""
+
+    def test_pull_rebases_onto_own_upstream_not_the_remote_default(
+        self, feature_branch_vault
+    ):
+        """THE regression test. `origin HEAD` resolves HEAD *on the remote* —
+        a symbolic ref to the default branch — so the old refspec rebased a
+        feature branch onto origin/main and queued the entire divergence."""
+        a = feature_branch_vault
+        before = _git(a, "rev-parse", "HEAD").stdout.strip()
+
+        rc = main(["--vault", str(a), "sync", "--pull"])
+
+        assert rc == 0
+        assert _git(a, "symbolic-ref", "--short", "HEAD").stdout.strip() == "feature"
+        log = _git(a, "log", "--oneline").stdout
+        assert "main-only-0" not in log, "main's commits were replayed onto the branch"
+        assert _git(a, "rev-parse", "HEAD").stdout.strip() == before
+        assert not (a / ".git" / "rebase-merge").exists()
+
+    def test_detached_head_refuses_and_makes_no_commit(self, synced_pair):
+        """The near-miss: a detached HEAD does not refuse writes, so the old
+        code committed there and produced history reachable from no branch."""
+        a, _ = synced_pair
+        _git(a, "checkout", "--detach")
+        (a / "_shared" / "knowledge" / "orphan.md").write_text(_note("Orphan"))
+        head_before = _git(a, "rev-parse", "HEAD").stdout.strip()
+
+        result = sync(detect(a), pull=True, push=True)
+
+        assert not result.ok
+        assert "refusing to sync" in result.detail
+        assert not result.committed and not result.pulled and not result.pushed
+        assert _git(a, "rev-parse", "HEAD").stdout.strip() == head_before
+        assert _git(a, "status", "--porcelain").stdout.strip(), "change was consumed"
+
+    def test_dirty_tree_after_a_failed_commit_skips_the_pull(
+        self, synced_pair, monkeypatch
+    ):
+        """Defect 2: the pull was unconditional on index state, so a failed
+        commit was followed by a rebase attempt against a dirty tree."""
+        from claudron import sync as sync_mod
+
+        a, _ = synced_pair
+        (a / "_shared" / "knowledge" / "pending.md").write_text(_note("Pending"))
+        real = sync_mod.run_git
+
+        def fake(root, *args, **kw):
+            if args and args[0] == "commit":
+                return subprocess.CompletedProcess([], 1, stdout="", stderr="refused")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", fake)
+        result = sync_mod.sync(detect(a), pull=True, push=False)
+
+        assert not result.ok
+        assert "working tree is not clean" in result.detail
+        assert not result.pulled
+
+    def test_branch_without_upstream_skips_pull_but_still_pushes(self, synced_pair):
+        """A never-pushed branch has nothing to rebase onto. The old refspec
+        hid that state by rebasing onto the remote default instead."""
+        a, _ = synced_pair
+        _git(a, "checkout", "-b", "never-pushed")
+        (a / "_shared" / "knowledge" / "fresh.md").write_text(_note("Fresh"))
+
+        result = sync(detect(a), pull=True, push=True)
+
+        assert not result.pulled
+        assert "no upstream" in result.detail
+        assert result.committed and result.pushed
+
+
+class TestTimeoutIsReportedNotRaised:
+    """#147 defect 3 — a timeout raised past the failure handler, so the one
+    failure that can leave the repository inconsistent was the one that said
+    nothing."""
+
+    def test_pull_timeout_returns_a_reported_result(self, synced_pair, monkeypatch):
+        from claudron import sync as sync_mod
+
+        a, _ = synced_pair
+        real = sync_mod.run_git
+
+        def fake(root, *args, **kw):
+            if args and args[0] == "pull":
+                raise SyncTimeout("git pull --rebase timed out")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", fake)
+        result = sync_mod.sync(detect(a), pull=True, push=False)
+
+        assert not result.ok
+        assert "timed out" in result.detail
+
+    def test_pull_timeout_names_the_rebase_it_left_behind(
+        self, synced_pair, monkeypatch
+    ):
+        """A mid-replay kill leaves zero unmerged paths, so the debris is
+        invisible to every porcelain check. The detail line is the only thing
+        that can say it happened."""
+        from claudron import sync as sync_mod
+
+        a, _ = synced_pair
+        real = sync_mod.run_git
+
+        def fake(root, *args, **kw):
+            if args and args[0] == "pull":
+                (Path(root) / ".git" / "rebase-merge").mkdir(parents=True, exist_ok=True)
+                raise SyncTimeout("git pull --rebase timed out")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", fake)
+        result = sync_mod.sync(detect(a), pull=True, push=False)
+
+        assert not result.ok
+        assert "stopped part-way" in result.detail
+        assert "left for the human" in result.detail
+
+    def test_timeout_is_still_a_syncerror_for_existing_callers(self):
+        """Subclass, not a sibling: hooks.py and cli.py both catch SyncError
+        and must keep catching timeouts."""
+        from claudron.sync import SyncError
+
+        assert issubclass(SyncTimeout, SyncError)
