@@ -16,7 +16,7 @@ import pytest
 
 from claudron.cli import main
 from claudron.schema import has_conflict_markers
-from claudron.sync import SyncTimeout, sync
+from claudron.sync import SyncError, SyncTimeout, check, sync
 from claudron.vault import detect
 
 
@@ -49,6 +49,14 @@ def synced_pair(tmp_path: Path) -> tuple[Path, Path]:
     _git(a, "add", "-A")
     _git(a, "commit", "-m", "seed")
     _git(a, "push", "origin", "main")
+    # A REAL CLONE OF A NON-EMPTY REPOSITORY HAS THIS REF; this one is cloned
+    # while the remote is still empty, so git never wrote it. Without it
+    # `_default_branch` cannot determine anything and the side-branch tests
+    # below were green only because the old implementation GUESSED "main",
+    # which happens to be this fixture's branch name -- so the predicate they
+    # exist to pin was never actually exercised. `set-head --auto` asks the
+    # remote, which is the same mechanism `git clone` uses.
+    _git(a, "remote", "set-head", "origin", "--auto")
 
     b = tmp_path / "machine-b"
     _git(tmp_path, "clone", str(remote), str(b))
@@ -796,3 +804,496 @@ class TestStaleLock:
         assert not result.ok
         assert "index.lock" in result.detail and "Unable to create" in result.detail
         assert "commit" not in calls, "a failed add must return before commit"
+
+
+class TestCheck:
+    """#154 — the read-only health door, one test per verdict.
+
+    The door this replaces is `status --json`, which walks every note and
+    WRITES the index to answer "is this healthy" — so asking mutated the thing
+    being asked about, and could not be asked at all of a wedged or read-only
+    tree. Read-only is therefore the point rather than a courtesy, and it is
+    PINNED below rather than promised.
+
+    The states are the deliverable. Two consumers key on them, so every one
+    gets its own test: a vocabulary nobody exercised is a vocabulary that
+    drifts the first time the implementation is rewritten.
+    """
+
+    def _vault(self, root: Path):
+        return detect(root)
+
+    # --- the vocabulary itself ---------------------------------------------
+
+    def test_every_state_in_the_table_has_a_test_here(self):
+        """The meta-check. `CHECK_STATES` is the contract, so a value added to
+        it without a test is caught here rather than in a consumer."""
+        from claudron.sync import CHECK_STATES
+        names = {n for n in dir(self) if n.startswith("test_")}
+        covered = {
+            "unknown": "test_unknown_when_git_cannot_answer",
+            "stale-lock": "test_stale_lock",
+            "rebase-conflict": "test_rebase_conflict",
+            "rebase-killed": "test_rebase_killed",
+            "merge": "test_merge_in_progress",
+            "detached": "test_detached",
+            "side-branch": "test_side_branch_with_and_without_upstream",
+            "dirty": "test_dirty",
+            "divergent": "test_divergent",
+            "behind": "test_behind",
+            "ahead": "test_ahead",
+            "unreachable": "test_unreachable_only_with_reach",
+            "clean": "test_clean",
+        }
+        assert set(covered) == set(CHECK_STATES), (
+            "a state was added or renamed without updating this map"
+        )
+        for state, test in covered.items():
+            assert test in names, f"{state} has no test named {test}"
+
+    def test_precedence_is_the_table_order(self):
+        """The order in `CHECK_STATES` IS the precedence, so it is asserted
+        rather than left as a comment: a stale lock outranks a dirty tree
+        because a locked vault cannot commit its way out."""
+        from claudron.sync import CHECK_STATES
+        assert CHECK_STATES.index("stale-lock") < CHECK_STATES.index("dirty")
+        assert CHECK_STATES.index("rebase-conflict") < CHECK_STATES.index("detached")
+        assert CHECK_STATES.index("side-branch") < CHECK_STATES.index("dirty")
+        assert CHECK_STATES[-1] == "clean"
+
+    def test_unknown_is_not_ok(self):
+        """The whole reason `unknown` exists. A consumer that treated it as
+        healthy would rebuild the silence this door was built to end."""
+        from claudron.sync import CheckResult
+        assert CheckResult(state="unknown").ok is False
+        assert CheckResult(state="clean").ok is True
+        assert CheckResult(state="behind").ok is False
+
+    def test_unknown_survives_serialisation(self):
+        from claudron.sync import CheckResult
+        d = CheckResult(state="unknown", detail="git is unavailable").to_dict()
+        assert d["check"] is True
+        assert d["state"] == "unknown"
+        assert "git is unavailable" in d["detail"]
+
+    # --- one per state ------------------------------------------------------
+
+    def test_clean(self, synced_pair):
+        a, _ = synced_pair
+        r = check(self._vault(a))
+        assert r.state == "clean", r.to_dict()
+        assert r.branch == "main" and r.default_branch == "main"
+        assert r.ahead == 0 and r.behind == 0
+
+    def test_ahead(self, synced_pair):
+        a, _ = synced_pair
+        (a / "_shared" / "knowledge" / "ahead.md").write_text(_note("Ahead"))
+        _git(a, "add", "-A")
+        _git(a, "commit", "-m", "local")
+        r = check(self._vault(a))
+        assert r.state == "ahead" and r.ahead == 1 and r.behind == 0
+
+    def test_behind(self, synced_pair):
+        a, b = synced_pair
+        (b / "_shared" / "knowledge" / "theirs.md").write_text(_note("Theirs"))
+        _git(b, "add", "-A")
+        _git(b, "commit", "-m", "remote")
+        _git(b, "push", "origin", "main")
+        _git(a, "fetch", "origin")       # check() never fetches: it is offline
+        r = check(self._vault(a))
+        assert r.state == "behind" and r.behind == 1 and r.ahead == 0
+
+    def test_divergent(self, synced_pair):
+        a, b = synced_pair
+        (b / "_shared" / "knowledge" / "theirs.md").write_text(_note("Theirs"))
+        _git(b, "add", "-A")
+        _git(b, "commit", "-m", "remote")
+        _git(b, "push", "origin", "main")
+        (a / "_shared" / "knowledge" / "mine.md").write_text(_note("Mine"))
+        _git(a, "add", "-A")
+        _git(a, "commit", "-m", "local")
+        _git(a, "fetch", "origin")
+        r = check(self._vault(a))
+        assert r.state == "divergent" and r.ahead == 1 and r.behind == 1
+
+    def test_dirty(self, synced_pair):
+        a, _ = synced_pair
+        (a / "_shared" / "knowledge" / "wip.md").write_text(_note("WIP"))
+        r = check(self._vault(a))
+        assert r.state == "dirty" and r.uncommitted == 1
+        assert r.uncommitted_oldest_age_s is not None
+
+    def test_side_branch_with_and_without_upstream(self, synced_pair):
+        """S5 and S6 share the verdict ON PURPOSE — the `upstream` field is
+        what tells them apart, which is why thirteen design states need only
+        twelve of these values."""
+        a, _ = synced_pair
+        _git(a, "switch", "-c", "docs/side")
+        no_upstream = check(self._vault(a))
+        assert no_upstream.state == "side-branch"
+        assert no_upstream.upstream is None, "S6 has no upstream"
+
+        _git(a, "push", "-u", "origin", "docs/side")
+        with_upstream = check(self._vault(a))
+        assert with_upstream.state == "side-branch", "S5 shares S6's verdict"
+        assert with_upstream.upstream == "origin/docs/side"
+
+    def test_detached(self, synced_pair):
+        a, _ = synced_pair
+        _git(a, "switch", "--detach")
+        r = check(self._vault(a))
+        assert r.state == "detached" and r.branch is None
+
+    def test_rebase_conflict(self, synced_pair):
+        """A rebase stopped ON a commit: markers a human is meant to see."""
+        a, _ = synced_pair
+        rd = a / ".git" / "rebase-merge"
+        rd.mkdir(parents=True)
+        (rd / "git-rebase-todo").write_text("pick deadbee queued\n")
+        (rd / "stopped-sha").write_text("deadbee\n")
+        r = check(self._vault(a))
+        assert r.state == "rebase-conflict"
+        assert r.interrupted and "rebase" in r.interrupted
+
+    def test_rebase_killed(self, synced_pair):
+        """The outage's own signature: a todo list, no stopped-sha, no
+        unmerged paths. Collapsing this into `rebase-conflict` is exactly the
+        silence the design doc forbids — they need opposite responses."""
+        a, _ = synced_pair
+        rd = a / ".git" / "rebase-merge"
+        rd.mkdir(parents=True)
+        (rd / "git-rebase-todo").write_text("pick deadbee queued\n")
+        (rd / "done").write_text("pick cafebabe replayed\n")
+        r = check(self._vault(a))
+        assert r.state == "rebase-killed"
+
+    def test_merge_in_progress(self, synced_pair):
+        a, _ = synced_pair
+        (a / ".git" / "MERGE_HEAD").write_text(
+            _git(a, "rev-parse", "HEAD").stdout)
+        r = check(self._vault(a))
+        assert r.state == "merge"
+
+    def test_stale_lock(self, synced_pair):
+        """Reported on AGE ALONE, while `sync()` deletes only what is also
+        provably ownerless. The bar for acting is higher than the bar for
+        telling someone: reporting only the provable ones goes silent on a
+        wedged vault whose host cannot name the holder, which is how the
+        original sat for ten and a half days."""
+        a, _ = synced_pair
+        lock = a / ".git" / "index.lock"
+        lock.write_bytes(b"")
+        old = time.time() - 3600
+        os.utime(lock, (old, old))
+        r = check(self._vault(a))
+        assert r.state == "stale-lock"
+        assert r.lock_age_s is not None and r.lock_age_s >= 3600
+
+    def test_a_young_lock_is_not_a_verdict(self, synced_pair):
+        """The control on the one above. An ordinary concurrent write holds a
+        lock for a moment; a watchdog that flipped state for it would flap."""
+        a, _ = synced_pair
+        (a / ".git" / "index.lock").write_bytes(b"")
+        r = check(self._vault(a))
+        assert r.state == "clean"
+        assert r.lock_age_s is not None, "still reported, just not a verdict"
+
+    def test_unreachable_only_with_reach(self, synced_pair):
+        """S12. Off by default so the verdict is computed offline — a watchdog
+        polling this must not be gated on the network being up."""
+        a, _ = synced_pair
+        _git(a, "remote", "set-url", "origin", str(a / "no" / "such" / "remote.git"))
+        assert check(self._vault(a)).state == "clean", "offline by default"
+        assert check(self._vault(a), reach=True).state == "unreachable"
+
+    def test_unknown_when_git_cannot_answer(self, synced_pair, monkeypatch):
+        """A reader that cannot reach its source must not answer the same as
+        one that looked and found nothing wrong."""
+        a, _ = synced_pair
+        import claudron.sync as sync_mod
+
+        def boom(*_a, **_k):
+            raise SyncError("git is unavailable: no such file")
+
+        monkeypatch.setattr(sync_mod, "run_git", boom)
+        r = check(self._vault(a))
+        assert r.state == "unknown"
+        assert "git is unavailable" in r.detail
+
+    # --- the properties the door exists for --------------------------------
+
+    def test_check_never_walks_notes(self, synced_pair, monkeypatch):
+        """`status --json` walks every note to answer this question; on a
+        10k-note vault that is the difference between a probe and an outage."""
+        a, _ = synced_pair
+        import claudron.vault as vault_mod
+
+        def boom(*_a, **_k):
+            raise AssertionError("check() must never walk a knowledge tier")
+
+        if hasattr(vault_mod, "walk_knowledge_tier"):
+            monkeypatch.setattr(vault_mod, "walk_knowledge_tier", boom)
+        r = check(self._vault(a))
+        assert r.state == "clean"
+
+    def test_check_runs_only_read_only_git(self, synced_pair, monkeypatch):
+        """THE read-only pin, and it is a whitelist of verbs rather than an
+        after-the-fact mtime check: a mutation that happened to change nothing
+        would pass the second and fail this one."""
+        a, _ = synced_pair
+        import claudron.sync as sync_mod
+        real = sync_mod.run_git
+        seen: list[str] = []
+        READ_ONLY = {
+            "rev-parse", "symbolic-ref", "rev-list", "status", "config",
+            "diff", "ls-remote",
+        }
+
+        def spy(root, *args, **kw):
+            # the first NON-flag argument is the subcommand; the door passes
+            # `--no-optional-locks` ahead of it
+            seen.append(next(a for a in args if not a.startswith("-")))
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", spy)
+        check(self._vault(a), reach=True)
+        assert seen, "the door ran no git at all — the pin would be vacuous"
+        assert set(seen) <= READ_ONLY, f"a writing verb was run: {set(seen) - READ_ONLY}"
+
+    def test_check_touches_neither_the_index_nor_the_journal(self, synced_pair):
+        a, _ = synced_pair
+        index = a / ".git" / "index"
+        before = index.stat().st_mtime_ns
+        journal = a / ".claudron" / "sync.json"
+        journal.parent.mkdir(parents=True, exist_ok=True)
+        journal.write_text('{"last_ok_at": "2026-01-01T00:00:00+00:00"}\n')
+        j_before = journal.stat().st_mtime_ns
+
+        r = check(self._vault(a))
+
+        assert index.stat().st_mtime_ns == before, "check() wrote the index"
+        assert journal.stat().st_mtime_ns == j_before, "check() wrote the journal"
+        assert r.last_sync_ok_at == "2026-01-01T00:00:00+00:00", "but it READ it"
+
+    def test_check_answers_on_a_read_only_tree(self, synced_pair):
+        """The wedged-vault case: the door has to work exactly when the thing
+        it reports on cannot be written."""
+        a, _ = synced_pair
+        gitdir = a / ".git"
+        mode = gitdir.stat().st_mode
+        os.chmod(gitdir, 0o500)
+        try:
+            r = check(self._vault(a))
+        finally:
+            os.chmod(gitdir, mode)
+        assert r.state in {"clean", "dirty"}, r.to_dict()
+        assert r.state != "unknown", "a read-only tree is still answerable"
+
+    def test_check_default_branch_is_stripped(self, synced_pair):
+        """`symbolic-ref --short refs/remotes/origin/HEAD` answers
+        `origin/main` while HEAD answers `main`; an unstripped compare would
+        make every healthy clone read `side-branch`."""
+        a, _ = synced_pair
+        r = check(self._vault(a))
+        assert r.default_branch == "main"
+        assert not r.default_branch.startswith("origin/")
+
+    def _mature_vault_that_lost_origin_head(self, tmp_path):
+        """A vault with real shared history, on a GENUINE side branch, whose
+        `origin/HEAD` has gone. Built rather than argued: the ref is lost to a
+        pruned remote ref, a reclone or a hand-rolled `remote add`, none of
+        which are exotic, and none of which make the clone a bootstrap."""
+        remote = tmp_path / "remote.git"
+        remote.mkdir()
+        _git(remote, "init", "--bare", "--initial-branch=main")
+        v = tmp_path / "v"
+        _git(tmp_path, "clone", str(remote), str(v))
+        main(["init", str(v), "--adopt"])
+        (v / "_shared" / "knowledge" / "seed.md").write_text(_note("Seed"))
+        _git(v, "add", "-A")
+        _git(v, "commit", "-m", "seed")
+        _git(v, "push", "origin", "main")
+        _git(v, "remote", "set-head", "origin", "--auto")
+
+        _git(v, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+        _git(v, "switch", "-c", "docs/side")
+        for i in (1, 2, 3):
+            (v / "_shared" / "knowledge" / f"w{i}.md").write_text(_note(f"W{i}"))
+            _git(v, "add", "-A")
+            _git(v, "commit", "-m", f"work {i}")
+        return v
+
+    def test_the_bootstrap_pass_does_not_cover_a_mature_side_branch(self, tmp_path):
+        """**The adversarial case, and it was a real gap.** Reproduced before
+        the fix: this vault was committed AND pushed with no refusal at all,
+        and `sync` created `docs/side` on the remote. `origin/HEAD` being unset
+        cannot be the discriminator -- a mature vault loses it too, and in that
+        state the guard C1 exists to provide was simply absent."""
+        v = self._mature_vault_that_lost_origin_head(tmp_path)
+        from claudron.sync import _refuse_off_default
+        text = _refuse_off_default(v, 10.0, None)
+        assert text is not None, "a mature vault on a side branch must refuse"
+        assert "docs/side" in text
+        assert "--branch" in text, "the refusal must name its own override"
+        assert "set-head" in text, "and the remedy that actually fixes it"
+
+    def test_the_health_door_agrees_with_the_refusal_door(self, tmp_path):
+        """One clone must not read healthy to the probe while `sync` refuses
+        it -- that divergence is how a wedged vault stayed invisible."""
+        v = self._mature_vault_that_lost_origin_head(tmp_path)
+        assert check(self._vault(v)).state == "side-branch"
+
+    def test_the_commits_really_are_reachable_from_a_remote(self, tmp_path):
+        """Why the obvious predicate fails, pinned so nobody reinstates it.
+
+        `rev-list --count HEAD --not --remotes` reads ZERO here once the side
+        branch has been pushed -- the history is on a remote, just on the wrong
+        branch. That is the outage's own shape, so "holds unpushed commits"
+        cannot be the second fact."""
+        v = self._mature_vault_that_lost_origin_head(tmp_path)
+        _git(v, "push", "-u", "origin", "docs/side")
+        unpushed = _git(v, "rev-list", "--count", "HEAD", "--not", "--remotes")
+        assert unpushed.stdout.strip() == "0", "precondition for the point below"
+        from claudron.sync import _refuse_off_default
+        assert _refuse_off_default(v, 10.0, None) is not None, (
+            "still stranded, and still refused"
+        )
+
+    def test_both_facts_must_agree_before_the_guard_stands_down(self):
+        """The pure predicate, the twin of `_is_expirable`. Ambiguity is not a
+        bootstrap, so it refuses."""
+        from claudron.sync import _is_bootstrap
+        assert _is_bootstrap(None, True) is True        # undetermined + alone
+        assert _is_bootstrap(None, False) is False      # other branches exist
+        assert _is_bootstrap("main", True) is False     # determined: not our case
+        assert _is_bootstrap("main", False) is False
+
+    def test_a_genuine_bootstrap_still_syncs(self, tmp_path):
+        """The control. The whole reason the pass exists: a vault bootstrapped
+        with `git init` + `remote add` + `push -u` on a host that defaults to
+        `master` must not be refused forever."""
+        remote = tmp_path / "remote.git"
+        remote.mkdir()
+        _git(remote, "init", "--bare")
+        v = tmp_path / "v"
+        v.mkdir()
+        _git(v, "init")
+        main(["init", str(v), "--adopt"])
+        _git(v, "add", "-A")
+        _git(v, "commit", "-m", "seed")
+        _git(v, "remote", "add", "origin", str(remote))
+        _git(v, "push", "-u", "origin", "HEAD")
+        from claudron.sync import _refuse_off_default, _alone_in_its_history
+        assert _alone_in_its_history(v, 10.0) is True
+        assert _refuse_off_default(v, 10.0, None) is None
+
+    def test_an_unreadable_ref_list_is_not_a_bootstrap(self, synced_pair, monkeypatch):
+        """Cannot-establish falls to the safe side, like every other both-facts
+        predicate here."""
+        a, _ = synced_pair
+        import claudron.sync as sync_mod
+        real = sync_mod.run_git
+
+        def fake(root, *args, **kw):
+            if args and args[0] == "for-each-ref":
+                return subprocess.CompletedProcess(["git"], 128, "", "boom")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", fake)
+        from claudron.sync import _alone_in_its_history
+        assert _alone_in_its_history(a, 10.0) is False
+
+    def test_an_undetermined_default_branch_is_null_not_a_guess(self, tmp_path):
+        """The bootstrap shape: `git init` + `git remote add` + `git push -u`
+        leaves origin/HEAD unset, and a host may have no init.defaultBranch.
+        Guessing `main` there made every `claudron sync` refuse a clone that
+        was on `master` — a new vault that could never sync at all."""
+        remote = tmp_path / "remote.git"
+        remote.mkdir()
+        _git(remote, "init", "--bare")
+        v = tmp_path / "v"
+        v.mkdir()
+        _git(v, "init")
+        main(["init", str(v), "--adopt"])
+        _git(v, "add", "-A")
+        _git(v, "commit", "-m", "seed")
+        _git(v, "remote", "add", "origin", str(remote))
+        _git(v, "push", "-u", "origin", "HEAD")
+        r = check(self._vault(v))
+        assert r.default_branch is None, "undetermined must not be a guess"
+        assert r.state != "side-branch", "and must not manufacture a verdict"
+
+    def test_sync_writes_the_journal_and_check_only_reads_it(self, synced_pair):
+        a, _ = synced_pair
+        journal = a / ".claudron" / "sync.json"
+        assert not journal.exists()
+        assert check(self._vault(a)).last_sync_ok_at is None, (
+            "absent journal reads as null, never as a fabricated timestamp"
+        )
+        (a / "_shared" / "knowledge" / "j.md").write_text(_note("J"))
+        sync(self._vault(a), pull=False, push=False)
+        assert journal.exists(), "sync() writes it"
+        stamped = check(self._vault(a)).last_sync_ok_at
+        assert stamped, "check() reads it"
+
+    def test_a_refusal_counts_as_an_attempt(self, synced_pair):
+        """A clone refusing for a week and one nobody has asked to sync look
+        identical without this, and telling them apart is the denominator."""
+        import json as _json
+        a, _ = synced_pair
+        _git(a, "switch", "-c", "docs/side")
+        (a / "_shared" / "knowledge" / "r.md").write_text(_note("R"))
+        result = sync(self._vault(a), pull=False, push=False)
+        assert not result.ok, "precondition: this sync is refused"
+        data = _json.loads((a / ".claudron" / "sync.json").read_text())
+        assert data["last_state"] == "refused"
+        assert data.get("last_attempt_at")
+        assert "last_ok_at" not in data, "a refusal is not a success"
+
+
+class TestCheckCLI:
+    """The door as a consumer meets it (#154). Two are already waiting on it,
+    so the exit-code contract is pinned here rather than left to the parser."""
+
+    def test_check_with_pull_or_push_is_a_usage_error(self, synced_pair):
+        """`--check` changes nothing and `--pull`/`--push` change things, so
+        the combination has no meaning. argparse's own mutually-exclusive
+        refusal exits 2, which is the CLI contract's usage code — asserted
+        because a later hand-rolled check could silently pick a different one.
+        """
+        a, _ = synced_pair
+        for other in ("--pull", "--push"):
+            with pytest.raises(SystemExit) as exc:
+                main(["--vault", str(a), "sync", "--check", other])
+            assert exc.value.code == 2, f"--check {other} must be a usage error"
+
+    def test_a_bad_verdict_is_still_exit_zero(self, synced_pair, capsys):
+        """THE contract for consumers: the state lives in the envelope, never
+        in the exit code. Conflating them would force a caller to choose
+        between "the check ran" and "the clone is healthy", which are the two
+        questions this door exists to separate."""
+        a, _ = synced_pair
+        _git(a, "switch", "-c", "docs/side")
+        rc = main(["--vault", str(a), "sync", "--check", "--json"])
+        out = capsys.readouterr().out
+        assert rc == 0, "a bad verdict is not a failed command"
+        assert '"state": "side-branch"' in out
+
+    def test_json_carries_the_check_discriminator(self, synced_pair, capsys):
+        """`command` stays `sync`, so `check: true` is how a consumer tells a
+        verdict envelope from a sync envelope."""
+        import json as _json
+        a, _ = synced_pair
+        main(["--vault", str(a), "sync", "--check", "--json"])
+        env = _json.loads(capsys.readouterr().out)
+        assert env["command"] == "sync"
+        assert env["data"]["check"] is True
+        assert env["data"]["state"] == "clean"
+
+    def test_plain_mode_prints_one_line_on_stdout(self, synced_pair, capsys):
+        a, _ = synced_pair
+        main(["--vault", str(a), "sync", "--check"])
+        cap = capsys.readouterr()
+        lines = [ln for ln in cap.out.splitlines() if ln.strip()]
+        assert len(lines) == 1, cap.out
+        assert lines[0].startswith("sync check: clean (main vs origin/main")
