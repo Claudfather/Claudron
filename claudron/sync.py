@@ -173,6 +173,109 @@ def _interrupted_state(root: Path, git_dir: Path | None, t: float) -> str | None
     return None
 
 
+REBASE_MARKERS = ("rebase-merge", "rebase-apply")
+
+
+def _rebase_marker_dir(git_dir: Path | None) -> Path | None:
+    """The in-progress rebase's state directory, or None."""
+    if git_dir is None:
+        return None
+    for marker in REBASE_MARKERS:
+        d = git_dir / marker
+        if d.exists():
+            return d
+    return None
+
+
+def _killed_rebase(root: Path, git_dir: Path | None, t: float) -> bool:
+    """Was this rebase KILLED mid-replay, rather than stopped on a conflict?
+
+    **This is the discrimination the whole fix turns on, and getting it
+    backwards is worse than the bug.** A rebase stopped on a conflict holds
+    markers a human is meant to see and work a human has possibly already
+    started; aborting that destroys their resolution. A rebase killed by the
+    per-op timeout holds neither — nothing stopped it deliberately, there is
+    nothing to resolve, and leaving it is how a live tree sat detached for
+    twelve days with the wrong files checked out.
+
+    Two independent facts, and BOTH must say "kill", because each can be absent
+    for its own reason:
+
+    * **no unmerged paths** — a conflict always has them; a kill never does.
+    * **no ``stopped-sha``** — git writes that file when it stops ON a commit,
+      which is what a conflict is. A kill leaves the todo list and `done` but
+      no stopped commit.
+
+    Requiring both means an ambiguous state — anything that looks even
+    partly like a conflict — is treated as a conflict and left alone. The
+    asymmetry is deliberate: failing toward "leave it for the human" costs a
+    refusal, failing the other way costs their work.
+
+    Measured on the live clone that produced the outage: `done` = 1 pick,
+    `git-rebase-todo` = 58 remaining, **no stopped-sha, zero unmerged paths** —
+    the signature of a kill.
+    """
+    marker = _rebase_marker_dir(git_dir)
+    if marker is None:
+        return False
+    if (marker / "stopped-sha").exists():
+        return False                      # stopped ON a commit: a conflict
+    unmerged = run_git(root, "diff", "--name-only", "--diff-filter=U", timeout=t)
+    if unmerged.returncode != 0 or unmerged.stdout.strip():
+        # Either there are conflicted paths, or the question could not be
+        # answered — both mean "do not abort".
+        return False
+    return True
+
+
+def _default_branch(root: Path, t: float) -> str:
+    """The branch this clone is supposed to live on.
+
+    The ``origin/`` strip is load-bearing and is measured, not assumed:
+    ``symbolic-ref --short refs/remotes/origin/HEAD`` answers ``origin/main``
+    while ``symbolic-ref --short HEAD`` answers ``main``. Comparing the two
+    unstripped makes every healthy clone look like a side branch, so the
+    refusal below would fire on every sync on every host.
+    """
+    ref = run_git(root, "symbolic-ref", "--quiet", "--short",
+                  "refs/remotes/origin/HEAD", timeout=t)
+    if ref.returncode == 0 and ref.stdout.strip():
+        name = ref.stdout.strip()
+        remote = "origin/"
+        return name[len(remote):] if name.startswith(remote) else name
+    cfg = run_git(root, "config", "init.defaultBranch", timeout=t)
+    if cfg.returncode == 0 and cfg.stdout.strip():
+        return cfg.stdout.strip()
+    return "main"
+
+
+def _refuse_off_default(root: Path, t: float, allow: str | None) -> str | None:
+    """Refusal text when HEAD is not the default branch, or None.
+
+    A clone left on a side branch is the state where captures look durable in
+    ``git log`` and exist on no other machine: on the host that produced this
+    issue, 59 commits accrued there and 53 reached no remote at all. Refusing
+    costs one message; not refusing cost six weeks of invisible divergence.
+
+    Answering "I cannot tell which branch I am on" is NOT a refusal: a detached
+    HEAD is already caught by ``_interrupted_state`` upstream of this, and
+    inventing a second refusal for it here would fire on states this check has
+    no opinion about.
+    """
+    head = run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD", timeout=t)
+    if head.returncode != 0 or not head.stdout.strip():
+        return None
+    current = head.stdout.strip()
+    if allow is not None and allow == current:
+        return None
+    default = _default_branch(root, t)
+    if current == default:
+        return None
+    return (
+        f"refusing to sync: HEAD is on '{current}', the vault syncs on "
+        f"'{default}' — checkout the default branch, or pass --branch "
+        f"{current} to sync a side branch deliberately"
+    )
 #: How long a lock must sit before age alone stops arguing for a live writer.
 #: A real git write on this estate's slowest disk finishes in seconds; the lock
 #: that caused the outage sat for 914,102 s (ten and a half days). Anything in
@@ -274,6 +377,7 @@ def sync(
     pull: bool = True,
     push: bool = True,
     timeout: float | None = None,
+    branch: str | None = None,
 ) -> SyncResult:
     """Commit → pull --rebase → push. Raises SyncError for environment
     problems; returns ok=False (with detail + quarantine list) when a
@@ -312,6 +416,15 @@ def sync(
                 f"refusing to sync: {interrupted} — nothing was written; "
                 "resolve the repository first"
             )
+            return result
+
+        # A side branch is refused BEFORE the `add -A` below, not after: the
+        # whole harm of a clone on the wrong branch is that it keeps
+        # accumulating work nothing else can see, so a refusal that committed
+        # first would add one more stranded commit each time it fired.
+        off_default = _refuse_off_default(root, t, branch)
+        if off_default:
+            result.detail = off_default
             return result
 
         # A stale index.lock blocks every git WRITE while leaving every git
@@ -432,6 +545,30 @@ def sync(
                     # git was killed mid-replay, so there is no returncode and
                     # no conflict markers. Saying so is the entire fix for the
                     # silence that let this run six weeks unnoticed.
+                    # A KILLED replay is cleaned up; a CONFLICT is not. See
+                    # `_killed_rebase` for why both of its facts must agree
+                    # before anything is aborted -- a conflict's markers are a
+                    # human's work in progress, and erasing them is worse than
+                    # the wedge this fixes.
+                    if _killed_rebase(root, git_dir, t):
+                        abort = run_git(root, "rebase", "--abort", timeout=t)
+                        left = _interrupted_state(root, git_dir, t)
+                        if abort.returncode == 0 and left is None:
+                            head = run_git(root, "symbolic-ref", "--quiet",
+                                           "--short", "HEAD", timeout=t)
+                            sha = run_git(root, "rev-parse", "--short", "HEAD",
+                                          timeout=t)
+                            where = (f"{head.stdout.strip()}@{sha.stdout.strip()}"
+                                     if head.returncode == 0 and sha.returncode == 0
+                                     else "its previous branch")
+                            result.detail = (
+                                f"{exc} — rebase aborted, repository restored "
+                                f"to {where}"
+                            )
+                            return result
+                        # The abort itself failed, or left something behind.
+                        # Fall through to the human-facing text rather than
+                        # claiming a repair that did not happen.
                     left = _interrupted_state(root, git_dir, t)
                     result.detail = _detail(
                         f"{exc} — {left}; left for the human"

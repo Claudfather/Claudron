@@ -360,7 +360,11 @@ class TestRefusesToStartABadRebase:
         a = feature_branch_vault
         before = _git(a, "rev-parse", "HEAD").stdout.strip()
 
-        rc = main(["--vault", str(a), "sync", "--pull"])
+        # --branch since C1 (#152): a side-branch sync is deliberate-only now.
+        # This test's subject is which UPSTREAM a rebase targets, not whether a
+        # side branch may be synced, so it says so explicitly and keeps
+        # testing the refspec.
+        rc = main(["--vault", str(a), "sync", "--pull", "--branch", "feature"])
 
         assert rc == 0
         assert _git(a, "symbolic-ref", "--short", "HEAD").stdout.strip() == "feature"
@@ -415,7 +419,9 @@ class TestRefusesToStartABadRebase:
         _git(a, "checkout", "-b", "never-pushed")
         (a / "_shared" / "knowledge" / "fresh.md").write_text(_note("Fresh"))
 
-        result = sync(detect(a), pull=True, push=True)
+        # branch= since C1 (#152), for the same reason as the test above: the
+        # subject is the missing upstream, not the branch policy.
+        result = sync(detect(a), pull=True, push=True, branch="never-pushed")
 
         assert not result.pulled
         assert "no upstream" in result.detail
@@ -476,6 +482,132 @@ class TestTimeoutIsReportedNotRaised:
         assert issubclass(SyncTimeout, SyncError)
 
 
+class TestKilledRebaseIsAbortedButAConflictIsNot:
+    """C1 (#152). The discrimination is the whole issue.
+
+    A rebase KILLED by the per-op timeout has no markers and nothing for a
+    human to resolve; leaving it is how a live tree sat detached for twelve
+    days with the wrong files checked out. A rebase stopped on a CONFLICT has
+    markers a human is meant to see and may already be working on; aborting
+    that destroys their resolution, which is worse than the bug.
+
+    So every test here comes in a pair: the kill is repaired, the conflict is
+    untouched. A fix that aborted both would pass half of them.
+    """
+
+    def _plant_killed_rebase(self, repo: Path) -> str:
+        """The on-disk signature measured on the clone that produced the
+        outage: a todo list and `done`, NO stopped-sha, zero unmerged paths."""
+        orig = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        head_name = _git(repo, "symbolic-ref", "HEAD").stdout.strip()
+        rd = repo / ".git" / "rebase-merge"
+        rd.mkdir(parents=True)
+        (rd / "git-rebase-todo").write_text("pick deadbee some queued commit\n")
+        (rd / "done").write_text("pick cafebabe already replayed\n")
+        (rd / "head-name").write_text(head_name + "\n")
+        (rd / "onto").write_text(orig + "\n")
+        (rd / "orig-head").write_text(orig + "\n")
+        _git(repo, "checkout", "--detach", orig)
+        return orig
+
+    def test_a_killed_rebase_is_recognised(self, synced_pair):
+        a, _ = synced_pair
+        from claudron.sync import _killed_rebase
+        self._plant_killed_rebase(a)
+        assert _killed_rebase(a, a / ".git", 10.0) is True
+
+    def test_a_stopped_sha_makes_it_a_CONFLICT_not_a_kill(self, synced_pair):
+        """`stopped-sha` means git stopped ON a commit — that is a conflict,
+        and it must never be aborted even with no unmerged paths left (a human
+        part-way through resolving has already staged some)."""
+        a, _ = synced_pair
+        from claudron.sync import _killed_rebase
+        self._plant_killed_rebase(a)
+        (a / ".git" / "rebase-merge" / "stopped-sha").write_text("deadbee\n")
+        assert _killed_rebase(a, a / ".git", 10.0) is False
+
+    def test_unmerged_paths_make_it_a_CONFLICT_not_a_kill(self, synced_pair, capsys):
+        """The real conflict path, through the real flow, not a planted tree."""
+        a, b = synced_pair
+        from claudron.sync import _killed_rebase, _interrupted_state
+        note_rel = "_shared/knowledge/shared-note.md"
+        (a / note_rel).write_text(
+            (a / note_rel).read_text().replace("Original line.", "A's truth."))
+        assert main(["--vault", str(a), "sync"]) == 0
+        capsys.readouterr()
+        (b / note_rel).write_text(
+            (b / note_rel).read_text().replace("Original line.", "B's truth."))
+        main(["--vault", str(b), "sync"])
+        capsys.readouterr()
+        if _interrupted_state(b, b / ".git", 10.0) is not None:
+            assert _killed_rebase(b, b / ".git", 10.0) is False, (
+                "a real conflict must never be classified as a kill"
+            )
+
+    def test_no_rebase_at_all_is_not_a_kill(self, synced_pair):
+        a, _ = synced_pair
+        from claudron.sync import _killed_rebase
+        assert _killed_rebase(a, a / ".git", 10.0) is False
+
+
+class TestSideBranchIsRefusedBeforeAnythingIsWritten:
+    """A clone on a side branch is where captures look durable in `git log` and
+    exist on no other machine: 59 commits accrued on one, 53 reaching no
+    remote. The refusal has to come before the commit, or each refused sync
+    strands one more."""
+
+    def test_the_default_branch_is_not_refused(self, synced_pair):
+        """The control, and the one that would fire on every healthy host if
+        the `origin/` strip were missing."""
+        a, _ = synced_pair
+        from claudron.sync import _default_branch, _refuse_off_default
+        assert _default_branch(a, 10.0) == "main"
+        assert _refuse_off_default(a, 10.0, None) is None
+
+    def test_default_branch_strips_the_remote_prefix(self, synced_pair):
+        """Pinned on its own: `symbolic-ref refs/remotes/origin/HEAD` answers
+        `origin/main` while `symbolic-ref HEAD` answers `main`, so an
+        unstripped comparison refuses every clone."""
+        a, _ = synced_pair
+        from claudron.sync import _default_branch
+        assert not _default_branch(a, 10.0).startswith("origin/")
+
+    def test_a_side_branch_is_refused_and_nothing_is_committed(self, synced_pair, capsys):
+        a, _ = synced_pair
+        _git(a, "switch", "-c", "docs/side")
+        note = a / "_shared" / "knowledge" / "stranded.md"
+        note.write_text(
+            "---\ntitle: Stranded\ntype: knowledge\nstatus: current\nowner: t\n"
+            "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Stranded\n\nx\n")
+        rc = main(["--vault", str(a), "sync"])
+        capsys.readouterr()
+        assert rc != 0
+        dirty = _git(a, "status", "--porcelain").stdout
+        assert "stranded.md" in dirty, (
+            "the refusal must precede the commit — the note is still uncommitted"
+        )
+
+    def test_the_refusal_names_BOTH_branches(self, synced_pair):
+        a, _ = synced_pair
+        from claudron.sync import _refuse_off_default
+        _git(a, "switch", "-c", "docs/side")
+        text = _refuse_off_default(a, 10.0, None)
+        assert text and "docs/side" in text and "main" in text
+        assert "--branch" in text, "the refusal must name its own override"
+
+    def test_the_branch_flag_allows_a_deliberate_side_branch(self, synced_pair):
+        a, _ = synced_pair
+        from claudron.sync import _refuse_off_default
+        _git(a, "switch", "-c", "docs/side")
+        assert _refuse_off_default(a, 10.0, "docs/side") is None
+
+    def test_the_flag_must_name_the_branch_actually_checked_out(self, synced_pair):
+        """`--branch` is a deliberate override for THIS branch, not a blanket
+        opt-out: naming a different branch must still refuse."""
+        a, _ = synced_pair
+        from claudron.sync import _refuse_off_default
+        _git(a, "switch", "-c", "docs/side")
+        assert _refuse_off_default(a, 10.0, "docs/other") is not None
 class TestStaleLock:
     """C2 (#153). An OWNERLESS lock expires; a LIVE one is refused.
 
@@ -620,6 +752,25 @@ class TestStaleLock:
         result = sync(detect(a), pull=False, push=False)
         assert result.committed
         assert "index.lock" not in (result.detail or "")
+
+    def test_a_side_branch_is_refused_before_any_lock_is_touched(self, synced_pair):
+        """Where C1's refusal and C2's repair meet, and the order is a choice.
+
+        `_refuse_off_default` only reads; expiring a lock DELETES. A sync that
+        is going to refuse anyway must not perform the one destructive act on
+        its way out. The off-default refusal also assigns `detail` directly
+        rather than composing it, so a repair performed first would be dropped
+        from the report — the same silence the expiry note exists to end.
+        """
+        a, _ = synced_pair
+        _git(a, "switch", "-c", "docs/side")
+        self._dirty(a)
+        lock = self._plant(a, age_s=3600)
+        result = sync(detect(a), pull=False, push=False)
+        assert not result.ok and not result.committed
+        assert "HEAD is on 'docs/side'" in result.detail
+        assert lock.exists(), "an expirable lock must survive a refused sync"
+        assert "index.lock" not in result.detail
 
     def test_a_failed_add_names_gits_own_message_not_the_dirty_tree(self, synced_pair, monkeypatch):
         """The misdirection that hid the lock for ten days: an unchecked `add`
