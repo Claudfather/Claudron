@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+- **A stale `.git/index.lock` is expired when provably ownerless, refused when not ([#153](https://github.com/Claudfather/Claudron/issues/153)).** Git never expires `index.lock` — it assumes the process that made it will remove it. A host reset that catches a git write leaves one behind, and from then on every `add`, `commit`, `checkout` and `rebase` in the vault fails while **every git read keeps working**. That asymmetry is why the last one went unnoticed for ten and a half days: `status --porcelain` needs no lock, so the tree read "merely dirty", and `sync` reported `the working tree is not clean after the pre-pull commit` — true, useless, and pointing at the tree rather than the cause. One such lock sat for 914,102 s and blocked every vault write for the whole of a separate outage.
+
+  **An ownerless lock expires; a live one is refused, and ambiguity counts as live.** Deleting someone's lock is the one destructive act here — a lock whose holder is still running means a real concurrent write, and stealing it corrupts the index. So `_is_expirable` requires **both** facts: older than 600 s **and** provably unheld. Age alone is not licence (a slow write on a loaded SD card is old and live) and a lone "no owner" is not either (a probe run between git's `open` and its first write reports none). `None` — "the platform cannot say" — never behaves like `False`. Same shape and the same fail-safe direction as #152's `_killed_rebase`.
+
+  **Ownership comes from the kernel, not from the file, and that removes the pid-reuse hazard by construction.** Measured: a live `index.lock` caught mid-write holds **no pid at all** — git writes the new index into it — so there is nothing in the file to read and no recorded pid to be reused. `lsof -t` reports whoever holds the fd *right now*, which is by definition a living process (exit 0 with pids when held, exit 1 when not — both directions measured here). GNU `fuser` is used only where `--version` identifies psmisc, because BSD `fuser` exits 0 for an unheld file and so can never evidence absence; where neither tool is available the answer is `None` and the lock is left alone.
+
+  **A failed `git add` now returns with git's own message** instead of falling through to a failing `commit` whose symptom then got reported. A repair this run performed is also never silently dropped: an expired lock is composed into whatever `detail` the rest of the run produces, so a sync that quietly fixed a ten-day wedge says so.
+
+
 ### Added
 - **Gitignore rules for Claude fleet bot telemetry ([Claudlobby#874](https://github.com/Claudfather/Claudlobby/issues/874)).** Narrow any-depth ignore rules for `data/events/fleet-*.jsonl`, `data/.last-tool-call`, `data/.idle` — the files Claudlobby supervision hooks can write relative to the session cwd when the bot environment is absent. Defence-in-depth behind the #874 writer fix: a broad `git add` in an agent checkout can no longer stage fleet telemetry into this public repo. No product paths match these patterns.
 

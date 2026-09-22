@@ -6,7 +6,10 @@ within the conftest tmp_path convention.
 
 from __future__ import annotations
 
+import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -471,3 +474,174 @@ class TestTimeoutIsReportedNotRaised:
         from claudron.sync import SyncError
 
         assert issubclass(SyncTimeout, SyncError)
+
+
+class TestStaleLock:
+    """C2 (#153). An OWNERLESS lock expires; a LIVE one is refused.
+
+    Git never expires `index.lock` — it assumes the process that made it will
+    remove it. A host reset that catches a git write leaves one behind, and
+    from then on every write in the vault fails while every READ keeps working:
+    `status --porcelain` needs no lock, so the tree reads "merely dirty" and
+    sync blamed the dirty tree. One such lock sat for ten and a half days.
+
+    Deleting someone's lock is the one destructive act here, so the shape
+    mirrors `_killed_rebase`: BOTH facts must agree — old AND provably
+    ownerless — and ambiguity resolves to "leave it alone". A naive
+    "delete any lock" passes the happy path and corrupts a concurrent write;
+    the live-lock tests below are what catch it.
+    """
+
+    def _plant(self, repo: Path, *, age_s: int) -> Path:
+        lock = repo / ".git" / "index.lock"
+        lock.write_bytes(b"")
+        old = time.time() - age_s
+        os.utime(lock, (old, old))
+        return lock
+
+    def _dirty(self, repo: Path) -> Path:
+        note = repo / "_shared" / "knowledge" / "locked.md"
+        note.write_text(_note("Locked"))
+        return note
+
+    # --- the predicate ----------------------------------------------------
+
+    def test_both_facts_must_agree_before_anything_is_deleted(self):
+        from claudron.sync import _is_expirable
+        assert _is_expirable(3600, False, 600) is True      # old + ownerless
+        assert _is_expirable(1, False, 600) is False        # fresh
+        assert _is_expirable(3600, True, 600) is False      # held
+        assert _is_expirable(3600, None, 600) is False      # unknowable
+
+    def test_unknown_ownership_is_not_the_same_as_no_owner(self):
+        """`None` must never behave like `False`. This is the whole fail-safe
+        direction: a probe that cannot answer means "someone is working"."""
+        from claudron.sync import _is_expirable
+        assert _is_expirable(10**6, None, 600) is False
+
+    def test_lsof_semantics_are_the_ones_we_rely_on(self, tmp_path):
+        """Measured rather than assumed, because the predicate is built on it:
+        exit 1 for an unheld file, exit 0 with a pid for a held one. Skipped
+        where lsof is absent rather than asserted from memory."""
+        import shutil as _sh
+        if not _sh.which("lsof"):
+            pytest.skip("lsof not on PATH")
+        from claudron.sync import _lock_holder
+        f = tmp_path / "unheld"
+        f.write_text("")
+        assert _lock_holder(f) is False
+
+    def test_a_genuinely_held_file_reads_as_held(self, tmp_path):
+        import shutil as _sh
+        if not _sh.which("lsof"):
+            pytest.skip("lsof not on PATH")
+        from claudron.sync import _lock_holder
+        f = tmp_path / "held"
+        f.write_text("")
+        proc = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys,time; f=open(sys.argv[1]); time.sleep(30)", str(f)])
+        try:
+            for _ in range(100):
+                if _lock_holder(f) is True:
+                    break
+                time.sleep(0.05)
+            assert _lock_holder(f) is True
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    # --- sync's behaviour --------------------------------------------------
+
+    def test_an_ownerless_old_lock_is_expired_and_the_sync_proceeds(self, synced_pair):
+        a, _ = synced_pair
+        self._dirty(a)
+        lock = self._plant(a, age_s=3600)
+        result = sync(detect(a), pull=False, push=False)
+        assert not lock.exists(), "an old ownerless lock must be removed"
+        assert result.committed
+        assert "expired stale index.lock" in result.detail, (
+            "a repair this run performed must be reported, not silent"
+        )
+
+    def test_a_FRESH_lock_is_refused_and_left_alone(self, synced_pair):
+        """THE positive control for the naive fix. A lock made a moment ago is
+        a concurrent write; deleting it corrupts the index."""
+        a, _ = synced_pair
+        self._dirty(a)
+        lock = self._plant(a, age_s=0)
+        result = sync(detect(a), pull=False, push=False)
+        assert lock.exists(), "a fresh lock must NOT be deleted"
+        assert not result.ok and not result.committed
+        assert "index.lock" in result.detail
+
+    def test_a_HELD_lock_is_refused_even_when_old(self, synced_pair):
+        """Age alone is not licence: a slow write on a loaded disk is old and
+        live."""
+        import shutil as _sh
+        if not _sh.which("lsof"):
+            pytest.skip("lsof not on PATH")
+        a, _ = synced_pair
+        self._dirty(a)
+        lock = self._plant(a, age_s=3600)
+        proc = subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys,time; f=open(sys.argv[1]); time.sleep(30)", str(lock)])
+        try:
+            from claudron.sync import _lock_holder
+            for _ in range(100):
+                if _lock_holder(lock) is True:
+                    break
+                time.sleep(0.05)
+            result = sync(detect(a), pull=False, push=False)
+            assert lock.exists(), "a held lock must never be deleted"
+            assert not result.ok
+            assert "held" in result.detail
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    def test_UNKNOWN_ownership_refuses_and_keeps_the_lock(self, synced_pair, monkeypatch):
+        a, _ = synced_pair
+        self._dirty(a)
+        lock = self._plant(a, age_s=3600)
+        import claudron.sync as sync_mod
+        monkeypatch.setattr(sync_mod, "_lock_holder", lambda _p: None)
+        result = sync(detect(a), pull=False, push=False)
+        assert lock.exists()
+        assert not result.ok
+        assert "unknown" in result.detail
+
+    def test_no_lock_at_all_is_unremarkable(self, synced_pair):
+        """The control on the control: the new code must not change a normal
+        sync, which is every sync."""
+        a, _ = synced_pair
+        self._dirty(a)
+        result = sync(detect(a), pull=False, push=False)
+        assert result.committed
+        assert "index.lock" not in (result.detail or "")
+
+    def test_a_failed_add_names_gits_own_message_not_the_dirty_tree(self, synced_pair, monkeypatch):
+        """The misdirection that hid the lock for ten days: an unchecked `add`
+        fell through to a failing commit, and the porcelain re-read then
+        reported "not clean after the pre-pull commit" — true, useless, and
+        pointing at the tree rather than the cause."""
+        a, _ = synced_pair
+        self._dirty(a)
+        import claudron.sync as sync_mod
+        real = sync_mod.run_git
+        calls: list[str] = []
+
+        def fake(root, *args, **kw):
+            calls.append(args[0])
+            if args[0] == "add":
+                return subprocess.CompletedProcess(
+                    ["git", "add"], 128, "",
+                    "fatal: Unable to create '.git/index.lock': File exists.")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", fake)
+        result = sync(detect(a), pull=False, push=False)
+        assert not result.ok
+        assert "index.lock" in result.detail and "Unable to create" in result.detail
+        assert "commit" not in calls, "a failed add must return before commit"

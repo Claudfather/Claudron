@@ -20,8 +20,11 @@ and fail open on any nonzero outcome.
 
 from __future__ import annotations
 
+import os
+import shutil
 import socket
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -170,6 +173,101 @@ def _interrupted_state(root: Path, git_dir: Path | None, t: float) -> str | None
     return None
 
 
+#: How long a lock must sit before age alone stops arguing for a live writer.
+#: A real git write on this estate's slowest disk finishes in seconds; the lock
+#: that caused the outage sat for 914,102 s (ten and a half days). Anything in
+#: between is refused rather than guessed at.
+STALE_LOCK_AGE_S = 600
+
+
+def _lock_holder(lock: Path) -> bool | None:
+    """Is a live process holding *lock* open?
+
+    ``True`` held · ``False`` provably unheld · ``None`` cannot say.
+
+    **The three states are the whole point, and `None` is not `False`.** The one
+    destructive act in this module is deleting someone's lock, and a lock whose
+    holder is still running means a real concurrent write: stealing it corrupts
+    the index. So an unanswerable probe reads as "someone is working", never as
+    "safe to delete".
+
+    **Ownership comes from the kernel, not from the file.** Measured: a live
+    ``index.lock`` caught mid-write holds no pid at all — git writes the new
+    index into it, not a process id — so there is nothing in the file to read,
+    and the pid-reuse hazard that would come with a recorded pid never arises.
+    ``lsof`` reports whoever has the fd open *right now*, which is by definition
+    a living process.
+
+    Probe order, each with its semantics measured rather than assumed:
+
+    * ``lsof -t`` — exit 0 with pids when held, exit 1 when not. Both directions
+      verified on this platform.
+    * GNU ``fuser`` — **only** when ``--version`` identifies psmisc. BSD
+      ``fuser`` exits 0 for an unheld file, so on that implementation a "no
+      owner" reading is indistinguishable from "owner"; it must never be read as
+      evidence, and here it is not read at all.
+    * otherwise ``None``.
+    """
+    if shutil.which("lsof"):
+        try:
+            r = subprocess.run(["lsof", "-t", str(lock)],
+                               capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if r.returncode == 0 and r.stdout.strip():
+            return True
+        if r.returncode == 1:
+            return False
+        return None                     # any other rc: lsof could not answer
+    if shutil.which("fuser"):
+        try:
+            ver = subprocess.run(["fuser", "--version"],
+                                 capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if "psmisc" not in (ver.stdout + ver.stderr).lower():
+            return None                 # BSD fuser: exit 0 proves nothing
+        try:
+            r = subprocess.run(["fuser", str(lock)],
+                               capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if r.returncode == 0:
+            return True
+        if r.returncode == 1:
+            return False
+        return None
+    return None
+
+
+def _index_lock_state(git_dir: Path | None, *,
+                      max_age_s: int = STALE_LOCK_AGE_S
+                      ) -> tuple[Path, int, bool | None] | None:
+    """``(path, age_s, holder)`` for a present ``index.lock``, else ``None``."""
+    if git_dir is None:
+        return None
+    lock = git_dir / "index.lock"
+    try:
+        age = int(time.time() - os.path.getmtime(lock))
+    except OSError:
+        return None                     # absent, or vanished under us
+    return lock, max(age, 0), _lock_holder(lock)
+
+
+def _is_expirable(age: int, holder: bool | None, max_age_s: int) -> bool:
+    """Both facts must agree before anything is deleted.
+
+    Old **and** provably ownerless. Age alone is not enough — a slow write on a
+    loaded SD card is old and live — and ownerlessness alone is not enough,
+    because a probe run in the instant between git's ``open`` and its first
+    write would report no holder for a lock that is about to be used.
+
+    The mirror of ``_killed_rebase``'s shape, and the same fail-safe direction:
+    ambiguity resolves to "leave it alone".
+    """
+    return age >= max_age_s and holder is False
+
+
 def sync(
     vault: Vault,
     *,
@@ -216,12 +314,67 @@ def sync(
             )
             return result
 
+        # A stale index.lock blocks every git WRITE while leaving every git
+        # READ working, which is why the last one went unnoticed for ten days:
+        # `status --porcelain` needs no lock and answers "merely dirty", so
+        # sync blamed the dirty tree and never mentioned the lock. Checked
+        # before the first write, and never past a live one.
+        lock_state = _index_lock_state(git_dir)
+        if lock_state is not None:
+            lock, age, holder = lock_state
+            if _is_expirable(age, holder, STALE_LOCK_AGE_S):
+                try:
+                    lock.unlink()
+                except OSError as exc:
+                    result.detail = (
+                        f"refusing to sync: .git/index.lock is present "
+                        f"(age {age}s, no owner) and could not be removed: "
+                        f"{exc}; nothing was written"
+                    )
+                    return result
+                expired_note = f"expired stale index.lock (age {age}s, no owner)"
+            else:
+                owner = {True: "held", False: "no owner", None: "unknown"}[holder]
+                result.detail = (
+                    f"refusing to sync: .git/index.lock is present (age {age}s, "
+                    f"owner {owner}) — another git process may be running; "
+                    "nothing was written"
+                )
+                return result
+        else:
+            expired_note = None
+
+        def _detail(text: str) -> str:
+            """Compose a detail that never drops a repair we performed.
+
+            An expired lock is something this run DID, and it stays true
+            whatever happens afterwards. Without composing, the next
+            assignment overwrites it and a sync that silently repaired a
+            ten-day wedge reports only its next problem -- which is the same
+            class of silence this issue exists to end.
+            """
+            return f"{expired_note}; {text}" if expired_note else text
+
         # Commit any working-tree changes first — captures don't commit, sync
         # owns the commit so notes actually travel. Every call is bounded by t
         # so a wedged git releases the lock instead of holding it forever.
         porcelain = run_git(root, "status", "--porcelain", timeout=t).stdout.strip()
         if porcelain:
-            run_git(root, "add", "-A", timeout=t)
+            added = run_git(root, "add", "-A", timeout=t)
+            if added.returncode != 0:
+                # Returning HERE is the difference between naming the cause and
+                # naming a symptom. Unchecked, a failed `add` fell through to a
+                # `commit` that also failed, and the porcelain re-read below
+                # then reported "the working tree is not clean after the
+                # pre-pull commit" -- true, useless, and pointing at the tree
+                # rather than at whatever stopped the write. git's own message
+                # says what happened.
+                result.detail = _detail(
+                    f"git add failed: {added.stderr.strip()[:200]}"
+                    if added.stderr.strip()
+                    else f"git add failed (exit {added.returncode})"
+                )
+                return result
             n = len(porcelain.splitlines())
             commit = run_git(
                 root, "commit",
@@ -247,7 +400,7 @@ def sync(
                 # git would refuse the rebase anyway — but it would refuse
                 # *after* deciding to start one. Stop here instead, and say
                 # which of the two things went wrong.
-                result.detail = (
+                result.detail = _detail(
                     "pull skipped: the working tree is not clean after the "
                     "pre-pull commit, so a rebase cannot be started safely"
                 )
@@ -262,7 +415,7 @@ def sync(
                 # still runs — only the pull is skipped. The old `origin HEAD`
                 # refspec hid this state entirely by rebasing onto the remote's
                 # default branch instead.
-                result.detail = (
+                result.detail = _detail(
                     "pull skipped: this branch has no upstream to rebase onto"
                 )
             else:
@@ -280,7 +433,7 @@ def sync(
                     # no conflict markers. Saying so is the entire fix for the
                     # silence that let this run six weeks unnoticed.
                     left = _interrupted_state(root, git_dir, t)
-                    result.detail = (
+                    result.detail = _detail(
                         f"{exc} — {left}; left for the human"
                         if left
                         else f"{exc} — repository left consistent"
@@ -295,7 +448,7 @@ def sync(
                     result.quarantined = scan_quarantine(
                         vault, paths=_changed_md(root, ["--diff-filter=U"])
                     )
-                    result.detail = (
+                    result.detail = _detail(
                         "pull hit conflicts — markers left for the human; "
                         "conflicted notes are quarantined from search until "
                         "resolved"
@@ -315,6 +468,12 @@ def sync(
             pushed = run_git(root, "push", "origin", "HEAD", timeout=t)
             result.pushed = pushed.returncode == 0
             if not result.pushed:
-                result.detail = f"push failed: {pushed.stderr.strip()[:200]}"
+                result.detail = _detail(f"push failed: {pushed.stderr.strip()[:200]}")
+
+        # A clean run still has to SAY it repaired something. Without this the
+        # one outcome where the fix did its whole job -- expired the lock and
+        # then succeeded -- is the one that reports nothing.
+        if expired_note and not result.detail:
+            result.detail = expired_note
 
     return result
