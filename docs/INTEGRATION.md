@@ -91,6 +91,74 @@ Read the engine's version from this probe and nowhere else — not from an
 installed package pin, not from a plugin manifest. A pin governs what you
 *import*; the probe reports what will actually *run*.
 
+### `status --json` is a CAPABILITY probe, not a HEALTH probe
+
+Use it to learn what the engine can do. Do **not** use it to ask whether a
+vault clone is healthy, for two reasons that both bite in production: it walks
+every note in the tree, and it rebuilds and **writes** the index on its way to
+an answer. On a large vault that is slow enough to be an outage of its own, and
+on a wedged or read-only clone it cannot answer at all — which is exactly when
+you most need it to.
+
+Ask `sync --check` instead. It is bounded, read-only, and offline by default:
+
+```bash
+claudron sync --check --json
+```
+
+```json
+{
+  "ok": true,
+  "command": "sync",
+  "data": {
+    "check": true,
+    "state": "clean",
+    "branch": "main",
+    "default_branch": "main",
+    "upstream": "origin/main",
+    "ahead": 0, "behind": 0,
+    "uncommitted": 0, "uncommitted_oldest_age_s": null,
+    "lock_age_s": null, "interrupted": null,
+    "last_sync_ok_at": "2026-09-22T17:04:11+00:00",
+    "detail": ""
+  }
+}
+```
+
+**Key on `state`.** The full vocabulary, in the precedence the engine applies:
+
+| state | what it means for you |
+|---|---|
+| `clean` | on the default branch, in sync, nothing uncommitted |
+| `ahead` / `behind` / `divergent` | local and remote have drifted; `ahead`/`behind` carry the counts |
+| `dirty` | uncommitted files; `uncommitted_oldest_age_s` says how long they have sat |
+| `side-branch` | the clone is not on its default branch. Work here reaches no other machine |
+| `detached` | HEAD is on no branch at all |
+| `rebase-conflict` | a rebase stopped on a conflict. **A human's work in progress — do not repair it** |
+| `rebase-killed` | a rebase was killed mid-replay. `claudron sync` cleans this up |
+| `merge` | a merge is in progress |
+| `stale-lock` | an `index.lock` older than ten minutes: every write in the vault is failing |
+| `unreachable` | the remote could not be contacted (only ever returned with `--reach`) |
+| `unknown` | **the check could not run.** Never read this as healthy |
+
+Three contract points worth building against:
+
+- **Every verdict exits 0**, including the bad ones. The exit code tells you
+  whether the *check ran*; `state` tells you whether the *clone is healthy*.
+  Reserve nonzero for 2 (usage) and 3 (no vault, or not a git repository).
+- **`unknown` is not `clean`.** It means git was missing or a call timed out,
+  so nothing was determined. Treating it as healthy rebuilds the silence this
+  door exists to end: a stopped rebase once read as healthy to every probe for
+  twelve days.
+- **`--reach` is opt-in.** Without it no network call happens, so a watchdog
+  polling this is never gated on the remote being up. `unreachable` can only
+  appear when you asked for it.
+
+`last_sync_ok_at` is the denominator for "when did this clone last actually
+sync": `sync` records every attempt, and `--check` only ever reads it. It is
+`null` on a clone that has never synced under a version that writes it — which
+is a different fact from a clone that is failing, so do not collapse them.
+
 ---
 
 ## Hello world
