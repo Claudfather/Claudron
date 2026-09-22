@@ -222,7 +222,11 @@ def _killed_rebase(root: Path, git_dir: Path | None, t: float) -> bool:
         return False
     if (marker / "stopped-sha").exists():
         return False                      # stopped ON a commit: a conflict
-    unmerged = run_git(root, "diff", "--name-only", "--diff-filter=U", timeout=t)
+    # `--no-optional-locks` for the same reason `_uncommitted` carries it: a
+    # plain `diff` may refresh and rewrite the index, and this predicate is
+    # reached from the read-only health door as well as from `sync`.
+    unmerged = run_git(root, "--no-optional-locks", "diff", "--name-only",
+                       "--diff-filter=U", timeout=t)
     if unmerged.returncode != 0 or unmerged.stdout.strip():
         # Either there are conflicted paths, or the question could not be
         # answered — both mean "do not abort".
@@ -816,8 +820,17 @@ def _uncommitted(root: Path, t: float) -> tuple[int, int | None]:
     `--porcelain` needs no index lock, which is exactly why it kept answering
     for twelve days while every WRITE in the vault failed -- so this is a count
     of files, never evidence that the repository is writable.
+
+    **`--no-optional-locks` is load-bearing, and the read-only pin is what
+    found it.** A plain `git status` REFRESHES the index's stat cache and
+    writes `.git/index` to do it -- measured: touch a tracked file, run
+    `status`, and the index mtime moves, while the same command under
+    `--no-optional-locks` leaves it alone. A live vault's files are touched
+    constantly, so without the flag this door would write the index on
+    essentially every call: the exact defect it was built to remove from
+    `status --json`, rebuilt inside its replacement.
     """
-    out = run_git(root, "status", "--porcelain", timeout=t)
+    out = run_git(root, "--no-optional-locks", "status", "--porcelain", timeout=t)
     if out.returncode != 0:
         return 0, None
     lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
