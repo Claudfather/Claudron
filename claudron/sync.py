@@ -267,6 +267,62 @@ def _default_branch(root: Path, t: float) -> str | None:
     return None
 
 
+def _alone_in_its_history(root: Path, t: float) -> bool:
+    """Is there NO other branch this clone could be supposed to be on?
+
+    The second of the two facts a bootstrap needs. A brand-new vault has one
+    line of history and nothing beside it; a mature vault on a side branch has
+    `origin/main` (or a local `main`) sitting right there, which is the thing
+    it is stranding work away from.
+
+    **The obvious measure does not work, and it was measured rather than
+    reasoned about.** "Does this clone hold commits that reach no remote"
+    (`rev-list --count HEAD --not --remotes`) reads **0** on the adversarial
+    vault -- because `sync` had already pushed the side branch, so the history
+    IS on a remote, just on the wrong branch. That is the outage's own shape
+    (59 commits off the default branch, 53 reaching no remote, and therefore 6
+    that did), so a predicate satisfied by it is no predicate at all.
+
+    An unreadable ref list returns False: the caller treats "cannot establish"
+    as "not a bootstrap", which refuses.
+    """
+    refs = run_git(root, "for-each-ref", "--format=%(refname:short)",
+                   "refs/heads", "refs/remotes", timeout=t)
+    if refs.returncode != 0:
+        return False
+    head = run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD", timeout=t)
+    current = head.stdout.strip() if head.returncode == 0 else ""
+    up = run_git(root, "rev-parse", "--abbrev-ref", "@{upstream}", timeout=t)
+    upstream = up.stdout.strip() if up.returncode == 0 else ""
+    for name in refs.stdout.splitlines():
+        name = name.strip()
+        if name and name != current and name != upstream:
+            return False
+    return True
+
+
+def _is_bootstrap(default: str | None, alone: bool) -> bool:
+    """Both facts must agree before the side-branch guard stands down.
+
+    A bootstrap is NOT merely "origin/HEAD is unset". A mature vault loses that
+    ref too -- a pruned remote ref, a reclone, a hand-rolled `remote add` -- and
+    treating the absence alone as a bootstrap removes the guard exactly where
+    it is needed. Reproduced: a mature vault on a genuine side branch with
+    three commits of its own and no origin/HEAD was committed AND pushed with
+    no refusal at all.
+
+    So: the default branch could not be determined **and** there is no other
+    branch this clone could be supposed to be on. The third state -- "cannot
+    say" -- is not a bootstrap, which refuses.
+
+    The mirror of `_killed_rebase` and `_is_expirable`, and the same fail-safe
+    direction for the same reason. Refusing a genuine bootstrap costs one
+    confused new user an override that the refusal itself prints; passing a
+    diverged mature vault is the outage.
+    """
+    return default is None and alone
+
+
 def _refuse_off_default(root: Path, t: float, allow: str | None) -> str | None:
     """Refusal text when HEAD is not the default branch, or None.
 
@@ -288,14 +344,18 @@ def _refuse_off_default(root: Path, t: float, allow: str | None) -> str | None:
         return None
     default = _default_branch(root, t)
     if default is None:
-        # UNDETERMINED IS NOT A LICENCE TO REFUSE. The two errors here are not
-        # symmetric: refusing on a guess leaves a correctly-configured vault
-        # unable to sync at all, so its captures reach no other machine --
-        # which is this program's own outage, rebuilt by the check meant to
-        # prevent it. Allowing an undetermined clone to sync at worst pushes
-        # work to a side branch, where it is on a remote and recoverable.
-        # `sync --check` reports `default_branch: null` so it is visible.
-        return None
+        # An undetermined default is not on its own a licence to pass -- see
+        # `_is_bootstrap`, which is where the two facts are weighed.
+        if _is_bootstrap(default, _alone_in_its_history(root, t)):
+            return None
+        return (
+            f"refusing to sync: HEAD is on '{current}' and the vault's default "
+            "branch cannot be determined (no origin/HEAD, no "
+            "init.defaultBranch), while this clone holds other branches -- so "
+            "this may be stranding work. Restore the ref with `git remote "
+            "set-head origin --auto`, or pass --branch "
+            f"{current} to sync this branch deliberately"
+        )
     if current == default:
         return None
     return (
@@ -922,6 +982,12 @@ def check(vault: Vault, *, timeout: float | None = None,
             reachable = probe.returncode == 0
 
         killed = _killed_rebase(root, git_dir, t)
+        # Only asked when the default branch could not be determined, and
+        # only to tell a brand-new clone from a mature one that lost the
+        # ref -- the same weighing `_refuse_off_default` does, through the
+        # same predicate, so the health door and the refusal door cannot
+        # disagree about one clone.
+        alone = (r.default_branch is None) and _alone_in_its_history(root, t)
     except SyncError as exc:
         # A git call that could not complete. Everything gathered so far is
         # discarded rather than reported beside a verdict derived from a
@@ -929,12 +995,13 @@ def check(vault: Vault, *, timeout: float | None = None,
         # this vocabulary's `unknown` exists to prevent.
         return _unknown(str(exc))
 
-    r.state = _verdict(r, killed=killed, reach=reach, reachable=reachable)
+    r.state = _verdict(r, killed=killed, reach=reach, reachable=reachable,
+                      bootstrap=_is_bootstrap(r.default_branch, alone))
     return r
 
 
 def _verdict(r: CheckResult, *, killed: bool, reach: bool,
-             reachable: bool | None) -> str:
+             reachable: bool | None, bootstrap: bool = False) -> str:
     """The precedence in :data:`CHECK_STATES`, applied.
 
     Split out from :func:`check` so the ordering can be tested against a
@@ -959,6 +1026,13 @@ def _verdict(r: CheckResult, *, killed: bool, reach: bool,
     if r.branch is None:
         return "detached"
     if r.default_branch and r.branch != r.default_branch:
+        return "side-branch"
+    if r.default_branch is None and not bootstrap:
+        # The default could not be determined AND this clone has other branches
+        # beside it, so it may well be on the wrong one. `side-branch` rather
+        # than a fourteenth state: the consumer's action is identical, and the
+        # verdict matches what `sync` does with the same clone. A genuine
+        # bootstrap -- one line of history, nothing beside it -- is not this.
         return "side-branch"
     if r.uncommitted:
         return "dirty"

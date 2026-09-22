@@ -1098,6 +1098,111 @@ class TestCheck:
         assert r.default_branch == "main"
         assert not r.default_branch.startswith("origin/")
 
+    def _mature_vault_that_lost_origin_head(self, tmp_path):
+        """A vault with real shared history, on a GENUINE side branch, whose
+        `origin/HEAD` has gone. Built rather than argued: the ref is lost to a
+        pruned remote ref, a reclone or a hand-rolled `remote add`, none of
+        which are exotic, and none of which make the clone a bootstrap."""
+        remote = tmp_path / "remote.git"
+        remote.mkdir()
+        _git(remote, "init", "--bare", "--initial-branch=main")
+        v = tmp_path / "v"
+        _git(tmp_path, "clone", str(remote), str(v))
+        main(["init", str(v), "--adopt"])
+        (v / "_shared" / "knowledge" / "seed.md").write_text(_note("Seed"))
+        _git(v, "add", "-A")
+        _git(v, "commit", "-m", "seed")
+        _git(v, "push", "origin", "main")
+        _git(v, "remote", "set-head", "origin", "--auto")
+
+        _git(v, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+        _git(v, "switch", "-c", "docs/side")
+        for i in (1, 2, 3):
+            (v / "_shared" / "knowledge" / f"w{i}.md").write_text(_note(f"W{i}"))
+            _git(v, "add", "-A")
+            _git(v, "commit", "-m", f"work {i}")
+        return v
+
+    def test_the_bootstrap_pass_does_not_cover_a_mature_side_branch(self, tmp_path):
+        """**The adversarial case, and it was a real gap.** Reproduced before
+        the fix: this vault was committed AND pushed with no refusal at all,
+        and `sync` created `docs/side` on the remote. `origin/HEAD` being unset
+        cannot be the discriminator -- a mature vault loses it too, and in that
+        state the guard C1 exists to provide was simply absent."""
+        v = self._mature_vault_that_lost_origin_head(tmp_path)
+        from claudron.sync import _refuse_off_default
+        text = _refuse_off_default(v, 10.0, None)
+        assert text is not None, "a mature vault on a side branch must refuse"
+        assert "docs/side" in text
+        assert "--branch" in text, "the refusal must name its own override"
+        assert "set-head" in text, "and the remedy that actually fixes it"
+
+    def test_the_health_door_agrees_with_the_refusal_door(self, tmp_path):
+        """One clone must not read healthy to the probe while `sync` refuses
+        it -- that divergence is how a wedged vault stayed invisible."""
+        v = self._mature_vault_that_lost_origin_head(tmp_path)
+        assert check(self._vault(v)).state == "side-branch"
+
+    def test_the_commits_really_are_reachable_from_a_remote(self, tmp_path):
+        """Why the obvious predicate fails, pinned so nobody reinstates it.
+
+        `rev-list --count HEAD --not --remotes` reads ZERO here once the side
+        branch has been pushed -- the history is on a remote, just on the wrong
+        branch. That is the outage's own shape, so "holds unpushed commits"
+        cannot be the second fact."""
+        v = self._mature_vault_that_lost_origin_head(tmp_path)
+        _git(v, "push", "-u", "origin", "docs/side")
+        unpushed = _git(v, "rev-list", "--count", "HEAD", "--not", "--remotes")
+        assert unpushed.stdout.strip() == "0", "precondition for the point below"
+        from claudron.sync import _refuse_off_default
+        assert _refuse_off_default(v, 10.0, None) is not None, (
+            "still stranded, and still refused"
+        )
+
+    def test_both_facts_must_agree_before_the_guard_stands_down(self):
+        """The pure predicate, the twin of `_is_expirable`. Ambiguity is not a
+        bootstrap, so it refuses."""
+        from claudron.sync import _is_bootstrap
+        assert _is_bootstrap(None, True) is True        # undetermined + alone
+        assert _is_bootstrap(None, False) is False      # other branches exist
+        assert _is_bootstrap("main", True) is False     # determined: not our case
+        assert _is_bootstrap("main", False) is False
+
+    def test_a_genuine_bootstrap_still_syncs(self, tmp_path):
+        """The control. The whole reason the pass exists: a vault bootstrapped
+        with `git init` + `remote add` + `push -u` on a host that defaults to
+        `master` must not be refused forever."""
+        remote = tmp_path / "remote.git"
+        remote.mkdir()
+        _git(remote, "init", "--bare")
+        v = tmp_path / "v"
+        v.mkdir()
+        _git(v, "init")
+        main(["init", str(v), "--adopt"])
+        _git(v, "add", "-A")
+        _git(v, "commit", "-m", "seed")
+        _git(v, "remote", "add", "origin", str(remote))
+        _git(v, "push", "-u", "origin", "HEAD")
+        from claudron.sync import _refuse_off_default, _alone_in_its_history
+        assert _alone_in_its_history(v, 10.0) is True
+        assert _refuse_off_default(v, 10.0, None) is None
+
+    def test_an_unreadable_ref_list_is_not_a_bootstrap(self, synced_pair, monkeypatch):
+        """Cannot-establish falls to the safe side, like every other both-facts
+        predicate here."""
+        a, _ = synced_pair
+        import claudron.sync as sync_mod
+        real = sync_mod.run_git
+
+        def fake(root, *args, **kw):
+            if args and args[0] == "for-each-ref":
+                return subprocess.CompletedProcess(["git"], 128, "", "boom")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", fake)
+        from claudron.sync import _alone_in_its_history
+        assert _alone_in_its_history(a, 10.0) is False
+
     def test_an_undetermined_default_branch_is_null_not_a_guess(self, tmp_path):
         """The bootstrap shape: `git init` + `git remote add` + `git push -u`
         leaves origin/HEAD unset, and a host may have no init.defaultBranch.
