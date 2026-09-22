@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import io
 import json
+import subprocess
 import uuid
 from pathlib import Path
 
 import pytest
 
+from claudron import sync as sync_mod
 from claudron.cli import main
 from claudron.hooks import (
     HOOK_EVENTS,
@@ -64,13 +66,20 @@ class TestSessionStartHook:
     def test_fail_open_logs_errors(self, vault_dir: Path, capsys, monkeypatch):
         """Errors land in .claudron/hooks.log, never in the session."""
         monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
-        # A vault that is not a git repo: sync fails, recall still serves,
-        # and the sync failure is logged — fail-open all the way down.
+        # A vault that is not a git repo: the pull fails, recall still serves,
+        # and the failure is logged — fail-open all the way down.
         rc = main(["--vault", str(vault_dir), "hook", "session-start"])
         assert rc == 0
         log = vault_dir / ".claudron" / "hooks.log"
         assert log.is_file()
-        assert "sync" in log.read_text().lower()
+        text = log.read_text().lower()
+        # Pins the BEHAVIOUR (a skipped pull is logged with its reason), not the
+        # verb. This asserted `"sync" in text` and broke when SessionStart moved
+        # from `sync(pull=True)` to `pull_ff_only` (#156) — the word was
+        # incidental to what the test is for, and keeping it would have forced
+        # the log line to keep saying "sync" about a door that no longer syncs.
+        assert "session-start" in text, text
+        assert "skipped" in text and "not a git repository" in text, text
 
 
 class TestPreCompactHook:
@@ -306,3 +315,136 @@ class TestHooksInstall:
         assert rc == 0
         again = json.loads(settings.read_text())
         assert again == merged
+
+
+def _hgit(cwd: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args],
+        capture_output=True, text=True, check=True,
+        env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+             "PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(cwd)},
+    )
+
+
+@pytest.fixture
+def hook_pair(tmp_path: Path) -> tuple[Path, Path]:
+    """Two clones of one bare remote — the shape a hook actually runs in."""
+    remote = tmp_path / "remote.git"
+    remote.mkdir()
+    _hgit(remote, "init", "--bare", "--initial-branch=main")
+    a = tmp_path / "machine-a"
+    _hgit(tmp_path, "clone", str(remote), str(a))
+    main(["init", str(a), "--adopt"])
+    (a / "_shared" / "CONVENTIONS.md").write_text(
+        "# Conventions\n\n- Supersede, never delete.\n")
+    _hgit(a, "add", "-A"); _hgit(a, "commit", "-m", "seed")
+    _hgit(a, "push", "origin", "main")
+    _hgit(a, "remote", "set-head", "origin", "--auto")
+    b = tmp_path / "machine-b"
+    _hgit(tmp_path, "clone", str(remote), str(b))
+    _hgit(b, "remote", "set-head", "origin", "--auto")
+    return a, b
+
+
+class TestSessionStartNeverRewritesTheTree:
+    """#156. SessionStart fires on startup, resume, clear AND compaction, so a
+    long-running bot rewrote its own vault tree at an unpredictable moment
+    mid-session. On the host that produced the issue that killed a rebase at
+    14:08:39 on 2026-09-09 — one pick done, 58 pending, HEAD detached until
+    20:22. The hook now fast-forwards or does nothing."""
+
+    def test_session_start_never_rebases_a_divergent_clone(
+            self, hook_pair, capsys, monkeypatch):
+        a, b = hook_pair
+        (a / "_shared" / "knowledge").mkdir(parents=True, exist_ok=True)
+        (a / "_shared" / "knowledge" / "a.md").write_text("# A\n")
+        _hgit(a, "add", "-A"); _hgit(a, "commit", "-m", "a"); _hgit(a, "push", "origin", "main")
+        (b / "_shared" / "knowledge").mkdir(parents=True, exist_ok=True)
+        (b / "_shared" / "knowledge" / "b.md").write_text("# B\n")
+        _hgit(b, "add", "-A"); _hgit(b, "commit", "-m", "b")
+
+        before = _hgit(b, "rev-parse", "HEAD").stdout.strip()
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        rc = main(["--vault", str(b), "hook", "session-start"])
+        out = capsys.readouterr().out
+
+        assert rc == 0, "a hook must never break a session start"
+        assert _hgit(b, "rev-parse", "HEAD").stdout.strip() == before, (
+            "the tree was rewritten — this is the outage")
+        assert not (b / ".git" / "rebase-merge").exists()
+        assert not (b / ".git" / "rebase-apply").exists()
+        assert _hgit(b, "symbolic-ref", "--quiet", "--short", "HEAD").stdout.strip() == "main", (
+            "HEAD detached — the exact state the 2026-09-09 kill left behind")
+        assert "Supersede, never delete." in out, (
+            "the brief must still print: sync degradation never blocks it")
+
+    def test_session_start_fast_forwards_when_behind(self, hook_pair, capsys, monkeypatch):
+        a, b = hook_pair
+        (a / "_shared" / "knowledge").mkdir(parents=True, exist_ok=True)
+        (a / "_shared" / "knowledge" / "fresh.md").write_text("# Fresh\n")
+        _hgit(a, "add", "-A"); _hgit(a, "commit", "-m", "fresh"); _hgit(a, "push", "origin", "main")
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        rc = main(["--vault", str(b), "hook", "session-start"])
+        capsys.readouterr()
+        assert rc == 0
+        assert (b / "_shared" / "knowledge" / "fresh.md").exists(), (
+            "a clone that is only behind must fast-forward")
+
+    def test_session_start_refuses_a_side_branch(self, hook_pair, capsys, monkeypatch):
+        a, b = hook_pair
+        _hgit(b, "checkout", "-b", "side")
+        before = _hgit(b, "rev-parse", "HEAD").stdout.strip()
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        rc = main(["--vault", str(b), "hook", "session-start"])
+        out = capsys.readouterr().out
+        assert rc == 0
+        assert _hgit(b, "rev-parse", "HEAD").stdout.strip() == before
+        assert "Supersede, never delete." in out, "the brief still prints"
+        log = (b / ".claudron" / "hooks.log")
+        assert log.exists() and "refusing to sync" in log.read_text(), (
+            "the refusal must be logged, or a side-branch clone is silent")
+
+    def test_no_hook_path_invokes_pull_rebase(self, hook_pair, capsys, monkeypatch):
+        """THE pin, and it records argv from the REAL git door rather than
+        grepping source.
+
+        A grep-pinned test is the defect one level up: it passes on a file that
+        merely does not contain the string, including when the rebase has moved
+        behind a variable, a helper, or a second module. This drives a full
+        SessionStart + SessionEnd cycle on a DIVERGENT clone — the only state in
+        which the old code would have rebased — and asserts `--rebase` never
+        reaches git.
+        """
+        a, b = hook_pair
+        (a / "_shared" / "knowledge").mkdir(parents=True, exist_ok=True)
+        (a / "_shared" / "knowledge" / "a.md").write_text("# A\n")
+        _hgit(a, "add", "-A"); _hgit(a, "commit", "-m", "a"); _hgit(a, "push", "origin", "main")
+        (b / "_shared" / "knowledge").mkdir(parents=True, exist_ok=True)
+        (b / "_shared" / "knowledge" / "b.md").write_text("# B\n")
+        _hgit(b, "add", "-A"); _hgit(b, "commit", "-m", "b")
+
+        seen: list[tuple[str, ...]] = []
+        real = sync_mod.run_git
+
+        def spy(root, *args, **kw):
+            seen.append(args)
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", spy)
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        main(["--vault", str(b), "hook", "session-start"])
+        monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
+        main(["--vault", str(b), "hook", "session-end"])
+        capsys.readouterr()
+
+        flat = [tok for argv in seen for tok in argv]
+        assert seen, "the spy recorded no git calls — it is not wired to the real door"
+        assert "--rebase" not in flat, (
+            f"a hook path reached git with --rebase: {[a for a in seen if '--rebase' in a]}")
+        # POSITIVE CONTROL on the spy itself: a cycle that records no `fetch`
+        # would satisfy the assertion above while proving nothing, because it
+        # would mean the pull path never ran at all.
+        assert any(argv and argv[0] == "fetch" for argv in seen), (
+            f"no fetch in the cycle — the pull path did not run, so the "
+            f"--rebase assertion is vacuous. argv: {seen}")

@@ -50,7 +50,7 @@ from .knowledge import (
 from .graph import build_graph, render_html
 from .promote import promote
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, check, run_git, sync
+from .sync import SyncError, check, pull_ff_only, run_git, sync
 
 
 # ── output contract (docs/CLI_CONTRACT.md) ────────────────────────────
@@ -741,6 +741,29 @@ def cmd_sync(args) -> int:
                 print(result.detail, file=sys.stderr)
         return 0
 
+    if getattr(args, "ff_only", False):
+        # The same door the hooks call, so "matches the hook's behaviour" is a
+        # shared implementation rather than a claim two call sites have to keep
+        # true independently.
+        try:
+            result = pull_ff_only(vault, timeout=args.timeout)
+        except SyncError as exc:
+            print(str(exc), file=sys.stderr)
+            return 3  # environment error (CLI contract)
+        if args.json:
+            _emit_json("sync", result.to_dict())
+        else:
+            if result.pulled:
+                print("sync --ff-only: fast-forwarded")
+            elif result.local_ahead:
+                print(f"sync --ff-only: not fast-forwardable — "
+                      f"{result.local_ahead} local commit(s) await reconciliation")
+            else:
+                print("sync --ff-only: already up to date")
+            if result.detail:
+                print(result.detail, file=sys.stderr)
+        return 0 if result.ok else 1
+
     if args.pull_only:
         pull, push = True, False
     elif args.push_only:
@@ -1287,6 +1310,17 @@ def main(argv=None) -> int:
     )
     sync_dir.add_argument(
         "--push", dest="push_only", action="store_true", help="Push only"
+    )
+    sync_dir.add_argument(
+        "--ff-only",
+        dest="ff_only",
+        action="store_true",
+        help="Fetch and FAST-FORWARD only: never commit, never rebase. The "
+             "non-rewriting pull the hooks use (#156) -- a budget that suits "
+             "latency is wrong for a history rewrite, whose only outcomes on a "
+             "busy host are 'nothing to do' and 'killed part-way'. A full "
+             "`sync` (which rebases) is for the scheduled reconciliation door, "
+             "not for a hook or anything else on a clock.",
     )
     sync_dir.add_argument(
         "--check",

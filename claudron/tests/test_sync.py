@@ -16,7 +16,8 @@ import pytest
 
 from claudron.cli import main
 from claudron.schema import has_conflict_markers
-from claudron.sync import SyncError, SyncTimeout, check, sync
+from claudron import sync as sync_mod
+from claudron.sync import SyncError, SyncTimeout, check, pull_ff_only, sync
 from claudron.vault import detect
 
 
@@ -1297,3 +1298,94 @@ class TestCheckCLI:
         lines = [ln for ln in cap.out.splitlines() if ln.strip()]
         assert len(lines) == 1, cap.out
         assert lines[0].startswith("sync check: clean (main vs origin/main")
+
+
+class TestPullFfOnly:
+    """#156: the non-rewriting pull. A budget that suits latency is wrong for a
+    history rewrite, so the hooks fast-forward and never rebase."""
+
+    def test_pull_ff_only_reports_not_fast_forwardable_without_error(self, synced_pair):
+        """An ahead clone is a legitimate state, NOT a degradation.
+
+        #156's proposed fix asks for `detail = "not fast-forwardable: N ..."`
+        AND `ok=True`, which cannot both hold: `SyncResult.ok` is derived as
+        `not detail`. Following it literally would make every ahead clone report
+        ok=False and train each hook to log a degradation on a healthy vault --
+        #149's false-signal class. So the count rides `local_ahead` and `detail`
+        stays empty. This test pins that resolution, not the issue's wording.
+        """
+        a, b = synced_pair
+        # A diverges: a commit on each side, so a fast-forward is impossible.
+        (a / "_shared" / "knowledge" / "a-side.md").write_text("# A\n")
+        _git(a, "add", "-A"); _git(a, "commit", "-m", "a-side")
+        _git(a, "push", "origin", "main")
+        (b / "_shared" / "knowledge" / "b-side.md").write_text("# B\n")
+        _git(b, "add", "-A"); _git(b, "commit", "-m", "b-side")
+
+        before = _git(b, "rev-parse", "HEAD").stdout.strip()
+        result = pull_ff_only(detect(b), timeout=30.0)
+
+        assert result.ok is True, (
+            f"an ahead clone must not read as a failure: detail={result.detail!r}")
+        assert result.pulled is False
+        assert result.local_ahead == 1, result.local_ahead
+        assert _git(b, "rev-parse", "HEAD").stdout.strip() == before, (
+            "the tree must be exactly as it was — no rebase, no commit")
+        assert not (b / ".git" / "rebase-merge").exists()
+        assert not (b / ".git" / "rebase-apply").exists()
+
+    def test_pull_ff_only_fast_forwards_when_only_behind(self, synced_pair):
+        a, b = synced_pair
+        (a / "_shared" / "knowledge" / "ahead.md").write_text("# Ahead\n")
+        _git(a, "add", "-A"); _git(a, "commit", "-m", "ahead")
+        _git(a, "push", "origin", "main")
+        result = pull_ff_only(detect(b), timeout=30.0)
+        assert result.ok and result.pulled, (result.ok, result.detail)
+        assert (b / "_shared" / "knowledge" / "ahead.md").exists()
+
+    def test_pull_ff_only_refuses_a_side_branch(self, synced_pair):
+        """`_refuse_off_default` REUSED, not restated (#152 shipped it).
+
+        A door that only fast-forwards is not a reason to relax the rule: a side
+        branch is refused because work accrues where nothing else can see it,
+        and fast-forwarding does not fix that.
+        """
+        a, b = synced_pair
+        _git(b, "checkout", "-b", "side")
+        before = _git(b, "rev-parse", "HEAD").stdout.strip()
+        result = pull_ff_only(detect(b), timeout=30.0)
+        assert not result.ok
+        assert "refusing to sync" in result.detail and "side" in result.detail
+        assert _git(b, "rev-parse", "HEAD").stdout.strip() == before
+
+    def test_pull_ff_only_fetches_the_upstreams_own_ref(self, synced_pair, monkeypatch):
+        """The fetch must name the UPSTREAM's remote and ref, never the default
+        branch. On a clone tracking something else, fetching the default branch
+        by name leaves `@{upstream}` stale, and the following
+        `merge --ff-only @{upstream}` then fast-forwards onto a ref nobody
+        refreshed — a silent no-op that reads as success.
+        """
+        a, b = synced_pair
+        _git(a, "checkout", "-b", "feature")
+        _git(a, "push", "-u", "origin", "feature")
+        _git(b, "fetch", "origin", "feature")
+        _git(b, "checkout", "-b", "feature", "--track", "origin/feature")
+
+        seen: list[tuple[str, ...]] = []
+        real = sync_mod.run_git
+
+        def spy(root, *args, **kw):
+            seen.append(args)
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", spy)
+        # Allow the side branch so the fetch is reached: this test is about the
+        # fetch target, and the refusal is pinned by its own test above.
+        monkeypatch.setattr(sync_mod, "_refuse_off_default",
+                            lambda root, t, allow: None)
+        pull_ff_only(detect(b), timeout=30.0)
+
+        fetches = [a for a in seen if a and a[0] == "fetch"]
+        assert fetches, f"no fetch was issued; argv seen: {seen}"
+        assert fetches[0] == ("fetch", "origin", "feature"), (
+            f"the fetch must name the upstream's own remote and ref, got {fetches[0]}")

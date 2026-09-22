@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, sync
+from .sync import SyncError, pull_ff_only, sync
 from .vault import Vault, detect
 
 SESSION_START_PULL_TIMEOUT = 2.0  # seconds — the SessionStart latency budget
@@ -73,16 +73,35 @@ def session_start_brief(vault: Vault) -> str:
     hook and any future door (E3) call; sync degradation never blocks
     the brief."""
     try:
-        result = sync(vault, pull=True, push=False, timeout=SESSION_START_PULL_TIMEOUT)
+        # FAST-FORWARD ONLY, never `sync(pull=True)` (#156). That call commits
+        # whatever is on disk and then rebases in the live tree, on THIS budget
+        # -- and SessionStart fires on startup, resume, clear AND compaction, so
+        # a long-running bot rewrote its own vault at an unpredictable moment
+        # mid-session. A 2 s budget has exactly two outcomes against a rebase:
+        # nothing to do, or killed part-way with HEAD detached. `fetch` writes
+        # only under `.git/` and `merge --ff-only` is one ref-and-tree update,
+        # so the same budget is honest here.
+        result = pull_ff_only(vault, timeout=SESSION_START_PULL_TIMEOUT)
         if not result.ok:
-            _log(vault, "session-start", f"sync --pull degraded: {result.detail}")
+            _log(vault, "session-start", f"pull --ff-only degraded: {result.detail}")
+        elif result.local_ahead:
+            # NOT a degradation: an ahead clone is a legitimate state that the
+            # scheduled reconciliation door resolves. Logged so the operator of
+            # a fleet that has not armed that door can SEE the divergence
+            # accumulating rather than only find it later.
+            _log(
+                vault, "session-start",
+                f"not fast-forwardable: {result.local_ahead} local commit(s) await "
+                "reconciliation (a scheduled door resolves this; the tree was "
+                "not rewritten)",
+            )
         if result.quarantined:
             _log(
                 vault, "session-start",
                 f"quarantined this pull: {', '.join(result.quarantined)}",
             )
     except SyncError as exc:
-        _log(vault, "session-start", f"sync --pull skipped: {exc}")
+        _log(vault, "session-start", f"pull --ff-only skipped: {exc}")
     # Re-detect after the pull: Vault is a frozen snapshot, and a pull can
     # introduce whole tiers (a project dir first created on another
     # machine) that the pre-pull snapshot — and any index built from it —
