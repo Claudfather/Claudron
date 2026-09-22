@@ -230,9 +230,21 @@ def _killed_rebase(root: Path, git_dir: Path | None, t: float) -> bool:
     return True
 
 
-def _default_branch(root: Path, t: float) -> str:
-    """The branch this clone is supposed to live on.
+def _default_branch(root: Path, t: float) -> str | None:
+    """The branch this clone is supposed to live on, or None if it cannot be
+    determined.
 
+    **NONE IS A REAL ANSWER AND USED TO BE A GUESS.** This returned a hardcoded
+    ``"main"`` when neither source could answer, which is a guess wearing the
+    grammar of a fact -- and it refused live vaults. Measured on git 2.39.5: a
+    bare ``git init`` names its branch ``master``, and the bootstrap every new
+    vault takes (``git init`` + ``git remote add`` + ``git push -u``, or a
+    clone of a still-empty remote) leaves ``refs/remotes/origin/HEAD`` unset.
+    On a host with no ``init.defaultBranch``, all three conditions hold at
+    once, so the guess said ``main``, the clone said ``master``, and every
+    ``claudron sync`` refused with "HEAD is on 'master', the vault syncs on
+    'main'" -- a new vault that could never sync at all.
+    
     The ``origin/`` strip is load-bearing and is measured, not assumed:
     ``symbolic-ref --short refs/remotes/origin/HEAD`` answers ``origin/main``
     while ``symbolic-ref --short HEAD`` answers ``main``. Comparing the two
@@ -248,7 +260,7 @@ def _default_branch(root: Path, t: float) -> str:
     cfg = run_git(root, "config", "init.defaultBranch", timeout=t)
     if cfg.returncode == 0 and cfg.stdout.strip():
         return cfg.stdout.strip()
-    return "main"
+    return None
 
 
 def _refuse_off_default(root: Path, t: float, allow: str | None) -> str | None:
@@ -271,6 +283,15 @@ def _refuse_off_default(root: Path, t: float, allow: str | None) -> str | None:
     if allow is not None and allow == current:
         return None
     default = _default_branch(root, t)
+    if default is None:
+        # UNDETERMINED IS NOT A LICENCE TO REFUSE. The two errors here are not
+        # symmetric: refusing on a guess leaves a correctly-configured vault
+        # unable to sync at all, so its captures reach no other machine --
+        # which is this program's own outage, rebuilt by the check meant to
+        # prevent it. Allowing an undetermined clone to sync at worst pushes
+        # work to a side branch, where it is on a remote and recoverable.
+        # `sync --check` reports `default_branch: null` so it is visible.
+        return None
     if current == default:
         return None
     return (

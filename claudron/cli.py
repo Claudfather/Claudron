@@ -50,7 +50,7 @@ from .knowledge import (
 from .graph import build_graph, render_html
 from .promote import promote
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, run_git, sync
+from .sync import SyncError, check, run_git, sync
 
 
 # ── output contract (docs/CLI_CONTRACT.md) ────────────────────────────
@@ -706,8 +706,41 @@ def cmd_recall(args) -> int:
     return 0
 
 
+def _check_line(r) -> str:
+    """The plain-mode line. One line, on stdout, whatever the verdict."""
+    where = r.branch or "detached"
+    if r.upstream:
+        where += f" vs {r.upstream}"
+    bits = [where]
+    if r.ahead is not None and r.behind is not None:
+        bits.append(f"+{r.ahead}/-{r.behind}")
+    if r.uncommitted:
+        bits.append(f"{r.uncommitted} uncommitted")
+    return f"sync check: {r.state} ({', '.join(bits)})"
+
+
 def cmd_sync(args) -> int:
     vault = _resolve_vault(args)
+
+    if getattr(args, "check", False):
+        # A VERDICT IS ALWAYS EXIT 0, including the bad ones. The state lives
+        # in the envelope; putting it in the exit code would make a consumer
+        # choose between "the check ran" and "the clone is healthy", and the
+        # whole point of this door is that those are different questions.
+        try:
+            result = check(vault, timeout=args.timeout,
+                           reach=getattr(args, "reach", False))
+        except SyncError as exc:
+            print(str(exc), file=sys.stderr)
+            return 3  # environment error (CLI contract)
+        if args.json:
+            _emit_json("sync", result.to_dict())
+        else:
+            print(_check_line(result))
+            if result.detail:
+                print(result.detail, file=sys.stderr)
+        return 0
+
     if args.pull_only:
         pull, push = True, False
     elif args.push_only:
@@ -1254,6 +1287,21 @@ def main(argv=None) -> int:
     )
     sync_dir.add_argument(
         "--push", dest="push_only", action="store_true", help="Push only"
+    )
+    sync_dir.add_argument(
+        "--check",
+        action="store_true",
+        help="Report this clone's git health and change nothing. Read-only: "
+             "no commit, no pull, no push, no index. THE health probe for git "
+             "state -- `status --json` is a capability probe and walks the "
+             "whole tree to answer.",
+    )
+    p_sync.add_argument(
+        "--reach",
+        action="store_true",
+        help="With --check, also contact the remote. Off by default so the "
+             "verdict is computed offline in well under a second; a watchdog "
+             "polling it must not be gated on the network being up.",
     )
     p_sync.add_argument(
         "--timeout", type=float, default=None, help="Seconds per git network op"

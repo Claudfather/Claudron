@@ -49,6 +49,14 @@ def synced_pair(tmp_path: Path) -> tuple[Path, Path]:
     _git(a, "add", "-A")
     _git(a, "commit", "-m", "seed")
     _git(a, "push", "origin", "main")
+    # A REAL CLONE OF A NON-EMPTY REPOSITORY HAS THIS REF; this one is cloned
+    # while the remote is still empty, so git never wrote it. Without it
+    # `_default_branch` cannot determine anything and the side-branch tests
+    # below were green only because the old implementation GUESSED "main",
+    # which happens to be this fixture's branch name -- so the predicate they
+    # exist to pin was never actually exercised. `set-head --auto` asks the
+    # remote, which is the same mechanism `git clone` uses.
+    _git(a, "remote", "set-head", "origin", "--auto")
 
     b = tmp_path / "machine-b"
     _git(tmp_path, "clone", str(remote), str(b))
