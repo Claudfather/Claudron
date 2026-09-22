@@ -41,6 +41,22 @@ class SyncResult:
     committed: bool = False
     quarantined: list[str] = field(default_factory=list)
     detail: str = ""  # non-empty exactly when something needs the human
+    #: How many local commits await reconciliation, when :func:`pull_ff_only`
+    #: could not fast-forward. None when the question does not apply or the
+    #: count could not be read.
+    #:
+    #: DELIBERATELY NOT `detail`, and #156's proposed fix asks for something
+    #: impossible here: it specifies `detail = "not fast-forwardable: N local
+    #: commit(s) await reconciliation"` AND `ok=True`. Those cannot both hold,
+    #: because `ok` is DERIVED as `not detail` two lines below. Following it
+    #: literally would make every ahead clone report ok=False, and the contract
+    #: on `detail` one line up is the reason that is wrong rather than merely
+    #: inconvenient: an ahead state does not need the human -- the `--check`
+    #: door reports it and a scheduled reconciliation resolves it. Training
+    #: every hook to log a degradation on a healthy vault is #149's exact
+    #: false-signal class. So the count gets its own field and `detail` stays
+    #: empty, which keeps `ok` True and keeps the number.
+    local_ahead: int | None = None
 
     @property
     def ok(self) -> bool:
@@ -53,6 +69,7 @@ class SyncResult:
             "committed": self.committed,
             "quarantined": self.quarantined,
             "detail": self.detail,
+            "local_ahead": self.local_ahead,
         }
 
 
@@ -781,6 +798,110 @@ CHECK_STATES = (
     "unreachable",
     "clean",
 )
+
+def pull_ff_only(vault: Vault, *, timeout: float | None = None) -> SyncResult:
+    """Fetch the upstream and FAST-FORWARD onto it. Never commits, never rebases.
+
+    THE NON-REWRITING PULL, for callers on a latency budget -- the hooks above
+    all else. `sync(pull=True)` commits whatever is on disk and then runs
+    `git pull --rebase` in the live tree, and a budget that is right for
+    latency is wrong for a history rewrite: the only two outcomes of a 2 s
+    rebase on a busy host are "nothing to do" and "killed part-way". A killed
+    replay detaches HEAD and leaves commits reachable from no branch. On the
+    host that produced #156 that happened at 14:08:39 on 2026-09-09, one pick
+    completed and 58 pending, and the tree sat that way until 20:22.
+
+    Every write this does is bounded by construction rather than by the clock:
+    `fetch` writes only under `.git/`, so killing it leaves the working tree
+    untouched; `merge --ff-only` is a single ref-and-tree update with no replay
+    to be interrupted half-way. That is what makes a 2 s budget honest here and
+    dishonest for a rebase.
+
+    NOT FAST-FORWARDABLE IS NOT AN ERROR. A clone with local commits is
+    `ahead`, which is a legitimate state that the `--check` door reports and a
+    scheduled reconciliation resolves. Returning ok=False would train every
+    hook caller to log a degradation on a healthy vault, and #149 is about
+    exactly that class of false signal. So: `pulled=False`, `ok=True`, and a
+    detail that counts the commits awaiting reconciliation.
+
+    THE FETCH NAMES THE UPSTREAM'S OWN REMOTE AND REF, never the default
+    branch: on a clone whose HEAD tracks something else, fetching the default
+    branch by name would leave `@{upstream}` stale and the following
+    `merge --ff-only @{upstream}` would fast-forward onto a ref nobody
+    refreshed -- a silent no-op that reads as success.
+
+    Refusals are `sync()`'s, reused rather than restated: mid-surgery via
+    :func:`_interrupted_state`, a side branch via :func:`_refuse_off_default`.
+    Hooks never pass a branch, so a side-branch clone refuses here exactly as
+    it does there -- one decision for that state, applied by every door that
+    moves the tree.
+    """
+    root = vault.root
+    t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
+    git_dir = _git_dir(root, t)
+    if git_dir is None:
+        raise SyncError(f"vault is not a git repository: {root}")
+
+    result = SyncResult()
+
+    # The same write lock `sync()` takes, for the same reason: a `merge
+    # --ff-only` updates working-tree files and must not interleave with a
+    # concurrent `capture` writing a note and an index on this machine.
+    with vault_write_lock(vault):
+        interrupted = _interrupted_state(root, git_dir, t)
+        if interrupted:
+            result.detail = (
+                f"refusing to pull: {interrupted} — nothing was written; "
+                "resolve the repository first"
+            )
+            return result
+
+        # `allow=None`: a hook has no --branch to pass, and a door that only
+        # fast-forwards is not a reason to relax the side-branch rule -- a side
+        # branch is refused because work accrues where nothing else can see it,
+        # which a fast-forward does not fix.
+        off_default = _refuse_off_default(root, t, None)
+        if off_default:
+            result.detail = off_default
+            return result
+
+        upstream = run_git(root, "rev-parse", "--abbrev-ref", "@{upstream}", timeout=t)
+        if upstream.returncode != 0 or not upstream.stdout.strip():
+            # No tracking branch is a legitimate local-only vault, not a fault:
+            # there is nothing to fast-forward onto and nothing to report.
+            result.detail = ""
+            return result
+        ref = upstream.stdout.strip()
+        remote, _, branch = ref.partition("/")
+        if not remote or not branch:
+            result.detail = (
+                f"refusing to pull: cannot read the upstream as <remote>/<branch> "
+                f"(got '{ref}')"
+            )
+            return result
+
+        fetched = run_git(root, "fetch", remote, branch, timeout=t)
+        if fetched.returncode != 0:
+            result.detail = (
+                f"fetch failed: {(fetched.stderr or fetched.stdout).strip()[:200]}"
+            )
+            return result
+
+        merged = run_git(root, "merge", "--ff-only", ref, timeout=t)
+        if merged.returncode == 0:
+            result.pulled = True
+            return result
+
+        # Not fast-forwardable: count what is waiting rather than echoing git.
+        # `ok` stays True -- see the docstring. The count is best-effort: a
+        # number that cannot be read must not turn a healthy ahead state into a
+        # failure, so it degrades to the state without the count.
+        rev = run_git(root, "rev-list", "--count", f"{ref}..HEAD", timeout=t)
+        n = rev.stdout.strip() if rev.returncode == 0 else ""
+        result.pulled = False
+        result.local_ahead = int(n) if n.isdigit() and int(n) > 0 else None
+        return result
+
 
 #: Where `sync()` records its outcome, so `check()` can answer "when did this
 #: clone last sync successfully" -- the denominator a consumer needs to tell a

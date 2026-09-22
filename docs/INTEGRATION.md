@@ -302,6 +302,35 @@ bind an integration that ships its **own** capture prompt:
   block yourself instead of running `hooks install`, gate it against the shape
   in that section (register rule R3) — a drifted copy silently runs stale hooks
   on every host you compose.
+- **A hook never rewrites history, and never syncs a side branch.** SessionStart
+  fetches and `merge --ff-only`; it does not commit and does not rebase. If you
+  install your own SessionStart pull, it must be `claudron sync --ff-only` (or
+  the equivalent), **not** `claudron sync` and not `git pull --rebase`.
+
+  The reason is a budget mismatch rather than a preference. A session-start pull
+  runs on a latency budget — the engine's is 2 s — and a budget that is right
+  for latency is wrong for a history rewrite: the only two outcomes of a 2 s
+  rebase on a busy host are *nothing to do* and *killed part-way*, and a killed
+  replay detaches HEAD and leaves commits reachable from no branch. On the host
+  that produced this rule, one pick completed and 58 stayed pending, and the
+  tree sat detached for six hours. SessionStart is not rare: hosts fire it on
+  startup, resume, clear **and compaction**, so a long-running agent was
+  rewriting its own vault tree at an unpredictable moment mid-session.
+
+  `fetch` writes only under `.git/` and `merge --ff-only` is a single
+  ref-and-tree update, so the same 2 s budget is honest for them: killing either
+  one leaves the working tree as it was.
+
+  **A clone that cannot fast-forward is left alone, and that is the contract,
+  not a degradation.** `sync --ff-only` reports `ok` with a `local_ahead` count;
+  it does not rebase to resolve the divergence. Something scheduled has to do
+  that — `claudron sync` (which does rebase) from a job with an honest budget.
+  **If your integration ships no such scheduled reconciliation, a divergent
+  clone stays `ahead` indefinitely.** That state is safe and it is *visible*
+  (`claudron sync --check --json` reports it), which is why it is the right
+  default — but it is not self-resolving, and an integration that never
+  reconciles will accumulate divergence. Say so to your operators, and give them
+  a way to see it.
 
 ---
 

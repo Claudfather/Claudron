@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+- **The SessionStart hook fast-forwards and never rewrites the live tree ([#156](https://github.com/Claudfather/Claudron/issues/156)).**
+
+  **A budget that is right for latency is wrong for a history rewrite.** The hook ran `sync(pull=True)` on a 2 s budget: that commits whatever is on disk and then runs `git pull --rebase` in the live tree, and the only two outcomes of a 2 s rebase on a busy host are *nothing to do* and *killed part-way*. A killed replay detaches HEAD and leaves commits reachable from no branch. On the host that produced this issue the kill landed at 14:08:39 on 2026-09-09 — one pick completed, 58 pending, no conflict — and the tree sat detached until 20:22. SessionStart is not a rare event: hosts fire it on startup, resume, clear **and compaction**, so a long-running agent was rewriting its own vault at an unpredictable moment mid-session, and no discipline could prevent it.
+
+  **`pull_ff_only` replaces it: fetch, then `merge --ff-only`. Never add, never commit, never rebase.** The safety is structural rather than budgeted — `fetch` writes only under `.git/`, so killing it leaves the working tree untouched, and `merge --ff-only` is a single ref-and-tree update with no replay to interrupt. That is what makes the same 2 s budget honest here and dishonest for a rebase.
+
+  **The fetch names the upstream's own remote and ref, not the default branch.** On a clone tracking something else, fetching the default branch by name leaves `@{upstream}` stale, and the `merge --ff-only @{upstream}` that follows then fast-forwards onto a ref nobody refreshed — a silent no-op that reads as success. Pinned by a test that records argv on a branch whose upstream is not the default.
+
+  **Refusals are `sync()`'s, reused rather than restated**: mid-surgery through `_interrupted_state`, a side branch through `_refuse_off_default` (shipped by [#152](https://github.com/Claudfather/Claudron/issues/152)). A door that only fast-forwards is not a reason to relax the side-branch rule — a side branch is refused because work accrues where nothing else can see it, which fast-forwarding does not fix.
+
+  **NOT FAST-FORWARDABLE IS NOT AN ERROR, and the issue's own spec could not be followed here.** It asked for `detail = "not fast-forwardable: N local commit(s) await reconciliation"` **and** `ok=True`. Those cannot both hold: `SyncResult.ok` is derived as `not detail`. Following it literally would make every `ahead` clone report `ok=False` and train each hook to log a degradation on a healthy vault — the false-signal class [#149](https://github.com/Claudfather/Claudron/issues/149) is about. So the count rides a new `SyncResult.local_ahead` and `detail` stays empty, which honours the stated intent and the documented contract on `detail` ("non-empty exactly when something needs the human") at the same time.
+
+  **`claudron sync --ff-only`** runs the same door, so "matches the hook's behaviour" is a shared implementation rather than a claim two call sites must independently keep true. A full `claudron sync` still rebases and is for a scheduled reconciliation with an honest budget — never a hook.
+
+  **What an integration with no scheduled reconciliation now gets: an honest `ahead` state, and nothing that resolves it.** That is the deliberate trade. An un-reconciled `ahead` is safe and *visible* — `sync --check --json` reports it — where a killed rebase is neither, which is why this lands without waiting on the scheduled door. But it is not self-resolving: a deployment that never runs a reconciliation will accumulate divergence. `docs/INTEGRATION.md` §Session loop states that obligation to front-ends.
+
+  **The `--rebase` pin records argv from the real git door rather than grepping source**, and carries its own anti-vacuity guard: a cycle that issues no `fetch` fails with *"the --rebase assertion is vacuous"* instead of passing. A grep-pinned test would pass on a file that merely lacks the string — including when the rebase has moved behind a variable, a helper, or a second module.
+
 ### Added
 - **`claudron sync --check --json` — a read-only, git-only health verdict for consumers ([#154](https://github.com/Claudfather/Claudron/issues/154)).**
 
