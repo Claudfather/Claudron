@@ -715,7 +715,8 @@ def cmd_sync(args) -> int:
     else:
         pull, push = True, True
     try:
-        result = sync(vault, pull=pull, push=push, timeout=args.timeout)
+        result = sync(vault, pull=pull, push=push, timeout=args.timeout,
+                      branch=getattr(args, "branch", None))
     except SyncError as exc:
         print(str(exc), file=sys.stderr)
         return 3  # environment error (CLI contract)
@@ -1238,6 +1239,14 @@ def main(argv=None) -> int:
         "sync",
         help="Commit vault changes, pull --rebase, push (the SD-card git leg)",
         parents=[vault_parent, json_parent],
+    )
+    p_sync.add_argument(
+        "--branch",
+        metavar="NAME",
+        default=None,
+        help="Sync this side branch deliberately. Without it sync refuses to "
+             "run off the default branch, because a clone left on one "
+             "accumulates work that reaches no other machine.",
     )
     sync_dir = p_sync.add_mutually_exclusive_group()
     sync_dir.add_argument(
