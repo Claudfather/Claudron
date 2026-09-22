@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+- **`sync` aborts a rebase it killed, and refuses to run off the default branch ([#152](https://github.com/Claudfather/Claudron/issues/152)).** Both halves fired on a live fleet host and together produced a twelve-day outage: the clone was left on a side branch and quietly accumulated 59 commits that never reached the default branch (53 reaching no remote at all), then a hook-driven sync on a 2-second budget began replaying all 59, was killed after its first pick, and left the tree detached mid-rebase with the default branch's files checked out. A fleet's mission, charter and project manifest vanished from disk and a downstream compose then ran from the reverted manifest, while every sync refused and printed success-shaped output.
+
+  **The discrimination is the whole fix, and getting it backwards is worse than the bug.** `sync` already distinguished a rebase stopped on a *conflict* — markers a human must see, and possibly a resolution already begun — from one *killed* mid-replay, which has no markers and nothing to resolve. It then handled both the same way and left the tree wedged "for the human". A killed replay is now aborted and the tree restored, with `detail` saying so; a conflict is left exactly as before. `_killed_rebase` requires **both** of its facts to say "killed" — no unmerged paths **and** no `stopped-sha` — so an ambiguous state is treated as a conflict. The asymmetry is deliberate: failing toward "leave it" costs a refusal, failing the other way costs a human's work. The signature is the one measured on the clone that wedged: a todo list and `done`, no `stopped-sha`, zero unmerged paths.
+
+  **A clone on a side branch is now refused before anything is written.** That state is where captures look durable in `git log` and exist on no other machine, and the refusal precedes the commit on purpose — a refusal that committed first would strand one more commit every time it fired. `--branch NAME` is the only override and must name the branch actually checked out, so it stays a deliberate act rather than a blanket opt-out. `_default_branch` strips the `origin/` prefix, which is load-bearing rather than cosmetic: `symbolic-ref refs/remotes/origin/HEAD` answers `origin/main` while `symbolic-ref HEAD` answers `main`, so an unstripped comparison refuses every healthy clone — mutation-confirmed, it fails five existing tests including the main round-trip.
+
+  Two #147 tests now pass `--branch`: their subject is which upstream a rebase targets on a feature branch, not whether a side branch may be synced, and the flag keeps them testing that.
+
 ### Added
 - **Gitignore rules for Claude fleet bot telemetry ([Claudlobby#874](https://github.com/Claudfather/Claudlobby/issues/874)).** Narrow any-depth ignore rules for `data/events/fleet-*.jsonl`, `data/.last-tool-call`, `data/.idle` — the files Claudlobby supervision hooks can write relative to the session cwd when the bot environment is absent. Defence-in-depth behind the #874 writer fix: a broad `git add` in an agent checkout can no longer stage fleet telemetry into this public repo. No product paths match these patterns.
 
