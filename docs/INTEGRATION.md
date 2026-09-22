@@ -302,6 +302,22 @@ bind an integration that ships its **own** capture prompt:
   block yourself instead of running `hooks install`, gate it against the shape
   in that section (register rule R3) — a drifted copy silently runs stale hooks
   on every host you compose.
+- **A capture is durable when it returns; you do not need to run `sync` for a
+  note to exist in history.** The write door commits the note it wrote, inside
+  the lock it already holds (`capture(<actor>): <title>`). Before this, the note
+  existed on one disk until something else ran — on one host that window was
+  twelve days and 62 paths.
+
+  Two consequences for an integration. **`ok` does not mean committed**: if the
+  commit fails (a wedged tree, a rejecting hook) the note is still on disk, the
+  result stays `ok`, and a `W108` rides the envelope's `warnings` array — never
+  `errors`, because nothing about the write failed. **Do not retry a write on a
+  W108**; the note is there and the next `sync` commits it. And a vault that is
+  not a git repository is silent: no commit, no warning.
+
+  `--no-commit` exists for a caller batching several captures and committing
+  them itself. It is an escape hatch, not a default: it restores the window.
+
 - **A hook never rewrites history, and never syncs a side branch.** SessionStart
   fetches and `merge --ff-only`; it does not commit and does not rebase. If you
   install your own SessionStart pull, it must be `claudron sync --ff-only` (or

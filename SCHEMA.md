@@ -231,6 +231,7 @@ Additions are minor-version events recorded in this file's changelog.
 | W105 | CONVENTIONS.md over token budget | warning | warning |
 | W106 | status outside vocabulary (lenient form of E003) | warning | n/a |
 | W107 | malformed date (lenient form of E005) | warning | n/a |
+| W108 | note written but not committed by the write door (non-git vault is silent; a wedged tree or a failed `git add`/`commit` warns) | warning | warning |
 
 Date semantics: YAML already parses valid ISO dates into date objects —
 those pass. Strings must satisfy `date.fromisoformat`. Anything else

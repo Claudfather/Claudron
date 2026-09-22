@@ -306,6 +306,12 @@ CATALOG: dict[str, dict[str, str | None]] = {
     "W105": {"lenient": "warning", "strict": "warning"},
     "W106": {"lenient": "warning", "strict": None},
     "W107": {"lenient": "warning", "strict": None},
+    # #157: the write door wrote the note but could not commit it. A WARNING in
+    # both tiers because it is never an error: the note is on disk, and the
+    # safety net commits it on the next sync. Not a validation condition -- the
+    # only catalog member that describes the note's SURROUNDINGS rather than its
+    # content -- which is why both tiers read the same.
+    "W108": {"lenient": "warning", "strict": "warning"},
 }
 
 

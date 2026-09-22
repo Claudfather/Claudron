@@ -7,6 +7,7 @@ within the conftest tmp_path convention.
 from __future__ import annotations
 
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -1389,3 +1390,56 @@ class TestPullFfOnly:
         assert fetches, f"no fetch was issued; argv seen: {seen}"
         assert fetches[0] == ("fetch", "origin", "feature"), (
             f"the fetch must name the upstream's own remote and ref, got {fetches[0]}")
+
+
+class TestTheSafetyNetStays:
+    """#157 requirement 2. The write door commits its own notes now, so sync's
+    commit could look redundant — it is not. It is the net for everything written
+    AROUND the door: a hand-edited plan, a working document, a bot writing with a
+    shell redirect (which this estate still does). Deleting it would strand
+    exactly that population."""
+
+    def test_a_file_written_around_the_door_still_travels(self, synced_pair):
+        a, b = synced_pair
+        # Nobody's capture wrote this — a hand edit, the net's whole population.
+        (a / "_shared" / "knowledge" / "hand-written.md").write_text(
+            "---\ntitle: Hand Written\ntype: knowledge\nstatus: current\n"
+            "owner: t\ncreated: 2026-07-01\nupdated: 2026-07-01\n"
+            "---\n\n# Hand Written\n\nWritten with a redirect.\n")
+        result = sync(detect(a), pull=False, push=False, timeout=30.0)
+        assert result.ok and result.committed, (result.ok, result.detail)
+        subject = _git(a, "log", "-1", "--format=%s").stdout.strip()
+        assert subject.startswith("vault sync:") and "straggler" in subject, subject
+
+    def test_the_straggler_wording_keeps_the_two_classes_countable(self, synced_pair):
+        """`straggler(s)` rather than `change(s)`: the door's commits and the
+        net's stay countable in `git log`, so "how much still arrives around the
+        door" is a number rather than an impression."""
+        a, _ = synced_pair
+        (a / "_shared" / "knowledge" / "one.md").write_text(
+            "---\ntitle: One\ntype: knowledge\nstatus: current\nowner: t\n"
+            "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# One\n\nx\n")
+        sync(detect(a), pull=False, push=False, timeout=30.0)
+        subject = _git(a, "log", "-1", "--format=%s").stdout.strip()
+        assert subject == f"vault sync: 1 straggler(s) from {socket.gethostname()}", subject
+
+    def test_sync_makes_NO_straggler_commit_when_the_door_committed_everything(
+            self, synced_pair, capsys):
+        """The other half: if every note came through the door, the net finds
+        nothing. A straggler commit here would mean the door is not committing."""
+        a, _ = synced_pair
+        # `.claudron/` is gitignored by a real init, so the index does not count
+        # as a straggler — confirm that before relying on it.
+        assert (a / ".gitignore").exists() and ".claudron/" in (a / ".gitignore").read_text()
+        before = _git(a, "rev-parse", "HEAD").stdout.strip()
+        rc = main(["--vault", str(a), "capture", "--type", "knowledge",
+                   "--title", "Through The Door", "--body", "Committed by capture.",
+                   "--owner", "t"])
+        assert rc == 0
+        capsys.readouterr()
+        assert _git(a, "rev-parse", "HEAD").stdout.strip() != before, (
+            "the door did not commit — the rest of this test is vacuous")
+        result = sync(detect(a), pull=False, push=False, timeout=30.0)
+        assert result.ok, result.detail
+        assert result.committed is False, (
+            "sync made a straggler commit for a note the door already committed")

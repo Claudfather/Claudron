@@ -475,6 +475,65 @@ def _is_expirable(age: int, holder: bool | None, max_age_s: int) -> bool:
     return age >= max_age_s and holder is False
 
 
+@dataclass(frozen=True)
+class CommitOutcome:
+    """Which step ran and how it went — ``step`` is ``"add"`` or ``"commit"``.
+
+    #157 specified ``commit_paths() -> CompletedProcess``, and that is not
+    enough: `sync` must tell a failed STAGE (a refusal — name git's own message)
+    from a failed COMMIT (`committed=False`, carry on), and recovering that from
+    the returned process means reading argv. Two attempts at that were wrong —
+    `run_git` injects a `-c user.name=…` prefix for `commit` only, so positions
+    shift, and a membership test then depends on a test double populating
+    ``args`` faithfully, which is a coupling between production logic and the
+    fidelity of a stub. Naming the step removes the inference entirely.
+    """
+
+    step: str
+    proc: subprocess.CompletedProcess
+
+    @property
+    def ok(self) -> bool:
+        return self.proc.returncode == 0
+
+    @property
+    def error(self) -> str:
+        """git's own message, or the exit code when it said nothing."""
+        said = (self.proc.stderr or "").strip() or (self.proc.stdout or "").strip()
+        return said[:200] if said else f"exit {self.proc.returncode}"
+
+
+def commit_paths(root: Path, paths: list[Path], message: str, *,
+                 timeout: float | None = None) -> CommitOutcome:
+    """``git add`` the NAMED paths and commit them. Returns the commit's result.
+
+    Extracted from :func:`sync` so the write door and the safety net share one
+    definition of "stage and commit" — the identity fallback, the bounded
+    invoker, and the add-failure-is-reported-not-swallowed rule (#157).
+
+    **It stages only what it is given.** `sync` passes nothing and gets `add -A`
+    (the net sweeps whatever is lying around); the write door passes the note it
+    just wrote, so a capture cannot commit a half-finished file somebody else
+    was editing in the same tree. An empty ``paths`` therefore means "everything"
+    and is the net's call, never the door's.
+
+    THE CALLER DECIDES WHAT A FAILURE MEANS, which is why this returns the
+    process rather than raising or returning a bool: for `sync` a failed commit
+    is `committed=False`, for the write door it is a warning on a note that is
+    already on disk. Collapsing those would force one of them to lie.
+    """
+    t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
+    if paths:
+        added = run_git(root, "add", "--", *[str(p) for p in paths], timeout=t)
+    else:
+        added = run_git(root, "add", "-A", timeout=t)
+    if added.returncode != 0:
+        # Hand the ADD's failure back, not a commit that was never attempted:
+        # naming the cause rather than the symptom is why sync stopped here too.
+        return CommitOutcome("add", added)
+    return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
+
+
 def sync(
     vault: Vault,
     *,
@@ -586,33 +645,39 @@ def sync(
             """
             return f"{expired_note}; {text}" if expired_note else text
 
-        # Commit any working-tree changes first — captures don't commit, sync
-        # owns the commit so notes actually travel. Every call is bounded by t
-        # so a wedged git releases the lock instead of holding it forever.
+        # Commit any working-tree changes first. SINCE #157 THE WRITE DOOR
+        # COMMITS ITS OWN NOTES, so this is the SAFETY NET rather than the only
+        # commit: what it still catches is everything written AROUND the door --
+        # a hand-edited plan, a working document, a bot writing with a shell
+        # redirect (which this estate does). The older comment here said
+        # "captures don't commit, sync owns the commit so notes actually travel",
+        # which stopped being true at #157 and would have sent the next reader
+        # looking for the durability guarantee in the wrong place.
         porcelain = run_git(root, "status", "--porcelain", timeout=t).stdout.strip()
         if porcelain:
-            added = run_git(root, "add", "-A", timeout=t)
-            if added.returncode != 0:
-                # Returning HERE is the difference between naming the cause and
-                # naming a symptom. Unchecked, a failed `add` fell through to a
-                # `commit` that also failed, and the porcelain re-read below
-                # then reported "the working tree is not clean after the
-                # pre-pull commit" -- true, useless, and pointing at the tree
-                # rather than at whatever stopped the write. git's own message
-                # says what happened.
-                result.detail = _detail(
-                    f"git add failed: {added.stderr.strip()[:200]}"
-                    if added.stderr.strip()
-                    else f"git add failed (exit {added.returncode})"
-                )
-                return _done(result)
+            # THE SAFETY NET, and it stays even though the write door now
+            # commits its own notes (#157). What it catches is everything
+            # written AROUND the door -- a hand-edited plan, a working document,
+            # a bot writing with a shell redirect (which this estate still
+            # does). Deleting it because captures commit themselves would
+            # strand exactly those files, which is the population it exists for.
+            #
+            # "straggler(s)" rather than "change(s)" on purpose: the two commit
+            # classes stay countable in `git log`, so "how much still arrives
+            # around the door" is a number rather than an impression.
             n = len(porcelain.splitlines())
-            commit = run_git(
-                root, "commit",
-                "-m", f"claudron sync: {n} change(s) from {socket.gethostname()}",
+            outcome = commit_paths(
+                root, [],   # [] = add -A: the net sweeps, the door does not
+                f"vault sync: {n} straggler(s) from {socket.gethostname()}",
                 timeout=t,
             )
-            result.committed = commit.returncode == 0
+            if not outcome.ok and outcome.step == "add":
+                # The pre-existing rule, preserved: a failed STAGE is a refusal
+                # naming git's own message, never a commit that was never
+                # attempted and a porcelain re-read blaming the tree.
+                result.detail = _detail(f"git add failed: {outcome.error}")
+                return _done(result)
+            result.committed = outcome.ok
 
         if pull:
             # A rebase must not be *started* unless it is safe to finish. Both
