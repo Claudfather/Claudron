@@ -20,12 +20,14 @@ and fail open on any nonzero outcome.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
 import subprocess
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .locking import vault_write_lock
@@ -402,6 +404,20 @@ def sync(
     # interleave with a concurrent `capture` writing a note + index on the same
     # machine (the local-writer race the lock exists for; cross-machine
     # serialization still happens at the git layer below).
+    def _done(res: SyncResult) -> SyncResult:
+        """Record this attempt, then hand the result back.
+
+        Every exit from the locked section goes through here, so the
+        journal counts REFUSALS as attempts too -- a clone that has been
+        refusing for a week and one nobody has asked to sync look identical
+        without that, and telling them apart is the whole point of having a
+        denominator (#149). `last_state` is `ok` or `refused` and nothing
+        else; it is deliberately NOT the health door's verdict vocabulary,
+        which describes a CLONE rather than an attempt.
+        """
+        _journal_write(root, ok=res.ok, state="ok" if res.ok else "refused")
+        return res
+
     with vault_write_lock(vault):
         # Refuse to touch a repository that is mid-surgery, before writing
         # anything to it. A stopped rebase detaches HEAD, and a commit made on
@@ -416,7 +432,7 @@ def sync(
                 f"refusing to sync: {interrupted} — nothing was written; "
                 "resolve the repository first"
             )
-            return result
+            return _done(result)
 
         # A side branch is refused BEFORE the `add -A` below, not after: the
         # whole harm of a clone on the wrong branch is that it keeps
@@ -425,7 +441,7 @@ def sync(
         off_default = _refuse_off_default(root, t, branch)
         if off_default:
             result.detail = off_default
-            return result
+            return _done(result)
 
         # A stale index.lock blocks every git WRITE while leaving every git
         # READ working, which is why the last one went unnoticed for ten days:
@@ -444,7 +460,7 @@ def sync(
                         f"(age {age}s, no owner) and could not be removed: "
                         f"{exc}; nothing was written"
                     )
-                    return result
+                    return _done(result)
                 expired_note = f"expired stale index.lock (age {age}s, no owner)"
             else:
                 owner = {True: "held", False: "no owner", None: "unknown"}[holder]
@@ -453,7 +469,7 @@ def sync(
                     f"owner {owner}) — another git process may be running; "
                     "nothing was written"
                 )
-                return result
+                return _done(result)
         else:
             expired_note = None
 
@@ -487,7 +503,7 @@ def sync(
                     if added.stderr.strip()
                     else f"git add failed (exit {added.returncode})"
                 )
-                return result
+                return _done(result)
             n = len(porcelain.splitlines())
             commit = run_git(
                 root, "commit",
@@ -517,7 +533,7 @@ def sync(
                     "pull skipped: the working tree is not clean after the "
                     "pre-pull commit, so a rebase cannot be started safely"
                 )
-                return result
+                return _done(result)
             upstream = run_git(
                 root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
                 "@{upstream}", timeout=t,
@@ -565,7 +581,7 @@ def sync(
                                 f"{exc} — rebase aborted, repository restored "
                                 f"to {where}"
                             )
-                            return result
+                            return _done(result)
                         # The abort itself failed, or left something behind.
                         # Fall through to the human-facing text rather than
                         # claiming a repair that did not happen.
@@ -575,7 +591,7 @@ def sync(
                         if left
                         else f"{exc} — repository left consistent"
                     )
-                    return result
+                    return _done(result)
                 if pulled.returncode != 0:
                     # Conflict (or no remote). The rebase stays stopped with
                     # markers in the working tree — the standard
@@ -592,7 +608,7 @@ def sync(
                         if result.quarantined
                         else f"pull failed: {pulled.stderr.strip()[:200]}"
                     )
-                    return result
+                    return _done(result)
                 result.pulled = True
                 # A clean pull can still land markers committed elsewhere —
                 # scan exactly what the pull changed (no-op pull: ORIG_HEAD
@@ -613,4 +629,311 @@ def sync(
         if expired_note and not result.detail:
             result.detail = expired_note
 
+        # The success path's recording, still inside the lock -- `detail` is
+        # final by here, and `ok` is derived from it.
+        _done(result)
+
     return result
+
+
+# ── the health door (#154) ────────────────────────────────────────────
+#
+# THE STATE NAMES ARE THE CONTRACT, not the implementation. Two consumers key
+# on them -- the supervisor's doctor rung and the scheduled vault-sync job --
+# and an implementation can be rewritten where a name that has been keyed on
+# cannot. They are chosen once, here, and they are deliberately the vocabulary
+# the repair doors already use (`_killed_rebase`, `_interrupted_state`,
+# `_refuse_off_default`, `_index_lock_state`): a health door that invented a
+# parallel naming would make "what sync refuses" and "what check reports" two
+# things a reader has to translate between.
+
+#: Verdicts in PRECEDENCE order -- the first whose condition holds wins, and
+#: this tuple is the only place that order is written down.
+#:
+#: The S-table of the design doc maps onto it as:
+#:
+#: ===================================  ==================
+#: state                                design-doc state
+#: ===================================  ==================
+#: ``unknown``                          (none -- see below)
+#: ``stale-lock``                       S11
+#: ``rebase-conflict``                  S8
+#: ``rebase-killed``                    S9
+#: ``merge``                            S10
+#: ``detached``                         S7
+#: ``side-branch``                      S5 and S6
+#: ``dirty``                            S4
+#: ``divergent``                        S13
+#: ``behind``                           S3
+#: ``ahead``                            S2
+#: ``unreachable``                      S12 (only with ``reach=True``)
+#: ``clean``                            S1
+#: ===================================  ==================
+#:
+#: S5 and S6 share ``side-branch`` on purpose; the ``upstream`` field (a name
+#: or ``None``) is what tells them apart, so thirteen states are thirteen
+#: verdicts only because ``unknown`` is not one of the design's states.
+#:
+#: **``unknown`` is the one value with no S-row, and it is the important one.**
+#: The S-table enumerates states of the CLONE. It has nothing to say about a
+#: check that could not RUN -- git missing, a git call timing out -- and a
+#: reader that cannot reach its source must never answer the same as one that
+#: looked and found nothing wrong. Returning ``clean`` there would rebuild the
+#: exact silence this door exists to end: for twelve days every probe on the
+#: outage host reported the engine healthy.
+CHECK_STATES = (
+    "unknown",
+    "stale-lock",
+    "rebase-conflict",
+    "rebase-killed",
+    "merge",
+    "detached",
+    "side-branch",
+    "dirty",
+    "divergent",
+    "behind",
+    "ahead",
+    "unreachable",
+    "clean",
+)
+
+#: Where `sync()` records its outcome, so `check()` can answer "when did this
+#: clone last sync successfully" -- the denominator a consumer needs to tell a
+#: vault that is quietly failing from one nobody has asked to sync. Under
+#: `.claudron/`, which is gitignored, and written by `sync()` alone.
+SYNC_JOURNAL = "sync.json"
+
+
+@dataclass
+class CheckResult:
+    """One read-only verdict about a vault clone's git state.
+
+    ``detail`` is human-readable and is the ONLY field a consumer must not key
+    on; it carries why a verdict is ``unknown``, which is a sentence rather
+    than a category.
+    """
+
+    state: str = "unknown"
+    branch: str | None = None
+    default_branch: str | None = None
+    upstream: str | None = None
+    ahead: int | None = None
+    behind: int | None = None
+    uncommitted: int | None = None
+    uncommitted_oldest_age_s: int | None = None
+    lock_age_s: int | None = None
+    interrupted: str | None = None
+    last_sync_ok_at: str | None = None
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        """``clean`` is the only healthy verdict. ``unknown`` is NOT ok -- that
+        is the whole point of having it."""
+        return self.state == "clean"
+
+    def to_dict(self) -> dict:
+        return {
+            "check": True,
+            "state": self.state,
+            "branch": self.branch,
+            "default_branch": self.default_branch,
+            "upstream": self.upstream,
+            "ahead": self.ahead,
+            "behind": self.behind,
+            "uncommitted": self.uncommitted,
+            "uncommitted_oldest_age_s": self.uncommitted_oldest_age_s,
+            "lock_age_s": self.lock_age_s,
+            "interrupted": self.interrupted,
+            "last_sync_ok_at": self.last_sync_ok_at,
+            "detail": self.detail,
+        }
+
+
+def _journal_path(root: Path) -> Path:
+    return root / ".claudron" / SYNC_JOURNAL
+
+
+def _journal_read(root: Path) -> dict:
+    """The sync journal, or an empty dict. Never raises: a health door that
+    died on an unreadable optional file would be less available than the thing
+    it reports on."""
+    try:
+        with open(_journal_path(root), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _journal_write(root: Path, *, ok: bool, state: str) -> None:
+    """Record this run's outcome. Called by `sync()` under the write lock it
+    already holds, and by nothing else -- `check()` only ever reads.
+
+    Best-effort by construction: a vault whose `.claudron/` cannot be written
+    still syncs, and losing the denominator is not worth failing the numerator.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    data = _journal_read(root)
+    data["last_attempt_at"] = now
+    data["last_state"] = state
+    if ok:
+        data["last_ok_at"] = now
+    try:
+        path = _journal_path(root)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        return
+
+
+def _uncommitted(root: Path, t: float) -> tuple[int, int | None]:
+    """``(count, oldest_age_s)`` over the paths `status --porcelain` lists.
+
+    `--porcelain` needs no index lock, which is exactly why it kept answering
+    for twelve days while every WRITE in the vault failed -- so this is a count
+    of files, never evidence that the repository is writable.
+    """
+    out = run_git(root, "status", "--porcelain", timeout=t)
+    if out.returncode != 0:
+        return 0, None
+    lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
+    oldest: float | None = None
+    now = time.time()
+    for ln in lines:
+        rel = ln[3:].strip()
+        if " -> " in rel:                       # a rename: take the destination
+            rel = rel.split(" -> ", 1)[1]
+        rel = rel.strip('"')
+        try:
+            mtime = os.path.getmtime(root / rel)
+        except OSError:
+            continue                            # deleted, or an unreadable path
+        age = now - mtime
+        oldest = age if oldest is None else max(oldest, age)
+    return len(lines), (int(oldest) if oldest is not None else None)
+
+
+def check(vault: Vault, *, timeout: float | None = None,
+          reach: bool = False) -> CheckResult:
+    """A read-only, git-only verdict on one vault clone.
+
+    **Read-only is the point, not a courtesy.** The door this replaces --
+    `status --json` -- walks every note and WRITES the index on its way to an
+    answer, so asking "is this healthy" mutated the thing being asked about and
+    could not be run on a wedged or read-only tree. Every git command here is a
+    query; nothing touches the index, the working tree or the journal. The
+    test suite pins that rather than trusting this paragraph.
+
+    **It answers offline.** No network call happens unless ``reach`` is passed,
+    because the watchdog that polls this must not be gated on a remote being up.
+
+    Raises :class:`SyncError` when the vault is not a git repository at all,
+    which is what `sync()` already does for the same condition and what the CLI
+    already maps to its environment-error exit. That is deliberately NOT a
+    verdict: a directory that is not a clone has no clone-health to report, and
+    inventing a state for it would put a second meaning into a vocabulary whose
+    whole value is that consumers can key on it.
+    """
+    root = vault.root
+    t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
+    last_ok = _journal_read(root).get("last_ok_at")
+
+    def _unknown(why: str) -> CheckResult:
+        return CheckResult(state="unknown", detail=why, last_sync_ok_at=last_ok)
+
+    try:
+        git_dir = _git_dir(root, t)
+    except SyncError as exc:
+        return _unknown(str(exc))
+    if git_dir is None:
+        raise SyncError(f"vault is not a git repository: {root}")
+
+    r = CheckResult(last_sync_ok_at=last_ok)
+    try:
+        r.interrupted = _interrupted_state(root, git_dir, t)
+        r.default_branch = _default_branch(root, t)
+
+        head = run_git(root, "symbolic-ref", "--quiet", "--short", "HEAD", timeout=t)
+        r.branch = head.stdout.strip() if head.returncode == 0 else None
+
+        up = run_git(root, "rev-parse", "--abbrev-ref", "@{upstream}", timeout=t)
+        r.upstream = up.stdout.strip() if up.returncode == 0 and up.stdout.strip() else None
+
+        if r.upstream:
+            # MEASURED, not assumed: `--left-right --count @{upstream}...HEAD`
+            # prints LEFT then RIGHT, left being the upstream side (behind) and
+            # right the HEAD side (ahead). Swapping the two would be a silent
+            # contract bug -- every consumer would read a clone that needs a
+            # pull as one that needs a push.
+            counts = run_git(root, "rev-list", "--left-right", "--count",
+                             "@{upstream}...HEAD", timeout=t)
+            if counts.returncode == 0:
+                parts = counts.stdout.split()
+                if len(parts) == 2 and all(p.isdigit() for p in parts):
+                    r.behind, r.ahead = int(parts[0]), int(parts[1])
+
+        r.uncommitted, r.uncommitted_oldest_age_s = _uncommitted(root, t)
+
+        lock = _index_lock_state(git_dir)
+        if lock is not None:
+            _, r.lock_age_s, _ = lock
+
+        reachable: bool | None = None
+        if reach:
+            probe = run_git(root, "ls-remote", "--exit-code", "origin", "HEAD",
+                            timeout=t)
+            reachable = probe.returncode == 0
+
+        killed = _killed_rebase(root, git_dir, t)
+    except SyncError as exc:
+        # A git call that could not complete. Everything gathered so far is
+        # discarded rather than reported beside a verdict derived from a
+        # partial read: a half-answer wearing a confident label is the failure
+        # this vocabulary's `unknown` exists to prevent.
+        return _unknown(str(exc))
+
+    r.state = _verdict(r, killed=killed, reach=reach, reachable=reachable)
+    return r
+
+
+def _verdict(r: CheckResult, *, killed: bool, reach: bool,
+             reachable: bool | None) -> str:
+    """The precedence in :data:`CHECK_STATES`, applied.
+
+    Split out from :func:`check` so the ordering can be tested against a
+    constructed result without a repository -- the gathering and the judging
+    fail for different reasons and are worth being able to exercise apart.
+    """
+    # A LOCK IS REPORTED ON AGE ALONE, while `sync()` deletes one only when it
+    # is also provably ownerless. The asymmetry is deliberate: the bar for
+    # ACTING on a lock is higher than the bar for TELLING someone about it,
+    # because deleting a live lock corrupts the index and mentioning one costs
+    # nothing. Reporting only the provably-ownerless ones would go silent on a
+    # wedged vault whose host has no way to name the holder -- which is how the
+    # original lock sat for ten and a half days while every read kept working.
+    # Young locks are ordinary concurrent writes and are not a verdict at all,
+    # so a watchdog polling this does not flap.
+    if r.lock_age_s is not None and r.lock_age_s >= STALE_LOCK_AGE_S:
+        return "stale-lock"
+    if r.interrupted and "rebase" in r.interrupted:
+        return "rebase-killed" if killed else "rebase-conflict"
+    if r.interrupted and "merge" in r.interrupted:
+        return "merge"
+    if r.branch is None:
+        return "detached"
+    if r.default_branch and r.branch != r.default_branch:
+        return "side-branch"
+    if r.uncommitted:
+        return "dirty"
+    if r.ahead and r.behind:
+        return "divergent"
+    if r.behind:
+        return "behind"
+    if r.ahead:
+        return "ahead"
+    if reach and reachable is False:
+        return "unreachable"
+    return "clean"
