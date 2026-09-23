@@ -3,6 +3,30 @@
 ## Unreleased
 
 ### Changed
+- **The live tree only fast-forwards: integration moves into a throwaway worktree ([#158](https://github.com/Claudfather/Claudron/issues/158) phase 1, behind `CLAUDRON_SYNC_WORKTREE=1`).**
+
+  **The checkout the fleet reads was also the workbench `sync()` rebased on.** A rebase's first act is to check out the *other* side's files, so anything that stops one leaves that tree half-rewritten. Measured 2026-09-09: a stopped rebase checked out the default branch's tree, and a fleet's manifest, charter and projects file — committed only on the side branch — were **absent from disk** from that moment. Three weeks later a system review reported the fleet as having no charter and no projects file, and **the fleet re-drafted both**. Nobody saw a deletion; they saw an absence and treated it as never-existed. That is the harm this closes, and it is the only issue in the programme that makes the live tree *unable* to wedge.
+
+  Integration now happens in a worktree that can be killed without consequence. The live tree moves by `merge --ff-only`, or by **one** `reset --keep` to a tip already built elsewhere, and by nothing else.
+
+  **`reset --keep`, never `--hard`, and the refusal IS the safety property.** `--keep` declines rather than clobbering a local modification; `--hard` would discard a straggler write silently — this issue's own failure mode re-entering through its fix, since a file absent from disk is precisely what nobody notices. Pinned: a mutant swapping `--keep` for `--hard` turns a test red.
+
+  **The safety property is tested by stopping a real integration three different ways**, each asserting the live tree is byte-identical afterwards — HEAD, porcelain status, rebase markers, **and the content of every tracked file**, because the measured harm was not a dirty status but files missing while status looked clean:
+  - a **real conflict** (both sides editing one line),
+  - a **real mid-replay kill** (120 commits against a 1 s timeout, so `run_git` kills the actual git process — the 2026-09-09 mechanism of one pick done and the rest pending),
+  - a **real refusal** (a `pre-rebase` hook), which is a third code path with neither unmerged paths nor a timeout.
+
+  A slow `pre-commit` hook was the first attempt at the kill and did nothing: `git rebase` does not run that hook, so the integration simply succeeded and the test said so.
+
+  **The reap runs from a `finally`, on every exit path**, because the paths that most need it are the ones nobody planned to take. A worktree left behind per sync is a slow leak on the SD card whose failure is this estate's known outage cause, so "clean up on success" is the shape that fills the disk. And because a `finally` cannot cover a SIGKILL or a reboot, **every sync sweeps leftovers at its start** — unconditionally, since debris can predate a disarm. That sweep was written and never called, i.e. dead code reading as coverage; mutation testing is what surfaced it, and the same mutation now turns a test red.
+
+  **The HEAD-did-not-move assertion had no test until mutation showed it**: disabling the check left all six other tests green. A moved HEAD is the one thing `reset --keep` cannot protect against — it compares the working tree, not the branch ref — so the test now moves HEAD **for real** mid-integration and asserts the refusal, with the racing commit's file still present afterwards.
+
+  **On locking, stated rather than inherited:** this adds no locking and depends on none. The worktree lives outside the vault root and the live tree is touched by exactly one command. That matters because the shell writer's `flock` is a **no-op where the `flock` binary is absent** (stock macOS; [#1748](https://github.com/Claudfather/Claudlobby/issues/1748)), so anything here resting on cross-process mutual exclusion would be resting on a lock that is not always taken. The HEAD check is the guard that is sound either way.
+
+  **Quarantine semantics change** where the flag is armed: `quarantined` names notes that could not be integrated, rather than notes carrying markers in the tree — the tree has none. The in-place path is left byte-identical (re-indented only), so unsetting the flag is a genuine backout rather than a revert.
+
+### Changed
 - **A capture is a commit: the write door commits the note it wrote ([#157](https://github.com/Claudfather/Claudron/issues/157)).**
 
   A captured note was not durable until something else ran — `engine.capture` wrote the file, `sync()` committed it whenever it happened to run next, and between them the note existed on **one disk**. Measured on a live host: **62 uncommitted paths, oldest written twelve days earlier, 17 under `_shared/knowledge/`** — on the storage whose failure is that host's known outage cause. Durability is the one property a knowledge layer must not defer.

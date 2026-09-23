@@ -7,6 +7,7 @@ within the conftest tmp_path convention.
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -1443,3 +1444,243 @@ class TestTheSafetyNetStays:
         assert result.ok, result.detail
         assert result.committed is False, (
             "sync made a straggler commit for a note the door already committed")
+
+
+def _tree_fingerprint(root: Path) -> tuple:
+    """Everything about the live tree that a wedge would disturb.
+
+    HEAD, the porcelain status, the presence of any rebase marker, AND the
+    content of every tracked file — because #158's measured harm was not a dirty
+    status, it was FILES ABSENT FROM DISK while status looked clean. A
+    fingerprint that only compared HEAD and status would have reported the
+    2026-09-09 tree as fine.
+    """
+    head = _git(root, "rev-parse", "HEAD").stdout.strip()
+    status = _git(root, "status", "--porcelain").stdout
+    markers = tuple(sorted(
+        d.name for d in (root / ".git").iterdir()
+        if d.name in ("rebase-merge", "rebase-apply", "MERGE_HEAD")))
+    contents = {}
+    for rel in _git(root, "ls-files").stdout.split():
+        pth = root / rel
+        contents[rel] = pth.read_bytes() if pth.exists() else None
+    return head, status, markers, tuple(sorted(contents.items()))
+
+
+class TestTheLiveTreeOnlyFastForwards:
+    """#158 phase 1. THE SAFETY PROPERTY IS THE DELIVERABLE, so every test here
+    stops an integration for real and asserts the live tree is byte-identical.
+
+    The harm being prevented, measured 2026-09-09: a stopped rebase checked out
+    the OTHER side's tree, so a fleet's manifest, charter and projects file —
+    committed only on the side branch — were absent from disk. Three weeks later
+    a review reported the fleet as having no charter and no projects file, and
+    the fleet re-drafted both. Nobody saw a deletion; they saw an absence.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _armed(self, monkeypatch):
+        monkeypatch.setenv(sync_mod.WORKTREE_FLAG, "1")
+
+    def _diverge(self, a: Path, b: Path, *, conflict: bool):
+        """Both sides commit. With `conflict`, on the SAME line of the SAME file —
+        which is what makes the stop real rather than injected."""
+        target = "_shared/knowledge/shared-note.md"
+        (a / target).write_text(
+            (a / target).read_text().replace("Original line.", "A's line."))
+        _git(a, "add", "-A"); _git(a, "commit", "-m", "a side"); _git(a, "push", "origin", "main")
+        if conflict:
+            (b / target).write_text(
+                (b / target).read_text().replace("Original line.", "B's line."))
+        else:
+            (b / "_shared" / "knowledge" / "b-only.md").write_text(
+                "---\ntitle: B Only\ntype: knowledge\nstatus: current\nowner: t\n"
+                "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# B Only\n\nx\n")
+        _git(b, "add", "-A"); _git(b, "commit", "-m", "b side")
+
+    def test_a_REAL_conflict_leaves_the_live_tree_byte_identical(self, synced_pair):
+        a, b = synced_pair
+        self._diverge(a, b, conflict=True)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert not result.ok, "a conflict must be reported, not swallowed"
+        assert "never touched" in result.detail, result.detail
+        assert "shared-note" in result.detail, result.detail
+        assert result.quarantined, "the conflicting path(s) must be named"
+        assert _tree_fingerprint(b) == before, (
+            "THE LIVE TREE MOVED during a conflicted integration — this is the "
+            "2026-09-09 failure re-created")
+        assert not (b / ".git" / "rebase-merge").exists(), "markers in the live tree"
+
+    def test_a_REAL_kill_mid_REBASE_leaves_the_live_tree_byte_identical(
+            self, synced_pair, tmp_path):
+        """Killed for real, not injected: a LONG replay outlasts the timeout, so
+        `run_git` kills the actual git process mid-rebase. That is the 2026-09-09
+        mechanism — one pick completed, 58 pending.
+
+        A slow `pre-commit` hook was the first attempt and did nothing: `git
+        rebase` does not run `pre-commit`, so the hook never fired and the
+        integration simply succeeded. The test reported "a killed integration must
+        be reported" and was right — nothing had been killed. Many real picks is
+        the honest way to make a replay long.
+        """
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        for i in range(120):
+            (b / "_shared" / "knowledge" / f"bulk-{i}.md").write_text(
+                f"---\ntitle: Bulk {i}\ntype: knowledge\nstatus: current\nowner: t\n"
+                f"created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Bulk {i}\n\nx\n")
+            _git(b, "add", "-A"); _git(b, "commit", "-m", f"bulk {i}")
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=1.0)
+
+        assert not result.ok, "a killed integration must be reported"
+        assert _tree_fingerprint(b) == before, (
+            "THE LIVE TREE MOVED during a killed integration — the exact harm")
+        assert not (b / ".git" / "rebase-merge").exists()
+        assert not (b / ".git" / "rebase-apply").exists()
+
+    def test_a_REAL_rebase_REFUSAL_leaves_the_live_tree_byte_identical(
+            self, synced_pair):
+        """A third way to stop: a `pre-rebase` hook refuses. Different code path
+        from a conflict (no unmerged paths) and from a kill (a returncode), and
+        the property must hold on all three."""
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        hook = b / ".git" / "hooks" / "pre-rebase"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert not result.ok
+        assert _tree_fingerprint(b) == before, "the live tree moved on a refusal"
+
+    def test_a_clean_divergence_integrates_and_leaves_no_debris(self, synced_pair):
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert result.ok, result.detail
+        # Both sides' files present -- the end state the issue specifies.
+        assert (b / "_shared" / "knowledge" / "b-only.md").exists()
+        assert "A's line." in (b / "_shared" / "knowledge" / "shared-note.md").read_text()
+        assert not _git(b, "status", "--porcelain").stdout.strip()
+        assert _git(b, "rev-list", "--count", "@{upstream}..HEAD").stdout.strip() != ""
+        # No debris, on the success path too.
+        assert "tmp/integrate-" not in _git(b, "branch", "--list").stdout
+        assert "integrate" not in _git(b, "worktree", "list").stdout
+
+    def test_a_plain_BEHIND_state_builds_no_worktree(self, synced_pair, monkeypatch):
+        """The common case must stay cheap: a worktree per sync on a Pi's SD card
+        is a cost this design must not add to the ordinary path. Asserted on
+        recorded argv, not on timing."""
+        a, b = synced_pair
+        (a / "_shared" / "knowledge" / "ahead.md").write_text(
+            "---\ntitle: Ahead\ntype: knowledge\nstatus: current\nowner: t\n"
+            "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Ahead\n\nx\n")
+        _git(a, "add", "-A"); _git(a, "commit", "-m", "ahead"); _git(a, "push", "origin", "main")
+
+        seen: list[tuple] = []
+        real = sync_mod.run_git
+
+        def spy(root, *args, **kw):
+            seen.append(args)
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", spy)
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+        assert result.ok, result.detail
+        assert not any(a_[:2] == ("worktree", "add") for a_ in seen), (
+            f"a behind-only state built a worktree: {[a_ for a_ in seen if a_[0]=='worktree']}")
+        assert any(a_[:2] == ("merge", "--ff-only") for a_ in seen), seen
+
+    def test_reset_uses_keep_and_NEVER_hard(self, synced_pair, monkeypatch):
+        """`--keep` refuses rather than clobbering, and the refusal IS the safety
+        property. `--hard` would discard a straggler write silently, which is this
+        issue's own failure mode re-entering through its fix."""
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        seen: list[tuple] = []
+        real = sync_mod.run_git
+        monkeypatch.setattr(sync_mod, "run_git",
+                            lambda root, *args, **kw: (seen.append(args),
+                                                       real(root, *args, **kw))[1])
+        sync(detect(b), pull=True, push=False, timeout=60.0)
+        resets = [a_ for a_ in seen if a_ and a_[0] == "reset"]
+        assert resets, "no reset was issued, so this proves nothing"
+        assert all("--keep" in a_ for a_ in resets), resets
+        assert not any("--hard" in a_ for a_ in resets), resets
+
+    def test_head_moved_between_start_and_reset_is_REFUSED(self, synced_pair, monkeypatch):
+        """The issue names this test and I had not written it — mutation caught
+        that: disabling the check left all six other tests green.
+
+        HEAD is asserted not to have moved rather than assumed not to, because a
+        ref that changed meaning is the one thing `reset --keep` cannot protect
+        against — `--keep` compares the WORKING TREE, not the branch ref, so a
+        moved HEAD would be reset away silently. The write lock makes this
+        unlikely; the check makes it impossible, and is sound whether or not the
+        lock was actually taken (the shell writer's flock is a no-op where the
+        binary is absent — #1748).
+
+        HEAD is moved FOR REAL mid-integration, not stubbed: a commit lands in the
+        live tree at the moment the worktree's tip is read.
+        """
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        real = sync_mod.run_git
+        fired = {"n": 0}
+
+        def meddle(root, *args, **kw):
+            # The tip read happens in the WORKTREE, immediately before the live
+            # tree's HEAD is re-checked. Commit on the live tree right then.
+            if args[:2] == ("rev-parse", "HEAD") and str(root) != str(b) and not fired["n"]:
+                fired["n"] = 1
+                (b / "_shared" / "knowledge" / "raced.md").write_text(
+                    "---\ntitle: Raced\ntype: knowledge\nstatus: current\nowner: t\n"
+                    "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Raced\n\nx\n")
+                real(b, "add", "-A")
+                real(b, "commit", "-m", "a racing commit on the live tree")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", meddle)
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert fired["n"], "the race never fired, so this test proves nothing"
+        assert not result.ok, "a moved HEAD must be REFUSED, not reset away"
+        assert "HEAD changed during integration" in result.detail, result.detail
+        assert (b / "_shared" / "knowledge" / "raced.md").exists(), (
+            "the racing commit's file was discarded — exactly what the refusal "
+            "exists to prevent")
+
+    def test_a_killed_runs_leftovers_are_swept_by_the_NEXT_sync(self, synced_pair):
+        """#158 step 2. `_reap_integration` runs in a `finally`, which covers
+        every exit the process survives — but not a SIGKILL or a reboot. So the
+        next sync sweeps, and that sweep was DEAD CODE until mutation testing
+        showed the function was defined and never called.
+
+        Unconditional rather than flag-gated: leftovers can predate a disarm, and
+        a sweep that only ran while armed would strand exactly the debris a
+        backout leaves behind.
+        """
+        a, b = synced_pair
+        # Debris a killed run leaves: a tmp branch and a registered worktree whose
+        # directory is gone.
+        _git(b, "branch", "tmp/integrate-1700000000")
+        ghost = b.parent / "ghost-worktree"
+        _git(b, "worktree", "add", "--detach", str(ghost), "HEAD")
+        shutil.rmtree(ghost)                     # the directory dies, admin stays
+        assert "tmp/integrate-1700000000" in _git(b, "branch", "--list").stdout
+
+        sync(detect(b), pull=False, push=False, timeout=60.0)
+
+        assert "tmp/integrate-" not in _git(b, "branch", "--list").stdout, (
+            "a killed run's temporary branch survived the next sync")
+        assert "ghost-worktree" not in _git(b, "worktree", "list").stdout, (
+            "a killed run's worktree registration survived the next sync")

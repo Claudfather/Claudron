@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import socket
+import tempfile
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -534,6 +535,191 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
     return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
 
 
+WORKTREE_FLAG = "CLAUDRON_SYNC_WORKTREE"
+
+
+def _worktree_armed() -> bool:
+    """`1` arms phase 1; anything else, including empty, is off — the estate's
+    polarity rule, so an empty assignment at a tier is not an arming."""
+    return os.environ.get(WORKTREE_FLAG, "").strip() == "1"
+
+
+def _reap_integration(root: Path, wt: Path | None, branch: str | None,
+                      t: float) -> None:
+    """Remove a throwaway worktree and its temporary branch. Never raises.
+
+    CALLED FROM A `finally`, ON EVERY EXIT PATH, because the paths that most need
+    it are the ones nobody planned to take — a conflict, a kill, an unexpected
+    exception. A worktree left behind on each sync is a slow leak on the SD card
+    whose failure is this estate's known outage cause, so "clean up on success"
+    is the shape that fills the disk.
+
+    Best-effort: a reap that raised would turn a reported conflict into a crash,
+    and by the time it runs the live tree is already safe.
+    """
+    if wt is not None:
+        try:
+            run_git(root, "worktree", "remove", "--force", str(wt), timeout=t)
+        except SyncError:
+            pass
+        if wt.exists():
+            shutil.rmtree(wt, ignore_errors=True)
+    if branch:
+        try:
+            run_git(root, "branch", "-D", branch, timeout=t)
+        except SyncError:
+            pass
+    try:
+        run_git(root, "worktree", "prune", timeout=t)
+    except SyncError:
+        pass
+
+
+def _prune_stale_integrations(root: Path, t: float) -> None:
+    """Sweep debris from a run that died where even the `finally` could not run —
+    a SIGKILL, a reboot, a pulled plug. Called at the START of every sync, so a
+    killed run's leftovers never accumulate across runs."""
+    try:
+        run_git(root, "worktree", "prune", timeout=t)
+        listing = run_git(root, "branch", "--list", "tmp/integrate-*", timeout=t)
+    except SyncError:
+        return
+    for line in (listing.stdout or "").splitlines():
+        name = line.strip().lstrip("* ").strip()
+        if name.startswith("tmp/integrate-"):
+            try:
+                run_git(root, "branch", "-D", name, timeout=t)
+            except SyncError:
+                pass
+
+
+def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
+    """Integrate the upstream WITHOUT ever rebasing the live tree (#158 phase 1).
+
+    Returns ``(ok, detail, unmerged_paths)``.
+
+    **THE LIVE TREE IS WHAT THE FLEET READS, AND THAT IS THE WHOLE POINT.** A
+    rebase's first act is to check out the OTHER side's files, so anything that
+    stops one leaves that tree half-rewritten. Measured 2026-09-09: a stopped
+    rebase checked out the default branch's tree, and a fleet's manifest, charter
+    and projects file — committed only on the side branch — were ABSENT FROM DISK
+    from that moment. Three weeks later a system review reported the fleet as
+    having no charter and no projects file, and **the fleet re-drafted both**.
+    Nobody saw a deletion; they saw an absence and treated it as never-existed.
+
+    So integration happens in a throwaway worktree that can be killed without
+    consequence, and the live tree moves ONLY by fast-forward or by ONE
+    `reset --keep` to a tip already built elsewhere.
+
+    **`reset --keep`, NEVER `--hard`, and the refusal IS the safety property.**
+    `--keep` declines rather than clobbering a local modification. `--hard` would
+    discard a straggler write silently — this issue's own failure mode re-entering
+    through its fix, since a file absent from disk is precisely what nobody
+    notices. If a review ever argues for `--hard` because a reset refused, the
+    refusal was correct and the remedy is to commit the straggler, which sync's
+    safety net does before this runs.
+
+    **ON LOCKING.** This assumes only what `sync()` already assumes: the caller
+    holds `vault_write_lock` for the whole critical section. It adds no new
+    locking and relies on none — the worktree lives OUTSIDE the vault root and
+    the live tree is touched by exactly one command. That matters because the
+    shell writer's `flock` is a NO-OP where the `flock` binary is absent (stock
+    macOS; ravi on #1748), so anything here that depended on cross-process
+    mutual exclusion would be depending on a lock that is not always taken.
+    Nothing here does. The HEAD-did-not-move assertion below is the check that
+    does not require a lock to be sound.
+    """
+    upstream = run_git(root, "rev-parse", "--abbrev-ref", "@{upstream}", timeout=t)
+    if upstream.returncode != 0 or not upstream.stdout.strip():
+        return True, "pull skipped: this branch has no upstream to rebase onto", []
+    ref = upstream.stdout.strip()
+    remote, _, rbranch = ref.partition("/")
+    if not remote or not rbranch:
+        return False, f"cannot read the upstream as <remote>/<branch> (got '{ref}')", []
+
+    fetched = run_git(root, "fetch", remote, rbranch, timeout=t)
+    if fetched.returncode != 0:
+        said = (fetched.stderr or fetched.stdout).strip()[:200]
+        return False, f"fetch failed: {said}", []
+
+    start = run_git(root, "rev-parse", "HEAD", timeout=t).stdout.strip()
+    up = run_git(root, "rev-parse", ref, timeout=t).stdout.strip()
+    if not start or not up:
+        return False, "could not resolve HEAD or upstream", []
+    if start == up:
+        return True, "", []
+    if run_git(root, "merge-base", "--is-ancestor", up, start,
+               timeout=t).returncode == 0:
+        return True, "", []            # ahead: nothing to integrate
+
+    # A plain BEHIND state fast-forwards on the live tree and builds NO worktree.
+    # That is the common case and must stay cheap: a worktree per sync on a Pi's
+    # SD card is a cost this design must not add to the ordinary path.
+    if run_git(root, "merge-base", "--is-ancestor", start, up,
+               timeout=t).returncode == 0:
+        ff = run_git(root, "merge", "--ff-only", up, timeout=t)
+        if ff.returncode != 0:
+            said = (ff.stderr or ff.stdout).strip()[:200]
+            return False, f"fast-forward failed: {said}", []
+        return True, "", []
+
+    # --- genuinely divergent: integrate OFF the live tree -------------------
+    wt = Path(tempfile.mkdtemp(prefix=".claudron-integrate-", dir=str(root.parent)))
+    shutil.rmtree(wt, ignore_errors=True)       # git creates it itself
+    tmp_branch = f"tmp/integrate-{int(time.time())}"
+    try:
+        added = run_git(root, "worktree", "add", "--detach", str(wt), start, timeout=t)
+        if added.returncode != 0:
+            said = (added.stderr or added.stdout).strip()[:200]
+            return False, f"could not create an integration worktree: {said}", []
+        # git REFUSES to rebase a detached HEAD ("HEAD does not point to a
+        # branch"), measured on the two-clone fixture — hence a temporary branch,
+        # and a SHA target, since a detached worktree has no upstream of its own.
+        sw = run_git(wt, "switch", "-c", tmp_branch, timeout=t)
+        if sw.returncode != 0:
+            said = (sw.stderr or sw.stdout).strip()[:200]
+            return False, f"could not start the integration branch: {said}", []
+
+        try:
+            rebased = run_git(wt, "rebase", up, timeout=t)
+        except SyncTimeout:
+            # THE KILL PATH, and the reason this design exists: the live tree was
+            # never touched, so there is nothing to abort, nothing to repair, and
+            # no markers anywhere. The `finally` reaps the worktree.
+            return False, ("integration killed at the timeout; the live tree was "
+                           "never touched — no markers, nothing to repair"), []
+
+        if rebased.returncode != 0:
+            unmerged = run_git(wt, "diff", "--name-only", "--diff-filter=U",
+                               timeout=t).stdout.split()
+            return False, ("integration conflicted; the live tree was never touched "
+                           "(no markers) — resolve on the default branch and re-run: "
+                           f"{', '.join(unmerged) or 'unknown paths'}"), unmerged
+
+        tip = run_git(wt, "rev-parse", "HEAD", timeout=t).stdout.strip()
+        if not tip:
+            return False, "integration produced no tip", []
+
+        # HEAD MUST NOT HAVE MOVED, asserted rather than assumed. The write lock
+        # is held for the whole sync so a capture cannot have committed, and a
+        # straggler shell write does not move HEAD — but a ref that changed
+        # meaning is the one thing `reset --keep` cannot protect against, and
+        # this check is sound whether or not any lock was actually taken.
+        now = run_git(root, "rev-parse", "HEAD", timeout=t).stdout.strip()
+        if now != start:
+            return False, ("refusing to move the live tree: HEAD changed during "
+                           f"integration ({start[:12]} -> {now[:12]})"), []
+
+        kept = run_git(root, "reset", "--keep", tip, timeout=t)
+        if kept.returncode != 0:
+            said = (kept.stderr or kept.stdout).strip()[:200]
+            return False, ("reset --keep refused, so the live tree is unchanged: "
+                           f"{said} — commit the local change and re-run"), []
+        return True, "", []
+    finally:
+        _reap_integration(root, wt, tmp_branch, t)
+
+
 def sync(
     vault: Vault,
     *,
@@ -587,6 +773,15 @@ def sync(
         # while every check anyone ran reported the tree clean (#147).
         # Reporting and stopping is the whole remedy: repairing a stopped
         # rebase stays the human's call, exactly as on the conflict path below.
+        # Sweep debris from a run that died where even the `finally` could not
+        # run -- a SIGKILL, a reboot (#158 step 2). UNCONDITIONAL, not gated on
+        # the flag: leftovers can predate a disarm, and a sweep that only ran
+        # while armed would strand exactly the debris a backout leaves behind.
+        # `worktree prune` only drops admin files for worktrees whose directory
+        # is already gone, and the branch delete is scoped to `tmp/integrate-*`,
+        # so it cannot touch an operator's own worktree or branch.
+        _prune_stale_integrations(root, t)
+
         interrupted = _interrupted_state(root, git_dir, t)
         if interrupted:
             result.detail = (
@@ -721,45 +916,69 @@ def sync(
                 # non-default branch it rebased onto origin/main and queued the
                 # entire divergence rather than the handful of unpushed
                 # commits it reads as meaning (#147).
-                try:
-                    pulled = run_git(root, "pull", "--rebase", timeout=t)
-                except SyncTimeout as exc:
-                    # The third case the returncode branch below cannot cover:
-                    # git was killed mid-replay, so there is no returncode and
-                    # no conflict markers. Saying so is the entire fix for the
-                    # silence that let this run six weeks unnoticed.
-                    # A KILLED replay is cleaned up; a CONFLICT is not. See
-                    # `_killed_rebase` for why both of its facts must agree
-                    # before anything is aborted -- a conflict's markers are a
-                    # human's work in progress, and erasing them is worse than
-                    # the wedge this fixes.
-                    if _killed_rebase(root, git_dir, t):
-                        abort = run_git(root, "rebase", "--abort", timeout=t)
+                if _worktree_armed():
+                    # #158 phase 1: integrate OFF the live tree. The in-place
+                    # path below is left BYTE-IDENTICAL (only re-indented under
+                    # this `else`), so unsetting the flag is a real backout
+                    # rather than a revert — which is what the rollout asks for.
+                    _ok, _detail_txt, _unmerged = _integrate_in_worktree(root, t)
+                    if not _ok:
+                        result.detail = _detail(_detail_txt)
+                        # Quarantine now names notes that COULD NOT BE
+                        # INTEGRATED, rather than notes carrying markers in the
+                        # tree — the tree has none. Same field, different
+                        # meaning, and the detail says so.
+                        result.quarantined = list(_unmerged)
+                        return _done(result)
+                    if _detail_txt:
+                        result.detail = _detail(_detail_txt)
+                        return _done(result)
+                    pulled = None
+                else:
+                    try:
+                        pulled = run_git(root, "pull", "--rebase", timeout=t)
+                    except SyncTimeout as exc:
+                        # The third case the returncode branch below cannot cover:
+                        # git was killed mid-replay, so there is no returncode and
+                        # no conflict markers. Saying so is the entire fix for the
+                        # silence that let this run six weeks unnoticed.
+                        # A KILLED replay is cleaned up; a CONFLICT is not. See
+                        # `_killed_rebase` for why both of its facts must agree
+                        # before anything is aborted -- a conflict's markers are a
+                        # human's work in progress, and erasing them is worse than
+                        # the wedge this fixes.
+                        if _killed_rebase(root, git_dir, t):
+                            abort = run_git(root, "rebase", "--abort", timeout=t)
+                            left = _interrupted_state(root, git_dir, t)
+                            if abort.returncode == 0 and left is None:
+                                head = run_git(root, "symbolic-ref", "--quiet",
+                                               "--short", "HEAD", timeout=t)
+                                sha = run_git(root, "rev-parse", "--short", "HEAD",
+                                              timeout=t)
+                                where = (f"{head.stdout.strip()}@{sha.stdout.strip()}"
+                                         if head.returncode == 0 and sha.returncode == 0
+                                         else "its previous branch")
+                                result.detail = (
+                                    f"{exc} — rebase aborted, repository restored "
+                                    f"to {where}"
+                                )
+                                return _done(result)
+                            # The abort itself failed, or left something behind.
+                            # Fall through to the human-facing text rather than
+                            # claiming a repair that did not happen.
                         left = _interrupted_state(root, git_dir, t)
-                        if abort.returncode == 0 and left is None:
-                            head = run_git(root, "symbolic-ref", "--quiet",
-                                           "--short", "HEAD", timeout=t)
-                            sha = run_git(root, "rev-parse", "--short", "HEAD",
-                                          timeout=t)
-                            where = (f"{head.stdout.strip()}@{sha.stdout.strip()}"
-                                     if head.returncode == 0 and sha.returncode == 0
-                                     else "its previous branch")
-                            result.detail = (
-                                f"{exc} — rebase aborted, repository restored "
-                                f"to {where}"
-                            )
-                            return _done(result)
-                        # The abort itself failed, or left something behind.
-                        # Fall through to the human-facing text rather than
-                        # claiming a repair that did not happen.
-                    left = _interrupted_state(root, git_dir, t)
-                    result.detail = _detail(
-                        f"{exc} — {left}; left for the human"
-                        if left
-                        else f"{exc} — repository left consistent"
-                    )
-                    return _done(result)
-                if pulled.returncode != 0:
+                        result.detail = _detail(
+                            f"{exc} — {left}; left for the human"
+                            if left
+                            else f"{exc} — repository left consistent"
+                        )
+                        return _done(result)
+                # `None` is the worktree path's success sentinel: it integrated
+                # off-tree and has nothing to report here, so the in-place
+                # conflict handling below (which reads markers in the LIVE tree —
+                # markers that path never creates) must be skipped rather than
+                # asked about a process that was never run.
+                if pulled is not None and pulled.returncode != 0:
                     # Conflict (or no remote). The rebase stays stopped with
                     # markers in the working tree — the standard
                     # resolve/--continue flow; sync never aborts it (aborting
