@@ -161,6 +161,42 @@ is a different fact from a clone that is failing, so do not collapse them.
 
 ---
 
+### Gate a feature on `capabilities`, never on the version
+
+To ask "does this engine have the door I need", read the declaration:
+
+```bash
+claudron status --json | jq '.data.capabilities'
+# ["navigation"]
+```
+
+```python
+caps = data.get("capabilities", [])          # absent on older engines
+if "navigation" in caps:
+    ...                                       # call the door
+```
+
+That is the whole gate. It is a **declaration** — register rule R5, *capability
+is declared to the owner, never inferred* — and it is absent on an engine that
+predates the list, which is the correct answer for every name in it.
+
+**Do not infer it from `engine_version`.** That field answers *"is an engine
+here, and which one?"*, not *"can it do X"*. All three of the obvious
+inferences were measured and all three fail:
+
+- **A version floor cannot be expressed.** `engine_version` is `0.5.0.dev0` on a
+  build of the branch that ships a feature and `0.4.0` on the last release. PEP
+  440 sorts a dev release *before* its release, so `0.5.0.dev0 < 0.5.0` — a
+  `>= 0.5.0` floor is satisfied by **neither** and can never pass.
+- **A verb probe cannot see a flag.** `claudron <verb> --help` does exit 2 on an
+  unknown verb, but `index` has been a verb far longer than `--navigation`.
+- **A flag probe cannot fail.** `claudron index --navigation --help` exits **0**
+  on an engine with no such flag, because argparse fires `--help` as a parse
+  action and exits before reporting unknown arguments. The control: the same
+  engine exits 2 for `index --navigation` *without* `--help`.
+
+---
+
 ## Hello world
 
 Copy-paste, end to end. It creates a throwaway vault, writes one note through
@@ -269,6 +305,33 @@ serialization, cross-host eventual consistency with conflict quarantine, and
 what is explicitly *not* guaranteed — is
 [CLI_CONTRACT.md §Write guarantees](CLI_CONTRACT.md#write-guarantees). Read it
 before you design a multi-writer topology.
+
+### Never hand-append to `INDEX.md` — call the door
+
+From engine **0.5.0**, each directory's `INDEX.md` is **derived from the index**,
+not hand-maintained ([#155](https://github.com/Claudfather/Claudron/issues/155)).
+A front-end that appends a line to it is writing into a file the next
+regeneration rewrites, and — before that — into the single most conflict-prone
+file in the vault: six of the nine merge conflicts in the 2026-09-21 repair were
+`INDEX.md`, and the same entry carried different description text in different
+versions, so no line-based merge could resolve them.
+
+```bash
+claudron index --navigation          # regenerate every directory's INDEX.md
+```
+
+`capture` will do it for the directory it wrote to once #155 PR 2 lands; until
+then, call the door after a write. Running it twice changes nothing.
+
+It is not a blanket overwrite, so you do not lose hand-written pointers: an
+entry the index does not know about is **preserved** verbatim under a marked
+section when its target exists, and **dropped** when the target does not (it
+navigates nowhere). A description is likewise never deleted just because the
+note has none: the note's frontmatter wins where it exists, and otherwise the
+description already in the file is **carried**. All three are reported on every
+run — in `--json` under `navigation_preserved` / `navigation_dropped` /
+`navigation_carried`, and in the bound printed to stderr in plain mode. Do not
+parse the stderr bound; branch on the JSON.
 
 ---
 

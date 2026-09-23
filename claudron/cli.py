@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import CAPABILITIES, __version__
 from .engine import ScopeError, append_addendum, capture, compose_note, resolve_target_dir
 from .schema import (
     MATURITY_VALUES,
@@ -300,7 +300,8 @@ def cmd_status(args) -> int:
         # the engine's version off the envelope they already parse for the
         # vault path, instead of each maintaining a private detection ladder.
         # Presentation-layer only: vault.status() stays a pure vault summary.
-        _emit_json("status", {**info, "engine_version": __version__})
+        _emit_json("status", {**info, "engine_version": __version__,
+                              "capabilities": list(CAPABILITIES)})
         return 0
 
     print(f"vault: {info['root']}")
@@ -479,16 +480,42 @@ def cmd_index(args) -> int:
 
     existing = None if args.full else load_index(vault)
     if existing is not None:
-        count, rebuilt = len(existing.get("entries", [])), False
+        idx, rebuilt = existing, False
+        count = len(idx.get("entries", []))
         msg = f"index up to date ({count} entries)"
     else:
-        count, rebuilt = len(build_index(vault).get("entries", [])), True
+        idx, rebuilt = build_index(vault), True
+        count = len(idx.get("entries", []))
         msg = f"indexed {count} docs"
 
+    nav = None
+    if getattr(args, "navigation", False):
+        from .navigation import write_navigation
+        # Hand over the index we already hold: `write_navigation` would
+        # otherwise load or rebuild it a second time, and on `--full` that is a
+        # second full walk of the vault.
+        nav = write_navigation(vault, index=idx)
+
     if args.json:
-        _emit_json("index", {"entries": count, "rebuilt": rebuilt})
+        payload = {"entries": count, "rebuilt": rebuilt}
+        if nav is not None:
+            payload["navigation_written"] = [str(p) for p in nav.written]
+            payload["navigation_unchanged"] = [str(p) for p in nav.unchanged]
+            payload["navigation_preserved"] = nav.preserved
+            payload["navigation_dropped"] = nav.dropped
+            payload["navigation_carried"] = nav.carried
+            payload["navigation_skipped"] = nav.skipped
+            payload["navigation_bounds"] = nav.bound_lines()
+        _emit_json("index", payload)
     else:
         print(msg, file=sys.stderr)
+        if nav is not None:
+            # THE BOUND, ALWAYS (#1742) -- including when nothing was preserved
+            # or dropped, because that is exactly when silence is ambiguous.
+            # It opens with DIRECTORIES, a superset of the written/unchanged
+            # counts, so no separate summary line is printed above it.
+            for line in nav.bound_lines():
+                print(f"  {line}", file=sys.stderr)
     return 0
 
 
@@ -1456,6 +1483,11 @@ def main(argv=None) -> int:
     )
     p_index.add_argument(
         "--full", action="store_true", help="Force full rebuild even if fresh"
+    )
+    p_index.add_argument(
+        "--navigation", action="store_true",
+        help="also regenerate each directory's INDEX.md from the index (#155): "
+             "a derived navigation file is regenerated, never merged",
     )
 
     # version

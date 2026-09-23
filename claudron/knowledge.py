@@ -160,6 +160,12 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
         # filename stem — so `[[api-guide]]` resolves a note filed `API Guide.md`.
         "slug": str(fm.get("slug") or slugify(md.stem)),
         "maturity": str(fm.get("maturity", "")),  # D11 trust axis (E5): status metric + rank
+        # #155: the two fields the fleet's INDEX.md line format names that the
+        # index did not carry. Generating the navigation file BEFORE the index
+        # can hold these would mean generating from a source without the data,
+        # so they land first and the renderer reads them rather than the notes.
+        "description": str(fm.get("description", "") or ""),
+        "owner": str(fm.get("owner", "") or ""),
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
