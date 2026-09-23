@@ -1483,6 +1483,76 @@ def _tree_fingerprint(root: Path) -> tuple:
     return head, status, markers, tuple(sorted(contents.items()))
 
 
+#: THE FOUR OUTCOMES A KILL RUN CAN HAVE, named once so a test can assert the
+#: one it means rather than merely "it failed". Two of them are INCONCLUSIVE --
+#: the property was never exercised, and the live tree is not implicated either
+#: way -- and exactly one is the safety property failing. An earlier version of
+#: this file produced ONE message for a never-killed run and a corrupted tree,
+#: which is how a CI red read as corruption that had not happened.
+KILL_RUN_CLEAN = "killed-and-the-live-tree-held"
+KILL_RUN_MOVED = "the-live-tree-MOVED"
+KILL_RUN_NO_DRIVER = "inconclusive-the-driver-never-ran"
+KILL_RUN_NO_KILL = "inconclusive-nothing-was-killed"
+
+
+def _classify_kill_run(marker: Path, result, before: tuple, after: tuple
+                       ) -> tuple[str, str]:
+    """(verdict, message) for one attempted-kill integration.
+
+    Extracted from the test body so each outcome can be PINNED BY A TEST THAT
+    PRODUCES IT, rather than driven once by hand and trusted thereafter. The
+    test file is this PR's whole deliverable -- it is the only thing that will
+    ever prove the safety property still holds -- so an outcome nothing pins is
+    an outcome nobody will notice losing.
+
+    ORDER IS LOAD-BEARING, and not the obvious order:
+
+    * ``result.ok`` first. A SUCCESSFUL integration is supposed to move the live
+      tree, so a moved tree there means nothing at all; treating it as the harm
+      would make the loudest verdict fire on the happy path.
+    * then the TREE, before either precondition. A moved tree is the harm
+      whatever stopped the run, so gating it behind "was it killed" would let a
+      differently-stopped run hide one.
+    * then the two preconditions, which are about whether the KILL was
+      exercised, not about whether the property holds.
+    """
+    driver_ran = marker.exists()
+    killed = "killed at the timeout" in (result.detail or "")
+    if result.ok:
+        return ((KILL_RUN_NO_DRIVER if not driver_ran else KILL_RUN_NO_KILL),
+                "INCONCLUSIVE, NOT A SAFETY FAILURE: the integration SUCCEEDED, "
+                "so nothing was interrupted and this run exercised nothing. The "
+                "live tree moving here is correct. "
+                + ("The blocking merge driver never ran -- fix the harness "
+                   "(driver wiring, core.attributesFile, whether both sides "
+                   "really changed the path), never the safety guard."
+                   if not driver_ran else
+                   "The driver ran but the replay finished anyway -- raise its "
+                   "block or lower the timeout."))
+    if after != before:
+        return (KILL_RUN_MOVED,
+                "THE LIVE TREE MOVED during a stopped integration — the exact "
+                "2026-09-09 harm. This is the safety property failing, and it "
+                "is the one verdict here that means the code is wrong.")
+    if not driver_ran:
+        return (KILL_RUN_NO_DRIVER,
+                "INCONCLUSIVE, NOT A SAFETY FAILURE: the blocking merge driver "
+                "never ran, so the replay was never interrupted and this run "
+                "exercised nothing. The live tree held and is not implicated "
+                "either way. Fix the harness (driver wiring, "
+                "core.attributesFile, whether both sides really changed the "
+                "path), never the safety guard.")
+    if not killed:
+        return (KILL_RUN_NO_KILL,
+                "INCONCLUSIVE, NOT A SAFETY FAILURE: the driver ran but the "
+                "integration did not stop at the kill path — it stopped as "
+                f"'{result.detail}'. Nothing was killed, so this run says "
+                "nothing about a killed replay. The live tree held and is not "
+                "implicated. Raise the driver's block or lower the timeout; "
+                "never relax the safety guard.")
+    return KILL_RUN_CLEAN, ""
+
+
 class TestTheLiveTreeOnlyFastForwards:
     """#158 phase 1. THE SAFETY PROPERTY IS THE DELIVERABLE, so every test here
     stops an integration for real and asserts the live tree is byte-identical.
@@ -1530,7 +1600,8 @@ class TestTheLiveTreeOnlyFastForwards:
             "2026-09-09 failure re-created")
         assert not (b / ".git" / "rebase-merge").exists(), "markers in the live tree"
 
-    def _block_the_replay(self, b: Path, tmp_path: Path) -> Path:
+    def _block_the_replay(self, b: Path, tmp_path: Path, *,
+                          touch_live: str | None = None) -> Path:
         """Wire a merge driver that BLOCKS, so the replay cannot finish.
 
         This is what removes the race. The previous version bet that replaying
@@ -1556,9 +1627,18 @@ class TestTheLiveTreeOnlyFastForwards:
         """
         marker = tmp_path / "the-merge-driver-ran"
         driver = tmp_path / "blocking-merge-driver.sh"
+        # `touch_live` makes the driver append to a TRACKED file in the LIVE
+        # tree before it blocks: a real straggler write landing mid-integration,
+        # from a process that really is running inside that integration. It is
+        # how the corrupted outcome is PRODUCED rather than simulated -- no
+        # production code is mutated and no fingerprint is hand-built.
+        straggler = ""
+        if touch_live is not None:
+            straggler = f"printf 'straggler\\n' >> {b / touch_live}\n"
         driver.write_text(
             "#!/bin/sh\n"
             f"printf 'ran\\n' >> {marker}\n"
+            + straggler +
             "# Bounded so a failed kill can never leak a process forever; long\n"
             "# enough that the harness timeout always fires first.\n"
             "sleep 20\n"
@@ -1593,14 +1673,46 @@ class TestTheLiveTreeOnlyFastForwards:
         checking its precondition separately and saying so in different words.
         """
         a, b = synced_pair
+        self._diverge_for_a_blocked_replay(a, b)
+        marker = self._block_the_replay(b, tmp_path)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=2.0)
+        after = _tree_fingerprint(b)
+
+        # THE VERDICT COMES FROM `_classify_kill_run`, so the wording a future
+        # red run shows is the same wording the three pins below prove correct.
+        # A precondition failure must never arrive dressed as the conclusion.
+        verdict, why = _classify_kill_run(marker, result, before, after)
+        assert verdict == KILL_RUN_CLEAN, why
+
+        assert not result.ok, (
+            "the kill fired and the live tree held, but the integration "
+            "reported OK — a killed integration must be reported")
+        assert not (b / ".git" / "rebase-merge").exists()
+        assert not (b / ".git" / "rebase-apply").exists()
+
+    # --- the classifier's OTHER THREE outcomes, each PRODUCED -------------
+    #
+    # Why these exist at all: this PR's deliverable IS a safety property, and
+    # this file is the only thing that will ever prove it still holds. One
+    # pinned outcome of four leaves three that can rot silently -- and the
+    # outcome most worth having right is the one nobody ever sees until the day
+    # it matters. Each pin below drives a REAL integration into the state it
+    # names; none hand-builds a fingerprint or a result, because an outcome
+    # pinned by a test that cannot produce it is the same defect in a costume.
+
+    def _diverge_for_a_blocked_replay(self, a: Path, b: Path) -> str:
+        """Both sides change one path on DIFFERENT lines, plus a clean pick on
+        B first — so the driver is invoked (both sides changed it) while the
+        replay would merge cleanly without it, and a stop at the driver is
+        provably mid-replay. Shared by the kill test and its three pins so they
+        cannot drift into testing different setups."""
         note = "_shared/knowledge/shared-note.md"
-        # Upstream moves.
         (a / note).write_text(
             (a / note).read_text().replace("Original line.", "A's line."))
         _git(a, "add", "-A"); _git(a, "commit", "-m", "a side")
         _git(a, "push", "origin", "main")
-        # B: one pick that replays cleanly, THEN the pick that blocks -- so a
-        # kill at the driver is provably mid-replay rather than before it.
         (b / "_shared" / "knowledge" / "b-only.md").write_text(
             "---\ntitle: B Only\ntype: knowledge\nstatus: current\nowner: t\n"
             "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# B Only\n\nx\n")
@@ -1608,48 +1720,94 @@ class TestTheLiveTreeOnlyFastForwards:
         (b / note).write_text(
             (b / note).read_text().replace("# Shared Note", "# Shared Note (B)"))
         _git(b, "add", "-A"); _git(b, "commit", "-m", "b side: the blocked pick")
+        return note
 
+    def test_a_run_where_the_DRIVER_NEVER_RAN_is_inconclusive_not_a_failure(
+            self, synced_pair, tmp_path):
+        """PRODUCED by wiring no driver at all: the replay merges cleanly and
+        the integration succeeds, so nothing was interrupted.
+
+        This is the harness-is-broken state, and the live tree MOVED here —
+        correctly, because a successful integration moves it. A classifier that
+        checked the tree before `result.ok` would call the happy path the harm.
+        """
+        a, b = synced_pair
+        self._diverge_for_a_blocked_replay(a, b)
+        marker = tmp_path / "a-driver-that-was-never-wired"
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+        verdict, why = _classify_kill_run(
+            marker, result, before, _tree_fingerprint(b))
+
+        assert result.ok, result.detail          # nothing was interrupted
+        assert _tree_fingerprint(b) != before    # and the tree moved, correctly
+        assert verdict == KILL_RUN_NO_DRIVER, why
+        assert "INCONCLUSIVE" in why and "never ran" in why
+        assert "MOVED" not in why, (
+            "an inconclusive run must not be reported in the words of the harm")
+
+    def test_a_run_where_NOTHING_WAS_KILLED_is_inconclusive_not_a_failure(
+            self, synced_pair, tmp_path):
+        """PRODUCED by giving the replay longer than the driver blocks: the
+        driver returns on its own and the rebase stops as a CONFLICT.
+
+        This is the state that diagnosed the original race — the reviewer raised
+        the timeout so the kill could not fire, and the old test failed verbatim
+        as a safety failure. It must name itself instead of either passing
+        quietly or crying corruption.
+        """
+        a, b = synced_pair
+        self._diverge_for_a_blocked_replay(a, b)
         marker = self._block_the_replay(b, tmp_path)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+        after = _tree_fingerprint(b)
+        verdict, why = _classify_kill_run(marker, result, before, after)
+
+        assert marker.exists()                   # the driver DID run
+        assert not result.ok                     # and the run did stop
+        assert "killed at the timeout" not in (result.detail or "")
+        assert after == before                   # the live tree still held
+        assert verdict == KILL_RUN_NO_KILL, why
+        assert "INCONCLUSIVE" in why and "did not stop at the kill path" in why
+        assert "MOVED" not in why
+
+    def test_a_killed_run_that_MOVED_THE_LIVE_TREE_is_the_safety_failure(
+            self, synced_pair, tmp_path):
+        """PRODUCED by a real straggler write from inside the integration: the
+        merge driver appends to a TRACKED file in the LIVE tree, then blocks
+        until git is killed.
+
+        This is the control that matters most, and it is the one a
+        classification change can quietly break: making the two inconclusive
+        states legible must not have been bought by making a REAL failure
+        quieter. Nothing is mutated and no fingerprint is hand-built — the file
+        on disk really differs, and the run really was killed.
+        """
+        a, b = synced_pair
+        note = self._diverge_for_a_blocked_replay(a, b)
+        marker = self._block_the_replay(b, tmp_path, touch_live=note)
         before = _tree_fingerprint(b)
 
         result = sync(detect(b), pull=True, push=False, timeout=2.0)
         after = _tree_fingerprint(b)
+        verdict, why = _classify_kill_run(marker, result, before, after)
 
-        # PRECONDITION FIRST, AND IN ITS OWN WORDS. "Nothing was killed" is an
-        # inconclusive run -- the property was never exercised -- while "killed
-        # and the tree moved" is the harm this PR exists to prevent. The old
-        # version produced ONE message for both, so a red CI run read as the
-        # tree having moved and the natural fix would have been to relax the
-        # guard the test exists to prove.
-        if not marker.exists():
-            pytest.fail(
-                "INCONCLUSIVE, NOT A SAFETY FAILURE: the blocking merge driver "
-                "never ran, so the replay was never interrupted and this test "
-                "exercised nothing. The live tree is not implicated either way. "
-                "Fix the harness (driver wiring, core.attributesFile, whether "
-                "both sides really changed the path), never the safety guard.")
-        # And the stop must be THE KILL. The marker proves the replay reached
-        # the blocked pick; it does not prove git was killed there -- with a
-        # long enough timeout the driver returns on its own and the rebase
-        # stops as a CONFLICT instead, which is a different arm's property.
-        # Raising the timeout is exactly how the old race was diagnosed, so
-        # that state has to name itself rather than pass quietly.
-        if "killed at the timeout" not in (result.detail or ""):
-            pytest.fail(
-                "INCONCLUSIVE, NOT A SAFETY FAILURE: the driver ran but the "
-                "integration did not stop at the kill path — it stopped as "
-                f"'{result.detail}'. Nothing was killed, so this run says "
-                "nothing about a killed replay. The live tree is not "
-                "implicated. Raise the driver's block or lower the timeout; "
-                "never relax the safety guard.")
-        assert after == before, (
-            "THE LIVE TREE MOVED during a killed integration — the exact "
-            "2026-09-09 harm. This is the safety property failing.")
-        assert not result.ok, (
-            "the kill fired (marker present) and the live tree held, but the "
-            "integration reported OK — a killed integration must be reported")
-        assert not (b / ".git" / "rebase-merge").exists()
-        assert not (b / ".git" / "rebase-apply").exists()
+        assert marker.exists()                   # the driver ran
+        assert not result.ok
+        # The docstring claims this run was KILLED, so that is enforced rather
+        # than described -- otherwise a producer that stopped the run some other
+        # way would still satisfy the pin and the claim would quietly be false.
+        assert "killed at the timeout" in (result.detail or ""), result.detail
+        assert after != before, (
+            "the straggler write did not land, so this pin produced nothing — "
+            "fix the producer, not the classifier")
+        assert verdict == KILL_RUN_MOVED, why
+        assert "THE LIVE TREE MOVED" in why and "safety property failing" in why
+        assert "INCONCLUSIVE" not in why, (
+            "the harm must never be reported as an inconclusive run")
 
     def test_a_REAL_rebase_REFUSAL_leaves_the_live_tree_byte_identical(
             self, synced_pair):
