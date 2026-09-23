@@ -7,6 +7,7 @@ within the conftest tmp_path convention.
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import subprocess
 import sys
@@ -1443,3 +1444,509 @@ class TestTheSafetyNetStays:
         assert result.ok, result.detail
         assert result.committed is False, (
             "sync made a straggler commit for a note the door already committed")
+
+
+def _tree_fingerprint(root: Path) -> tuple:
+    """Everything about the live tree that a wedge would disturb.
+
+    HEAD, the porcelain status, the presence of any rebase marker, AND the
+    content of every tracked file — because #158's measured harm was not a dirty
+    status, it was FILES ABSENT FROM DISK while status looked clean.
+
+    THE "STATUS LOOKED CLEAN" HALF IS MEASURED, and it is the non-obvious one.
+    A rebase killed mid-replay: `git status --porcelain` returns the EMPTY
+    STRING while 50 of 80 side-only files are absent from disk. They are not
+    deleted tracked files — at the commit now checked out they are not tracked
+    at all, so status has nothing to report. That is why nobody saw a deletion.
+
+    But an earlier version of this docstring overclaimed from that, and a
+    reviewer was right to challenge it: it said a fingerprint comparing only
+    HEAD and status "would have reported the 2026-09-09 tree as fine". It would
+    NOT — in the same measurement HEAD had moved, so the HEAD slot catches it.
+    (The reviewer's stated reason was that status would be dirty; measured, it
+    is clean. Same conclusion, opposite mechanism.)
+
+    So the content comparison is DEFENCE IN DEPTH rather than the slot that
+    would have caught this one: strictly stronger, cheap, and stated in the
+    vocabulary of the harm — files, not refs — which is what makes a future
+    failure legible. It is kept for that, not on a claim about 2026-09-09.
+    """
+    head = _git(root, "rev-parse", "HEAD").stdout.strip()
+    status = _git(root, "status", "--porcelain").stdout
+    markers = tuple(sorted(
+        d.name for d in (root / ".git").iterdir()
+        if d.name in ("rebase-merge", "rebase-apply", "MERGE_HEAD")))
+    contents = {}
+    for rel in _git(root, "ls-files").stdout.split():
+        pth = root / rel
+        contents[rel] = pth.read_bytes() if pth.exists() else None
+    return head, status, markers, tuple(sorted(contents.items()))
+
+
+#: THE FOUR OUTCOMES A KILL RUN CAN HAVE, named once so a test can assert the
+#: one it means rather than merely "it failed". Two of them are INCONCLUSIVE --
+#: the property was never exercised, and the live tree is not implicated either
+#: way -- and exactly one is the safety property failing. An earlier version of
+#: this file produced ONE message for a never-killed run and a corrupted tree,
+#: which is how a CI red read as corruption that had not happened.
+KILL_RUN_CLEAN = "killed-and-the-live-tree-held"
+KILL_RUN_MOVED = "the-live-tree-MOVED"
+KILL_RUN_NO_DRIVER = "inconclusive-the-driver-never-ran"
+KILL_RUN_NO_KILL = "inconclusive-nothing-was-killed"
+
+
+def _classify_kill_run(marker: Path, result, before: tuple, after: tuple
+                       ) -> tuple[str, str]:
+    """(verdict, message) for one attempted-kill integration.
+
+    Extracted from the test body so each outcome can be PINNED BY A TEST THAT
+    PRODUCES IT, rather than driven once by hand and trusted thereafter. The
+    test file is this PR's whole deliverable -- it is the only thing that will
+    ever prove the safety property still holds -- so an outcome nothing pins is
+    an outcome nobody will notice losing.
+
+    ORDER IS LOAD-BEARING, and not the obvious order:
+
+    * ``result.ok`` first. A SUCCESSFUL integration is supposed to move the live
+      tree, so a moved tree there means nothing at all; treating it as the harm
+      would make the loudest verdict fire on the happy path.
+    * then the TREE, before either precondition. A moved tree is the harm
+      whatever stopped the run, so gating it behind "was it killed" would let a
+      differently-stopped run hide one.
+    * then the two preconditions, which are about whether the KILL was
+      exercised, not about whether the property holds.
+    """
+    driver_ran = marker.exists()
+    killed = "killed at the timeout" in (result.detail or "")
+    if result.ok:
+        return ((KILL_RUN_NO_DRIVER if not driver_ran else KILL_RUN_NO_KILL),
+                "INCONCLUSIVE, NOT A SAFETY FAILURE: the integration SUCCEEDED, "
+                "so nothing was interrupted and this run exercised nothing. The "
+                "live tree moving here is correct. "
+                + ("The blocking merge driver never ran -- fix the harness "
+                   "(driver wiring, core.attributesFile, whether both sides "
+                   "really changed the path), never the safety guard."
+                   if not driver_ran else
+                   "The driver ran but the replay finished anyway -- raise its "
+                   "block or lower the timeout."))
+    if after != before:
+        return (KILL_RUN_MOVED,
+                "THE LIVE TREE MOVED during a stopped integration — the exact "
+                "2026-09-09 harm. This is the safety property failing, and it "
+                "is the one verdict here that means the code is wrong.")
+    if not driver_ran:
+        return (KILL_RUN_NO_DRIVER,
+                "INCONCLUSIVE, NOT A SAFETY FAILURE: the blocking merge driver "
+                "never ran, so the replay was never interrupted and this run "
+                "exercised nothing. The live tree held and is not implicated "
+                "either way. Fix the harness (driver wiring, "
+                "core.attributesFile, whether both sides really changed the "
+                "path), never the safety guard.")
+    if not killed:
+        return (KILL_RUN_NO_KILL,
+                "INCONCLUSIVE, NOT A SAFETY FAILURE: the driver ran but the "
+                "integration did not stop at the kill path — it stopped as "
+                f"'{result.detail}'. Nothing was killed, so this run says "
+                "nothing about a killed replay. The live tree held and is not "
+                "implicated. Raise the driver's block or lower the timeout; "
+                "never relax the safety guard.")
+    return KILL_RUN_CLEAN, ""
+
+
+class TestTheLiveTreeOnlyFastForwards:
+    """#158 phase 1. THE SAFETY PROPERTY IS THE DELIVERABLE, so every test here
+    stops an integration for real and asserts the live tree is byte-identical.
+
+    The harm being prevented, measured 2026-09-09: a stopped rebase checked out
+    the OTHER side's tree, so a fleet's manifest, charter and projects file —
+    committed only on the side branch — were absent from disk. Three weeks later
+    a review reported the fleet as having no charter and no projects file, and
+    the fleet re-drafted both. Nobody saw a deletion; they saw an absence.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _armed(self, monkeypatch):
+        monkeypatch.setenv(sync_mod.WORKTREE_FLAG, "1")
+
+    def _diverge(self, a: Path, b: Path, *, conflict: bool):
+        """Both sides commit. With `conflict`, on the SAME line of the SAME file —
+        which is what makes the stop real rather than injected."""
+        target = "_shared/knowledge/shared-note.md"
+        (a / target).write_text(
+            (a / target).read_text().replace("Original line.", "A's line."))
+        _git(a, "add", "-A"); _git(a, "commit", "-m", "a side"); _git(a, "push", "origin", "main")
+        if conflict:
+            (b / target).write_text(
+                (b / target).read_text().replace("Original line.", "B's line."))
+        else:
+            (b / "_shared" / "knowledge" / "b-only.md").write_text(
+                "---\ntitle: B Only\ntype: knowledge\nstatus: current\nowner: t\n"
+                "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# B Only\n\nx\n")
+        _git(b, "add", "-A"); _git(b, "commit", "-m", "b side")
+
+    def test_a_REAL_conflict_leaves_the_live_tree_byte_identical(self, synced_pair):
+        a, b = synced_pair
+        self._diverge(a, b, conflict=True)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert not result.ok, "a conflict must be reported, not swallowed"
+        assert "never touched" in result.detail, result.detail
+        assert "shared-note" in result.detail, result.detail
+        assert result.quarantined, "the conflicting path(s) must be named"
+        assert _tree_fingerprint(b) == before, (
+            "THE LIVE TREE MOVED during a conflicted integration — this is the "
+            "2026-09-09 failure re-created")
+        assert not (b / ".git" / "rebase-merge").exists(), "markers in the live tree"
+
+    def _block_the_replay(self, b: Path, tmp_path: Path, *,
+                          touch_live: str | None = None) -> Path:
+        """Wire a merge driver that BLOCKS, so the replay cannot finish.
+
+        This is what removes the race. The previous version bet that replaying
+        121 real commits outlasted a 1.0s timeout, which is a bet on host speed:
+        on a fast runner the replay won, nothing was killed, and the test then
+        failed with the message it uses when THE LIVE TREE MOVED. A proof whose
+        outcome depends on the runner is a test of the runner.
+
+        A git-native seam does it deterministically. When both sides have
+        changed one path, git delegates that path's 3-way merge to the
+        `merge.<name>.driver` command; the driver here records that it ran and
+        then sleeps far longer than the harness timeout, so git is still inside
+        the merge when `run_git` kills it. The two numbers are FIXED wall-clock
+        seconds and neither scales with the repo, the disk or the runner —
+        unlike 121 picks, which scale with all three.
+
+        The marker is the precondition: its presence proves the replay reached
+        the blocked pick, so the kill landed MID-REPLAY with earlier picks
+        already applied. Its absence means the harness is broken, which the
+        caller reports as inconclusive rather than as a safety failure.
+
+        Returns the marker path.
+        """
+        marker = tmp_path / "the-merge-driver-ran"
+        driver = tmp_path / "blocking-merge-driver.sh"
+        # `touch_live` makes the driver append to a TRACKED file in the LIVE
+        # tree before it blocks: a real straggler write landing mid-integration,
+        # from a process that really is running inside that integration. It is
+        # how the corrupted outcome is PRODUCED rather than simulated -- no
+        # production code is mutated and no fingerprint is hand-built.
+        straggler = ""
+        if touch_live is not None:
+            straggler = f"printf 'straggler\\n' >> {b / touch_live}\n"
+        driver.write_text(
+            "#!/bin/sh\n"
+            f"printf 'ran\\n' >> {marker}\n"
+            + straggler +
+            "# Bounded so a failed kill can never leak a process forever; long\n"
+            "# enough that the harness timeout always fires first.\n"
+            "sleep 20\n"
+            "exit 1\n")
+        driver.chmod(0o755)
+        # core.attributesFile, not a committed .gitattributes: an out-of-tree
+        # attributes file needs no commit and is visible however the replay
+        # orders its picks. Both this and the driver live in `.git/config`,
+        # which a linked worktree SHARES with the main repo -- which is why the
+        # worktree's own rebase sees them.
+        attrs = tmp_path / "attributes"
+        attrs.write_text("shared-note.md merge=blocker\n")
+        _git(b, "config", "core.attributesFile", str(attrs))
+        _git(b, "config", "merge.blocker.name", "blocks a replay deterministically")
+        _git(b, "config", "merge.blocker.driver", f"{driver} %O %A %B %P")
+        return marker
+
+    def test_a_REAL_kill_mid_REBASE_leaves_the_live_tree_byte_identical(
+            self, synced_pair, tmp_path):
+        """Killed for real, not injected, and NOT a race — the 2026-09-09
+        mechanism: some picks applied, the rest pending, git dead in the middle.
+
+        DELIBERATELY NOT A DISGUISED CONFLICT TEST. Both sides touch
+        shared-note.md on DIFFERENT lines, so absent the driver this replay
+        merges cleanly; the stop is attributable to the kill alone, which is
+        what keeps this arm distinct from the conflict arm above it.
+
+        A slow `pre-commit` hook was the first attempt and did nothing: `git
+        rebase` does not run that hook, so nothing was killed and the test
+        reported "a killed integration must be reported". It was right — and
+        that is the same confusion this version now refuses to allow, by
+        checking its precondition separately and saying so in different words.
+        """
+        a, b = synced_pair
+        self._diverge_for_a_blocked_replay(a, b)
+        marker = self._block_the_replay(b, tmp_path)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=2.0)
+        after = _tree_fingerprint(b)
+
+        # THE VERDICT COMES FROM `_classify_kill_run`, so the wording a future
+        # red run shows is the same wording the three pins below prove correct.
+        # A precondition failure must never arrive dressed as the conclusion.
+        verdict, why = _classify_kill_run(marker, result, before, after)
+        assert verdict == KILL_RUN_CLEAN, why
+
+        assert not result.ok, (
+            "the kill fired and the live tree held, but the integration "
+            "reported OK — a killed integration must be reported")
+        assert not (b / ".git" / "rebase-merge").exists()
+        assert not (b / ".git" / "rebase-apply").exists()
+
+    # --- the classifier's OTHER THREE outcomes, each PRODUCED -------------
+    #
+    # Why these exist at all: this PR's deliverable IS a safety property, and
+    # this file is the only thing that will ever prove it still holds. One
+    # pinned outcome of four leaves three that can rot silently -- and the
+    # outcome most worth having right is the one nobody ever sees until the day
+    # it matters. Each pin below drives a REAL integration into the state it
+    # names; none hand-builds a fingerprint or a result, because an outcome
+    # pinned by a test that cannot produce it is the same defect in a costume.
+
+    def _diverge_for_a_blocked_replay(self, a: Path, b: Path) -> str:
+        """Both sides change one path on DIFFERENT lines, plus a clean pick on
+        B first — so the driver is invoked (both sides changed it) while the
+        replay would merge cleanly without it, and a stop at the driver is
+        provably mid-replay. Shared by the kill test and its three pins so they
+        cannot drift into testing different setups."""
+        note = "_shared/knowledge/shared-note.md"
+        (a / note).write_text(
+            (a / note).read_text().replace("Original line.", "A's line."))
+        _git(a, "add", "-A"); _git(a, "commit", "-m", "a side")
+        _git(a, "push", "origin", "main")
+        (b / "_shared" / "knowledge" / "b-only.md").write_text(
+            "---\ntitle: B Only\ntype: knowledge\nstatus: current\nowner: t\n"
+            "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# B Only\n\nx\n")
+        _git(b, "add", "-A"); _git(b, "commit", "-m", "b side: a clean pick")
+        (b / note).write_text(
+            (b / note).read_text().replace("# Shared Note", "# Shared Note (B)"))
+        _git(b, "add", "-A"); _git(b, "commit", "-m", "b side: the blocked pick")
+        return note
+
+    def test_a_run_where_the_DRIVER_NEVER_RAN_is_inconclusive_not_a_failure(
+            self, synced_pair, tmp_path):
+        """PRODUCED by wiring no driver at all: the replay merges cleanly and
+        the integration succeeds, so nothing was interrupted.
+
+        This is the harness-is-broken state, and the live tree MOVED here —
+        correctly, because a successful integration moves it. A classifier that
+        checked the tree before `result.ok` would call the happy path the harm.
+        """
+        a, b = synced_pair
+        self._diverge_for_a_blocked_replay(a, b)
+        marker = tmp_path / "a-driver-that-was-never-wired"
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+        verdict, why = _classify_kill_run(
+            marker, result, before, _tree_fingerprint(b))
+
+        assert result.ok, result.detail          # nothing was interrupted
+        assert _tree_fingerprint(b) != before    # and the tree moved, correctly
+        assert verdict == KILL_RUN_NO_DRIVER, why
+        assert "INCONCLUSIVE" in why and "never ran" in why
+        assert "MOVED" not in why, (
+            "an inconclusive run must not be reported in the words of the harm")
+
+    def test_a_run_where_NOTHING_WAS_KILLED_is_inconclusive_not_a_failure(
+            self, synced_pair, tmp_path):
+        """PRODUCED by giving the replay longer than the driver blocks: the
+        driver returns on its own and the rebase stops as a CONFLICT.
+
+        This is the state that diagnosed the original race — the reviewer raised
+        the timeout so the kill could not fire, and the old test failed verbatim
+        as a safety failure. It must name itself instead of either passing
+        quietly or crying corruption.
+        """
+        a, b = synced_pair
+        self._diverge_for_a_blocked_replay(a, b)
+        marker = self._block_the_replay(b, tmp_path)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+        after = _tree_fingerprint(b)
+        verdict, why = _classify_kill_run(marker, result, before, after)
+
+        assert marker.exists()                   # the driver DID run
+        assert not result.ok                     # and the run did stop
+        assert "killed at the timeout" not in (result.detail or "")
+        assert after == before                   # the live tree still held
+        assert verdict == KILL_RUN_NO_KILL, why
+        assert "INCONCLUSIVE" in why and "did not stop at the kill path" in why
+        assert "MOVED" not in why
+
+    def test_a_killed_run_that_MOVED_THE_LIVE_TREE_is_the_safety_failure(
+            self, synced_pair, tmp_path):
+        """PRODUCED by a real straggler write from inside the integration: the
+        merge driver appends to a TRACKED file in the LIVE tree, then blocks
+        until git is killed.
+
+        This is the control that matters most, and it is the one a
+        classification change can quietly break: making the two inconclusive
+        states legible must not have been bought by making a REAL failure
+        quieter. Nothing is mutated and no fingerprint is hand-built — the file
+        on disk really differs, and the run really was killed.
+        """
+        a, b = synced_pair
+        note = self._diverge_for_a_blocked_replay(a, b)
+        marker = self._block_the_replay(b, tmp_path, touch_live=note)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=2.0)
+        after = _tree_fingerprint(b)
+        verdict, why = _classify_kill_run(marker, result, before, after)
+
+        assert marker.exists()                   # the driver ran
+        assert not result.ok
+        # The docstring claims this run was KILLED, so that is enforced rather
+        # than described -- otherwise a producer that stopped the run some other
+        # way would still satisfy the pin and the claim would quietly be false.
+        assert "killed at the timeout" in (result.detail or ""), result.detail
+        assert after != before, (
+            "the straggler write did not land, so this pin produced nothing — "
+            "fix the producer, not the classifier")
+        assert verdict == KILL_RUN_MOVED, why
+        assert "THE LIVE TREE MOVED" in why and "safety property failing" in why
+        assert "INCONCLUSIVE" not in why, (
+            "the harm must never be reported as an inconclusive run")
+
+    def test_a_REAL_rebase_REFUSAL_leaves_the_live_tree_byte_identical(
+            self, synced_pair):
+        """A third way to stop: a `pre-rebase` hook refuses. Different code path
+        from a conflict (no unmerged paths) and from a kill (a returncode), and
+        the property must hold on all three."""
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        hook = b / ".git" / "hooks" / "pre-rebase"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        before = _tree_fingerprint(b)
+
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert not result.ok
+        assert _tree_fingerprint(b) == before, "the live tree moved on a refusal"
+
+    def test_a_clean_divergence_integrates_and_leaves_no_debris(self, synced_pair):
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert result.ok, result.detail
+        # Both sides' files present -- the end state the issue specifies.
+        assert (b / "_shared" / "knowledge" / "b-only.md").exists()
+        assert "A's line." in (b / "_shared" / "knowledge" / "shared-note.md").read_text()
+        assert not _git(b, "status", "--porcelain").stdout.strip()
+        assert _git(b, "rev-list", "--count", "@{upstream}..HEAD").stdout.strip() != ""
+        # No debris, on the success path too.
+        assert "tmp/integrate-" not in _git(b, "branch", "--list").stdout
+        assert "integrate" not in _git(b, "worktree", "list").stdout
+
+    def test_a_plain_BEHIND_state_builds_no_worktree(self, synced_pair, monkeypatch):
+        """The common case must stay cheap: a worktree per sync on a Pi's SD card
+        is a cost this design must not add to the ordinary path. Asserted on
+        recorded argv, not on timing."""
+        a, b = synced_pair
+        (a / "_shared" / "knowledge" / "ahead.md").write_text(
+            "---\ntitle: Ahead\ntype: knowledge\nstatus: current\nowner: t\n"
+            "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Ahead\n\nx\n")
+        _git(a, "add", "-A"); _git(a, "commit", "-m", "ahead"); _git(a, "push", "origin", "main")
+
+        seen: list[tuple] = []
+        real = sync_mod.run_git
+
+        def spy(root, *args, **kw):
+            seen.append(args)
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", spy)
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+        assert result.ok, result.detail
+        assert not any(a_[:2] == ("worktree", "add") for a_ in seen), (
+            f"a behind-only state built a worktree: {[a_ for a_ in seen if a_[0]=='worktree']}")
+        assert any(a_[:2] == ("merge", "--ff-only") for a_ in seen), seen
+
+    def test_reset_uses_keep_and_NEVER_hard(self, synced_pair, monkeypatch):
+        """`--keep` refuses rather than clobbering, and the refusal IS the safety
+        property. `--hard` would discard a straggler write silently, which is this
+        issue's own failure mode re-entering through its fix."""
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        seen: list[tuple] = []
+        real = sync_mod.run_git
+        monkeypatch.setattr(sync_mod, "run_git",
+                            lambda root, *args, **kw: (seen.append(args),
+                                                       real(root, *args, **kw))[1])
+        sync(detect(b), pull=True, push=False, timeout=60.0)
+        resets = [a_ for a_ in seen if a_ and a_[0] == "reset"]
+        assert resets, "no reset was issued, so this proves nothing"
+        assert all("--keep" in a_ for a_ in resets), resets
+        assert not any("--hard" in a_ for a_ in resets), resets
+
+    def test_head_moved_between_start_and_reset_is_REFUSED(self, synced_pair, monkeypatch):
+        """The issue names this test and I had not written it — mutation caught
+        that: disabling the check left all six other tests green.
+
+        HEAD is asserted not to have moved rather than assumed not to, because a
+        ref that changed meaning is the one thing `reset --keep` cannot protect
+        against — `--keep` compares the WORKING TREE, not the branch ref, so a
+        moved HEAD would be reset away silently. The write lock makes this
+        unlikely; the check makes it impossible, and is sound whether or not the
+        lock was actually taken (the shell writer's flock is a no-op where the
+        binary is absent — #1748).
+
+        HEAD is moved FOR REAL mid-integration, not stubbed: a commit lands in the
+        live tree at the moment the worktree's tip is read.
+        """
+        a, b = synced_pair
+        self._diverge(a, b, conflict=False)
+        real = sync_mod.run_git
+        fired = {"n": 0}
+
+        def meddle(root, *args, **kw):
+            # The tip read happens in the WORKTREE, immediately before the live
+            # tree's HEAD is re-checked. Commit on the live tree right then.
+            if args[:2] == ("rev-parse", "HEAD") and str(root) != str(b) and not fired["n"]:
+                fired["n"] = 1
+                (b / "_shared" / "knowledge" / "raced.md").write_text(
+                    "---\ntitle: Raced\ntype: knowledge\nstatus: current\nowner: t\n"
+                    "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Raced\n\nx\n")
+                real(b, "add", "-A")
+                real(b, "commit", "-m", "a racing commit on the live tree")
+            return real(root, *args, **kw)
+
+        monkeypatch.setattr(sync_mod, "run_git", meddle)
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+
+        assert fired["n"], "the race never fired, so this test proves nothing"
+        assert not result.ok, "a moved HEAD must be REFUSED, not reset away"
+        assert "HEAD changed during integration" in result.detail, result.detail
+        assert (b / "_shared" / "knowledge" / "raced.md").exists(), (
+            "the racing commit's file was discarded — exactly what the refusal "
+            "exists to prevent")
+
+    def test_a_killed_runs_leftovers_are_swept_by_the_NEXT_sync(self, synced_pair):
+        """#158 step 2. `_reap_integration` runs in a `finally`, which covers
+        every exit the process survives — but not a SIGKILL or a reboot. So the
+        next sync sweeps, and that sweep was DEAD CODE until mutation testing
+        showed the function was defined and never called.
+
+        Unconditional rather than flag-gated: leftovers can predate a disarm, and
+        a sweep that only ran while armed would strand exactly the debris a
+        backout leaves behind.
+        """
+        a, b = synced_pair
+        # Debris a killed run leaves: a tmp branch and a registered worktree whose
+        # directory is gone.
+        _git(b, "branch", "tmp/integrate-1700000000")
+        ghost = b.parent / "ghost-worktree"
+        _git(b, "worktree", "add", "--detach", str(ghost), "HEAD")
+        shutil.rmtree(ghost)                     # the directory dies, admin stays
+        assert "tmp/integrate-1700000000" in _git(b, "branch", "--list").stdout
+
+        sync(detect(b), pull=False, push=False, timeout=60.0)
+
+        assert "tmp/integrate-" not in _git(b, "branch", "--list").stdout, (
+            "a killed run's temporary branch survived the next sync")
+        assert "ghost-worktree" not in _git(b, "worktree", "list").stdout, (
+            "a killed run's worktree registration survived the next sync")
