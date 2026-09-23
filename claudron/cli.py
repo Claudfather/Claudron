@@ -479,16 +479,21 @@ def cmd_index(args) -> int:
 
     existing = None if args.full else load_index(vault)
     if existing is not None:
-        count, rebuilt = len(existing.get("entries", [])), False
+        idx, rebuilt = existing, False
+        count = len(idx.get("entries", []))
         msg = f"index up to date ({count} entries)"
     else:
-        count, rebuilt = len(build_index(vault).get("entries", [])), True
+        idx, rebuilt = build_index(vault), True
+        count = len(idx.get("entries", []))
         msg = f"indexed {count} docs"
 
     nav = None
     if getattr(args, "navigation", False):
         from .navigation import write_navigation
-        nav = write_navigation(vault)
+        # Hand over the index we already hold: `write_navigation` would
+        # otherwise load or rebuild it a second time, and on `--full` that is a
+        # second full walk of the vault.
+        nav = write_navigation(vault, index=idx)
 
     if args.json:
         payload = {"entries": count, "rebuilt": rebuilt}
@@ -504,10 +509,10 @@ def cmd_index(args) -> int:
     else:
         print(msg, file=sys.stderr)
         if nav is not None:
-            print(f"navigation: {len(nav.written)} written, "
-                  f"{len(nav.unchanged)} already current", file=sys.stderr)
             # THE BOUND, ALWAYS (#1742) -- including when nothing was preserved
             # or dropped, because that is exactly when silence is ambiguous.
+            # It opens with DIRECTORIES, a superset of the written/unchanged
+            # counts, so no separate summary line is printed above it.
             for line in nav.bound_lines():
                 print(f"  {line}", file=sys.stderr)
     return 0

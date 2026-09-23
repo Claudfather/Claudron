@@ -13,8 +13,10 @@ from pathlib import Path
 import pytest
 
 from claudron.knowledge import build_index, index_entry
-from claudron.navigation import (HEADER, PRESERVED_HEADING, classify_existing,
-                                 render_navigation, write_navigation)
+from claudron.navigation import (HEADER, PRESERVED_HEADING, _META_LABELS,
+                                 _fmt_entry, classify_existing,
+                                 existing_descriptions, render_navigation,
+                                 write_navigation)
 
 
 def _note(d: Path, stem: str, *, description="", owner="", tags=("x",),
@@ -92,10 +94,10 @@ class TestAnEntryTheIndexDoesNotKnowIsNEVERSilentlyDropped:
         (d / "README.md").write_text("# hand\n")
         vault = _vault(tmp_path)
         idx = build_index(vault)
-        text, preserved, dropped, _carried = render_navigation(
+        r = render_navigation(
             vault, d, idx, existing_text="- [Hand](README.md) — mine\n")
-        assert preserved and PRESERVED_HEADING in text
-        assert "- [Hand](README.md) — mine" in text
+        assert r.preserved and PRESERVED_HEADING in r.text
+        assert "- [Hand](README.md) — mine" in r.text
 
 
 class TestItIsDerivedAndDeterministic:
@@ -108,10 +110,12 @@ class TestItIsDerivedAndDeterministic:
         _note(d, "shared-note", description="the frontmatter's description")
         vault = _vault(tmp_path)
         idx = build_index(vault)
-        a, _, _, _ = render_navigation(vault, d, idx,
-                                    existing_text="- [Shared Note](shared-note.md) — OURS\n")
-        b, _, _, _ = render_navigation(vault, d, idx,
-                                    existing_text="- [Shared Note](shared-note.md) — THEIRS\n")
+        a = render_navigation(
+            vault, d, idx,
+            existing_text="- [Shared Note](shared-note.md) — OURS\n").text
+        b = render_navigation(
+            vault, d, idx,
+            existing_text="- [Shared Note](shared-note.md) — THEIRS\n").text
         assert a == b
         assert "the frontmatter's description" in a
         assert "OURS" not in a and "THEIRS" not in a
@@ -175,6 +179,105 @@ class TestItStatesItsBounds:
         r = write_navigation(_vault(tmp_path))
         assert r.skipped, "an unreadable INDEX.md was not reported as skipped"
         assert "unreadable" in " ".join(r.skipped.values())
+
+
+class TestTheRenderAndTheParserRoundTrip:
+    """`_fmt_entry` writes the line and `existing_descriptions` reads it back.
+    They are a PAIR, and nothing else pins them together — when they drifted,
+    the clause stopped being stripped, was read back as the description, and a
+    fresh one was appended on every run (unbounded growth, measured on a real
+    vault). This is the property that makes that drift a test failure rather
+    than a defect found in production."""
+
+    @pytest.mark.parametrize("desc", [
+        "plain prose",
+        "prose ending in an aside (like this)",
+        "an em-dash — inside the description",
+        "parens (nested (twice)) mid-sentence",
+        "a colon: and a (status: lookalike) in the prose",
+        "trailing punctuation.",
+    ])
+    def test_a_rendered_description_reads_back_identically(self, desc):
+        e = {"title": "T", "path": "d/n1.md", "filename": "n1",
+             "description": desc, "status": "current", "owner": "someone",
+             "tags": ["a", "b"]}
+        line = _fmt_entry(e, desc)
+        assert existing_descriptions(line) == {"n1.md": desc}
+
+    def test_it_round_trips_when_a_metadata_VALUE_contains_parens(self):
+        """The real note that broke it carries
+        `status: draft — lens input for ari's 3-lens synthesis (NO PR yet)`."""
+        e = {"title": "T", "path": "d/n1.md", "filename": "n1",
+             "description": "real prose", "status": "draft (NO PR yet)",
+             "owner": "alex", "tags": ["x"]}
+        assert existing_descriptions(_fmt_entry(e, "real prose")) == {"n1.md": "real prose"}
+
+    def test_every_rendered_label_is_strippable(self):
+        """The structural half: `_META_TAIL_RE` is built from `_META_LABELS`, so
+        a field added to the renderer cannot be one the parser fails to strip.
+        Asserted rather than assumed, because the coupling is the whole guard."""
+        for label in _META_LABELS:
+            e = {"title": "T", "path": "d/n1.md", "filename": "n1", label: "v"}
+            assert existing_descriptions(_fmt_entry(e, "prose")) == {"n1.md": "prose"}, (
+                f"a line carrying only `{label}` did not round-trip")
+
+
+class TestTheDoorNeverReachesPastTheNoteTiers:
+    """This door is a WRITER; it must not reach further than the indexer that
+    feeds it. `vault.note_tiers` is that shared scope, and its docstring names a
+    bare `root.rglob` as the bug it exists to prevent — a fleet's
+    `library/`/`voices/`/`runtime/` are Claudlobby overlay content, not notes.
+
+    Neither the unit suite nor a dry run against a copied vault could see this:
+    the copy excluded `runtime/`, which is exactly where it manifests."""
+
+    def _fleet_with_overlays(self, root: Path) -> Path:
+        fleet = root / "myfleet"
+        (fleet / "shared" / "knowledge").mkdir(parents=True, exist_ok=True)
+        (fleet / "fleet.yaml").write_text("name: myfleet\n")
+        for overlay in ("library", "voices", "runtime"):
+            d = fleet / overlay / "sub"
+            d.mkdir(parents=True, exist_ok=True)
+            (d / "INDEX.md").write_text(
+                "# Index: sub\n\n- [Hand written](note.md) — human prose\n")
+        proj = fleet / "runtime" / "bots" / "b1" / "projects" / "somerepo"
+        proj.mkdir(parents=True, exist_ok=True)
+        (proj / "INDEX.md").write_text(
+            "# Index: somerepo\n\n- [Repo doc](doc.md) — real content\n")
+        return fleet
+
+    def test_overlay_and_runtime_index_files_are_never_written(self, tmp_path):
+        """Measured before the fix: four files written, including a bot's
+        checkout of an unrelated repo, each hand-written entry replaced by
+        `_No indexed notes in this directory._` — no index entry can live
+        there, so every entry is dangling by construction."""
+        _note(tmp_path / "_shared" / "knowledge", "real")
+        fleet = self._fleet_with_overlays(tmp_path)
+        r = write_navigation(_vault(tmp_path))
+        touched = [str(p.relative_to(tmp_path)) for p in r.written + r.unchanged]
+        offenders = [t for t in touched
+                     if {"library", "voices", "runtime"} & set(t.split("/"))]
+        assert not offenders, f"wrote into overlay/runtime content: {offenders}"
+        assert (fleet / "library" / "sub" / "INDEX.md").read_text().strip().endswith(
+            "human prose"), "overlay INDEX.md was rewritten"
+        assert (fleet / "runtime" / "bots" / "b1" / "projects" / "somerepo"
+                / "INDEX.md").read_text().strip().endswith(
+            "real content"), "a bot's repo checkout was rewritten"
+
+    def test_a_stale_index_INSIDE_a_tier_is_still_swept(self, tmp_path):
+        """The positive control. Scoping must not cost the second half of
+        `_candidate_directories` its purpose: a directory whose notes were all
+        deleted still carries a stale file full of dangling entries, and it is
+        the emptiest files that most need visiting."""
+        _note(tmp_path / "_shared" / "knowledge", "real")
+        stale = tmp_path / "_shared" / "knowledge" / "emptied"
+        stale.mkdir(parents=True, exist_ok=True)
+        (stale / "INDEX.md").write_text(
+            "# Index: emptied\n\n- [Gone](gone.md) — dangling\n")
+        r = write_navigation(_vault(tmp_path))
+        swept = [str(p) for p in r.written + r.unchanged]
+        assert any("emptied" in s for s in swept), "stale in-tier file not swept"
+        assert any("emptied" in k for k in r.dropped), "dangling entry not reported"
 
 
 class TestADescriptionIsNotSilentlyDeleted:
