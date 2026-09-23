@@ -17,7 +17,16 @@
 
   `commit_paths` returns a `CommitOutcome` naming the step rather than the bare `CompletedProcess` #157 specified: `sync` must tell a failed *stage* (a refusal naming git's own message) from a failed *commit* (`committed=False`, carry on), and recovering that from the returned process means reading argv — which was wrong twice, first positionally (`run_git` injects an identity prefix for `commit` only, so positions shift) and then as a membership test that depended on a test double populating `args` faithfully. Naming the step removes the inference.
 
-  **Cost, measured rather than reasoned about**, on the reference SD-card host (`/dev/mmcblk0p2`, load ~4), paired and interleaved with `--no-commit` as the control so both arms share the same minutes of load: **median +16 ms per capture (10%)**, p90 gap +76 ms, and a tail that matters — the worst single capture paid **+899 ms**, and one commit took 1,094 ms in total. The mean (+101 ms) is dragged by that tail, so the median is the central figure and the tail is reported beside it rather than averaged into it.
+  **Cost, measured rather than reasoned about — and it SCALES WITH HOST LOAD, which a single figure would have hidden.** Reference SD-card host (`/dev/mmcblk0p2`), paired and interleaved with `--no-commit` as the control so both arms share the same minutes of load, n=14 each:
+
+  | load | median delta | p90 gap | worst rep |
+  |---|---|---|---|
+  | ~4.0 | **+16 ms** (10% of a capture) | +76 ms | **+899 ms** |
+  | ~6.0 | **+36 ms** (22% of a capture) | +45 ms | +96 ms |
+
+  So the honest claim is **+16 to +36 ms at the median depending on load, 10–22% of a capture**, with a tail that reaches ~900 ms — a git commit on a loaded SD card occasionally takes about a second. The mean is reported by the harness only to show what that tail does to it (+101 ms against a +16 ms median on the first run); a mean alone overstates the typical cost and a median alone hides the tail.
+
+  **The harness is committed** (`claudron/tests/bench_capture_commit.py`, not collected by pytest), because a number justifying a design decision must travel with its repro or it expires the moment anyone doubts it. The load dependence above was only visible *because* it is re-runnable — the first measurement reported +16 ms as though it were a property of the change.
 
   **On reconciliation cost**, since this makes the commit graph denser and that lands on the door [#156](https://github.com/Claudfather/Claudron/issues/156) just changed: a rebase replays each local commit at **~13–37 ms** (measured at 1/5/20/50 commits, noisy on SD under load), so a day's fleet divergence of 20–60 commits is roughly **0.3–1.8 s** of replay — 1–6% of `sync`'s 30 s budget. **This is safe to land only because #156 landed first.** Under the old 2-second SessionStart budget a denser graph would have made the killed-rebase wedge *more* likely, which is the outage this programme exists to close; #156 moved the rebase to a door with an honest budget, and the ordering in the programme is load-bearing rather than incidental.
 

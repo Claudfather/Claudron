@@ -490,13 +490,50 @@ class TestCaptureIsACommit:
 
     def test_capture_on_a_wedged_tree_writes_and_WARNS(self, git_vault: Path, capsys):
         """A capture must never repair a mid-surgery repository, and must never
-        be refused because of one."""
+        be refused because of one — so the note lands, the commit does not, and
+        the warning says which.
+
+        THIS TEST ASSERTED NONE OF THAT and was named for all of it (review).
+        Its capture line read
+
+            out, err = capsys.readouterr().out, capsys.readouterr and capsys.readouterr().err
+
+        — `readouterr()` DRAINS the buffer, so the first call took `.out` and
+        emptied it, the middle term was a truthiness check on a bound method
+        (always true), and the third call returned `''`. So `err` was always
+        empty AND nothing asserted on it. A test named `..._and_WARNS` that
+        cannot observe the warning reads as coverage to every future reader,
+        including one deciding whether this path is safe to change.
+        """
         (git_vault / ".git" / "rebase-merge").mkdir()
         rc = _capture(git_vault, "Written During Surgery")
-        out, err = capsys.readouterr().out, capsys.readouterr and capsys.readouterr().err
+        captured = capsys.readouterr()          # ONE call: it drains
+        err = captured.err
+
         assert rc == 0, "a wedged tree must not fail the capture"
         notes = list((git_vault / "_shared" / "knowledge").glob("written-during-surgery*"))
         assert notes, "THE note must be on disk — that is the whole property"
+        assert notes[0].read_text().strip(), "the note is present but empty"
+
+        # The warning the name claims, and that it NAMES THE CAUSE: a bare W108
+        # would not tell an operator whether the tree is wedged or git refused.
+        assert "W108" in err, f"no warning on a wedged tree: {err!r}"
+        assert "NOT committed" in err, err
+        # KEYED ON THE INTERPOLATED CAUSE, not on prose that is always there.
+        # The first version of this assertion accepted "mid-surgery" — which
+        # appears in the message's STATIC tail ("a capture never repairs a
+        # mid-surgery repository"), so dropping `{interrupted}` entirely still
+        # passed it. Found by mutating the message, not by reading it. The
+        # dynamic half is `_interrupted_state`'s own words, and nothing else in
+        # this message says "stopped".
+        assert "is stopped part-way" in err, (
+            "the warning does not carry the INTERPOLATED cause — a bare W108 "
+            f"cannot tell an operator a wedged tree from a refused commit: {err!r}")
+
+        # And the stated fallback holds: uncommitted, so the safety net gets it.
+        assert _cgit(git_vault, "status", "--porcelain", "--",
+                     str(notes[0].relative_to(git_vault))).stdout.strip(), (
+            "the note must be left uncommitted for `claudron sync` to pick up")
 
     def test_capture_subject_actor_precedence(self, git_vault: Path, capsys, monkeypatch):
         monkeypatch.delenv("CLAUDRON_ACTOR", raising=False)
