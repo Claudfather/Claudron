@@ -2,6 +2,92 @@
 
 ## Unreleased
 
+### Added
+- **`claudron index --navigation` — `INDEX.md` becomes a DERIVED navigation file
+  ([#155](https://github.com/Claudfather/Claudron/issues/155), PR 1 of 2).**
+
+  **THE ENGINE VERSION THIS DOOR SHIPS UNDER IS `0.5.0`.** Claudlobby
+  [#1723](https://github.com/Claudfather/Claudlobby/issues/1723) is blocked on
+  this door, and its compat floor gates on that number: the `navigation`
+  capability row in `claudlobby/claudron_compat.py` takes **minimum engine
+  version `0.5.0`**, read through the sanctioned capability probe — `status
+  --json` → `data.engine_version` (`docs/CLI_CONTRACT.md` §Capability probe).
+  It is stated as a number here, rather than left implicit in code, because a
+  consumer in another repo cannot ship until it can name it.
+
+  **The `claudron index --navigation --help` probe #1723's body proposes DOES
+  NOT WORK, and must not be wired into the floor.** argparse fires `--help` as a
+  parse action and exits 0 *before* it reports unknown arguments, so the probe
+  exits 0 for a flag that does not exist — it passes on every engine ever
+  shipped, including every one with no navigation door. Measured against the
+  engine installed on this estate, **0.4.0**, which has no door: `index --help`
+  contains no `navigation`, and `index --navigation --help` still exits **0**.
+  The control that attributes the failure: the same engine exits **2** for
+  `index --navigation` *without* `--help`, so the parser does reject the unknown
+  flag — it is `--help` short-circuiting that destroys the probe, not a
+  permissive parser. Both arms are pinned in
+  `claudron/tests/test_navigation.py::TestTheConsumerContractIsTheRelease`,
+  alongside a help-text assertion for the flag itself. **The version gate needs
+  no flag probe beside it**; one that cannot fail is worse than none, because it
+  reads as a second line of defence.
+
+  **One caveat the consumer owns**: `engine_version` is `"0.0.0-dev"` from an
+  uninstalled checkout, so a `>= 0.5.0` comparison gates a dev checkout that
+  *does* have the door **off**. That is the safe direction — the old ritual
+  composes and nothing instructs a bot to run a flag its engine may lack — but
+  it is a false negative a developer will hit, and #1723 should decide it
+  deliberately rather than discover it.
+
+  **The ruling this door is built around: a generator that drops what it does
+  not know about is a silent deletion.** Existing `INDEX.md` files carry
+  hand-written entries and descriptions the index does not have, and a vault
+  whose entire purpose is durable knowledge is the worst place to lose prose
+  with no diff anyone reads. So an unknown entry is split on an **observable**
+  fact rather than one blanket policy, because the two halves have opposite
+  correct answers: its target **exists** → the entry is somebody's knowledge and
+  is **PRESERVED** verbatim under a marked section; its target **does not exist**
+  → the entry is dangling, there is nothing to navigate to, and it is
+  **DROPPED**. A third outcome applies one level down, to a FIELD rather than an
+  entry: an entry the index *does* know about, whose note carries no
+  `description:`, keeps the **description already in the file** — **CARRIED**.
+  None of the three is silent; `NavigationResult` carries all three lists and
+  the CLI names them in its bound on every run, including when all are empty
+  (that is exactly when silence is ambiguous).
+
+  **The third outcome was found by the dry run, not by a fixture, and it is why
+  the dry run is a gate rather than a formality.** Run against a copy of this
+  estate's real vault, the first build reported `nothing in any file was
+  unaccounted for` while **deleting 235 hand-written descriptions** — of 476
+  entries across 22 hand-maintained `INDEX.md` files, 457 carried a description
+  and 235 of them vanished, across 20 of the 22 files. Every entry was accounted
+  for; the prose inside them was not. That is this module's own definition of a
+  silent deletion, one level down, so it gets the same answer. After the fix, on
+  the same copy: 457 of 457 descriptions survive, 235 reported as carried, and
+  the second and third runs write nothing.
+
+  **Fixing it introduced a second defect the same run caught**, recorded because
+  the shape recurs: a frontmatter value may itself contain parentheses (a real
+  note here carries `status: draft — lens input for ari's 3-lens synthesis (NO
+  PR yet)`). A metadata-tail pattern that cannot cross that inner `)` never
+  strips the clause, reads the whole of it back as the description, and appends
+  a fresh one — so the line grew by one copy on **every** run, without bound.
+  One file was rewritten on every pass before it was caught. Both the carry and
+  the growth are pinned by mutation.
+
+  Preserving rather than refusing is deliberate. This door is meant to run on
+  every capture (PR 2), and one that refuses a whole regeneration because one
+  directory holds one odd line would be switched off within a week — at which
+  point every `INDEX.md` is hand-edited again and the conflict class is back.
+
+  **Why the class is worth removing**: repairing the 2026-09-21 vault outage
+  produced nine merge conflicts and **six were `INDEX.md`** — and the same entry
+  carried *different description text* in different versions, so no line-based
+  merge could ever have resolved them. A derived artifact is regenerated, never
+  merged.
+
+  Also in this door: `index_entry()` now carries `description` and `owner` (the
+  two fields the fleet's line format uses and the index did not have), and
+  `SCHEMA_VERSION` goes **4 → 5** so an index on disk rebuilds on first use.
 ### Changed
 - **The live tree only fast-forwards: integration moves into a throwaway worktree ([#158](https://github.com/Claudfather/Claudron/issues/158) phase 1, behind `CLAUDRON_SYNC_WORKTREE=1`).**
 

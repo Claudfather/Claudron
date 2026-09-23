@@ -497,16 +497,15 @@ def cmd_index(args) -> int:
             payload["navigation_unchanged"] = [str(p) for p in nav.unchanged]
             payload["navigation_preserved"] = nav.preserved
             payload["navigation_dropped"] = nav.dropped
+            payload["navigation_carried"] = nav.carried
             payload["navigation_skipped"] = nav.skipped
-            payload["navigation_engine_version"] = nav.engine_version
             payload["navigation_bounds"] = nav.bound_lines()
         _emit_json("index", payload)
     else:
         print(msg, file=sys.stderr)
         if nav is not None:
             print(f"navigation: {len(nav.written)} written, "
-                  f"{len(nav.unchanged)} already current "
-                  f"(engine {nav.engine_version})", file=sys.stderr)
+                  f"{len(nav.unchanged)} already current", file=sys.stderr)
             # THE BOUND, ALWAYS (#1742) -- including when nothing was preserved
             # or dropped, because that is exactly when silence is ambiguous.
             for line in nav.bound_lines():

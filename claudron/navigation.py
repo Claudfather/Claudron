@@ -36,10 +36,21 @@ because one directory holds one odd line would be turned off within a week --
 at which point every `INDEX.md` is hand-edited again and the conflict class is
 back. Refusal protects the file; being switched off protects nothing.
 
-VERSION. `NAVIGATION_ENGINE_VERSION` is an INTERFACE, not a nicety: Claudlobby
-#1723 is blocked on this door and gates on the engine version that ships it, so
-a consumer can ask whether the door it needs is present rather than guessing
-from a release tag.
+VERSION. The consumer contract is the RELEASE, not a constant in this file.
+Claudlobby #1723 gates on the engine version this door ships under: declared in
+`CHANGELOG.md` and read back through the sanctioned capability probe
+(`status --json` -> `data.engine_version`; `docs/CLI_CONTRACT.md` "Capability
+probe"). There is deliberately no second version constant here -- a private
+version sitting beside the sanctioned one only makes a consumer guess which of
+the two to read.
+
+A `claudron index --navigation --help` probe CANNOT stand in for that gate, and
+the reason is mechanical rather than stylistic: argparse fires `--help` as a
+parse action and exits 0 BEFORE it reports unknown arguments, so the probe exits
+0 on an engine that has no navigation door at all. Measured against claudron
+0.4.0, whose `index --help` contains no "navigation": `index --navigation
+--help` exits 0, while `index --navigation` without `--help` exits 2. A probe
+that passes on every engine ever shipped gates nothing.
 """
 from __future__ import annotations
 
@@ -50,11 +61,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
     from .vault import Vault
-
-#: The interface Claudlobby #1723 gates on. Bump when the RENDERED FORMAT or the
-#: preserve/drop ruling changes -- not for internal refactors, since a consumer
-#: asking "is the door I need here" is asking about those two things only.
-NAVIGATION_ENGINE_VERSION = "1"
 
 #: On every generated file. Its absence is what `validate` warns about, and what
 #: tells a human the file is not theirs to edit.
@@ -73,7 +79,22 @@ PRESERVED_NOTE = (
 #: `- [Title](target)` -- the link is what an entry is KEYED on. The outage's
 #: six conflicts were all resolved by keying on link target and taking the
 #: union, so that is the key here too.
-_ENTRY_RE = re.compile(r"^\s*[-*]\s*\[(?P<title>[^\]]*)\]\((?P<target>[^)]+)\)")
+_ENTRY_RE = re.compile(
+    r"^\s*[-*]\s*\[(?P<title>[^\]]*)\]\((?P<target>[^)]+)\)(?P<rest>.*)$")
+
+#: The trailing `(status: …, owner: …, tags: …)` clause `_fmt_entry` renders.
+#: Anchored to the END *and* to a known leading label, so a description that
+#: itself ends in parentheses is never mistaken for metadata and truncated.
+#:
+#: `.*` RATHER THAN `[^()]*`, and this is load-bearing: a frontmatter VALUE may
+#: itself contain parentheses. A real note in this estate carries
+#: `status: draft — lens input for ari's 3-lens synthesis (NO PR yet)`, whose
+#: rendered clause therefore nests. A class that cannot cross the inner `)`
+#: fails to strip the tail, the whole clause is read back as part of the
+#: description, and `_fmt_entry` then appends a FRESH clause -- so the line
+#: grows by one copy on EVERY run, without bound. Measured before this fix: one
+#: file rewritten on every pass, five copies and counting.
+_META_TAIL_RE = re.compile(r"\s*\((?:status|owner|tags):.*\)\s*$")
 
 
 @dataclass
@@ -88,14 +109,15 @@ class NavigationResult:
     unchanged: list[Path] = field(default_factory=list)
     preserved: dict[str, list[str]] = field(default_factory=dict)
     dropped: dict[str, list[str]] = field(default_factory=dict)
+    carried: dict[str, list[str]] = field(default_factory=dict)
     skipped: dict[str, str] = field(default_factory=dict)
     entries_seen: int = 0
     directories_considered: int = 0
-    engine_version: str = NAVIGATION_ENGINE_VERSION
 
     def bound_lines(self) -> list[str]:
         n_pres = sum(len(v) for v in self.preserved.values())
         n_drop = sum(len(v) for v in self.dropped.values())
+        n_carr = sum(len(v) for v in self.carried.values())
         lines = [
             f"GENERATED FROM: the index ({self.entries_seen} entry(ies)) — the "
             "notes' own frontmatter, never the previous file's text",
@@ -109,18 +131,21 @@ class NavigationResult:
                          + (" …" if len(self.skipped) > 3 else ""))
         lines.append(
             f"NOT DERIVED   : {n_pres} entry(ies) PRESERVED (in the file, not in "
-            f"the index, target exists) · {n_drop} DROPPED (target missing)")
-        if n_pres or n_drop:
+            f"the index, target exists) · {n_drop} DROPPED (target missing) · "
+            f"{n_carr} DESCRIPTION(S) CARRIED (note has no `description:`)")
+        if n_pres or n_drop or n_carr:
             for path, kept in sorted(self.preserved.items()):
                 lines.append(f"  preserved in {path}: {', '.join(kept)}")
             for path, gone in sorted(self.dropped.items()):
                 lines.append(f"  dropped from {path}: {', '.join(gone)}")
+            for path, carr in sorted(self.carried.items()):
+                lines.append(f"  carried in {path}: {len(carr)} description(s)")
         else:
             lines.append("                nothing in any file was unaccounted for")
         return lines
 
 
-def _fmt_entry(e: dict) -> str:
+def _fmt_entry(e: dict, carried_desc: str = "") -> str:
     """The fleet protocol's exact line (Claudlobby
     `library/protocols/shared-documentation.md`):
 
@@ -128,11 +153,14 @@ def _fmt_entry(e: dict) -> str:
 
     An empty field is OMITTED rather than rendered blank -- `(status: , owner: )`
     is noise a reader has to parse past, and the protocol's readers key on the
-    labels rather than on position."""
+    labels rather than on position.
+
+    `carried_desc` is the description already in the file, used ONLY when the
+    note carries no `description:` of its own. See `existing_descriptions`."""
     title = e.get("title") or e.get("filename") or "untitled"
     target = f"{e.get('filename', '')}.md"
     line = f"- [{title}]({target})"
-    desc = (e.get("description") or "").strip()
+    desc = (e.get("description") or "").strip() or (carried_desc or "").strip()
     if desc:
         line += f" — {desc}"
     bits = []
@@ -192,22 +220,63 @@ def classify_existing(existing_text: str, directory: Path,
     return preserve, drop
 
 
+def existing_descriptions(existing_text: str) -> dict[str, str]:
+    """`{target: description}` for every entry in the file that carries one.
+
+    THE SECOND HALF OF THE RULING, and it was found by running the door against
+    a real vault rather than a fixture. The entry-level rule protects an entry
+    the index does not know about; it does NOT protect the DESCRIPTION of an
+    entry the index *does* know about, and the index only has one when the note
+    carries `description:` in its frontmatter. Measured on this estate's vault:
+    of 476 entries across 22 hand-maintained `INDEX.md` files, 457 carried a
+    hand-written description and **235 of them would have been deleted** -- 20
+    of the 22 files -- while the run reported `nothing in any file was
+    unaccounted for`. That is the module's own definition of a silent deletion,
+    one level down, so the same answer applies: the note's frontmatter wins when
+    it has one, and the file's text is kept when it does not.
+
+    Idempotent by construction: a carried description is rendered back into the
+    file, so the next run reads it here again and carries it again."""
+    out: dict[str, str] = {}
+    for raw in existing_text.splitlines():
+        m = _ENTRY_RE.match(raw)
+        if not m:
+            continue
+        rest = (m.group("rest") or "").strip()
+        if not rest.startswith("—"):
+            continue
+        desc = _META_TAIL_RE.sub("", rest[1:]).strip()
+        if desc:
+            out[m.group("target").strip()] = desc
+    return out
+
+
 def render_navigation(vault: "Vault", directory: Path, index: dict,
-                      *, existing_text: str = "") -> tuple[str, list[str], list[str]]:
-    """`(text, preserved, dropped)` for one directory — a PURE function of the
-    index plus whatever the existing file holds that the index does not."""
+                      *, existing_text: str = "") -> tuple[str, list[str], list[str], list[str]]:
+    """`(text, preserved, dropped, carried)` for one directory — a PURE function
+    of the index plus whatever the existing file holds that the index does not."""
     entries = _entries_for(index, Path(vault.root), directory)
     known = {f"{e.get('filename', '')}.md" for e in entries}
     preserved, dropped = classify_existing(existing_text, directory, known)
+    have = existing_descriptions(existing_text)
+
+    carried: list[str] = []
+    rendered: list[str] = []
+    for e in entries:
+        target = f"{e.get('filename', '')}.md"
+        fallback = "" if (e.get("description") or "").strip() else have.get(target, "")
+        if fallback:
+            carried.append(target)
+        rendered.append(_fmt_entry(e, fallback))
 
     lines = [HEADER, "", f"# Index: {directory.name}", ""]
-    lines.extend(_fmt_entry(e) for e in entries)
+    lines.extend(rendered)
     if not entries:
         lines.append("_No indexed notes in this directory._")
     if preserved:
         lines.extend(["", PRESERVED_HEADING, "", PRESERVED_NOTE, ""])
         lines.extend(preserved)
-    return "\n".join(lines).rstrip() + "\n", preserved, dropped
+    return "\n".join(lines).rstrip() + "\n", preserved, dropped, carried
 
 
 def _candidate_directories(vault: "Vault", index: dict) -> list[Path]:
@@ -265,12 +334,14 @@ def write_navigation(vault: "Vault", *, directories=None,
                 # preserve ruling exists to prevent.
                 result.skipped[rel] = f"existing INDEX.md unreadable ({exc.__class__.__name__})"
                 continue
-            text, preserved, dropped = render_navigation(
+            text, preserved, dropped, carried = render_navigation(
                 vault, directory, index, existing_text=existing)
             if preserved:
                 result.preserved[rel] = preserved
             if dropped:
                 result.dropped[rel] = dropped
+            if carried:
+                result.carried[rel] = carried
             if existing == text:
                 result.unchanged.append(path)
                 continue

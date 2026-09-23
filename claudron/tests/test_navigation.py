@@ -13,8 +13,7 @@ from pathlib import Path
 import pytest
 
 from claudron.knowledge import build_index, index_entry
-from claudron.navigation import (HEADER, NAVIGATION_ENGINE_VERSION,
-                                 PRESERVED_HEADING, classify_existing,
+from claudron.navigation import (HEADER, PRESERVED_HEADING, classify_existing,
                                  render_navigation, write_navigation)
 
 
@@ -93,7 +92,7 @@ class TestAnEntryTheIndexDoesNotKnowIsNEVERSilentlyDropped:
         (d / "README.md").write_text("# hand\n")
         vault = _vault(tmp_path)
         idx = build_index(vault)
-        text, preserved, dropped = render_navigation(
+        text, preserved, dropped, _carried = render_navigation(
             vault, d, idx, existing_text="- [Hand](README.md) — mine\n")
         assert preserved and PRESERVED_HEADING in text
         assert "- [Hand](README.md) — mine" in text
@@ -109,9 +108,9 @@ class TestItIsDerivedAndDeterministic:
         _note(d, "shared-note", description="the frontmatter's description")
         vault = _vault(tmp_path)
         idx = build_index(vault)
-        a, _, _ = render_navigation(vault, d, idx,
+        a, _, _, _ = render_navigation(vault, d, idx,
                                     existing_text="- [Shared Note](shared-note.md) — OURS\n")
-        b, _, _ = render_navigation(vault, d, idx,
+        b, _, _, _ = render_navigation(vault, d, idx,
                                     existing_text="- [Shared Note](shared-note.md) — THEIRS\n")
         assert a == b
         assert "the frontmatter's description" in a
@@ -178,17 +177,159 @@ class TestItStatesItsBounds:
         assert "unreadable" in " ".join(r.skipped.values())
 
 
-class TestTheEngineVersionIsAnInterface:
-    def test_it_is_declared_and_non_empty(self):
-        """Claudlobby #1723 gates on this; it is the interface another repo is
-        waiting on, not a nicety."""
-        assert NAVIGATION_ENGINE_VERSION and NAVIGATION_ENGINE_VERSION.strip()
+class TestADescriptionIsNotSilentlyDeleted:
+    """The ruling one level down. The entry-level rule protects an entry the
+    index does not know about; it does NOT protect the DESCRIPTION of an entry
+    the index does know about, and the index only carries one when the note has
+    `description:` frontmatter.
 
-    def test_a_result_carries_the_version_so_a_consumer_need_not_import_it(
+    Found by running the door against a copy of this estate's real vault, not by
+    a fixture: of 476 entries across 22 hand-maintained `INDEX.md` files, 457
+    carried a hand-written description and 235 would have been deleted -- while
+    the run reported `nothing in any file was unaccounted for`."""
+
+    def _existing(self, d: Path, target: str, desc: str, title="T"):
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "INDEX.md").write_text(
+            f"# Index: {d.name}\n\n- [{title}]({target}) — {desc} "
+            "(status: current, owner: someone, tags: x)\n")
+
+    def test_a_hand_written_description_survives_when_the_note_has_none(
             self, tmp_path):
-        _note(tmp_path / "_shared" / "knowledge", "n1")
+        d = tmp_path / "_shared" / "knowledge"
+        _note(d, "n1", description="")          # no frontmatter description
+        self._existing(d, "n1.md", "hand-written prose nobody can regenerate")
         r = write_navigation(_vault(tmp_path))
-        assert r.engine_version == NAVIGATION_ENGINE_VERSION
+        text = (d / "INDEX.md").read_text()
+        assert "hand-written prose nobody can regenerate" in text, (
+            "a description the note does not carry was DELETED -- the silent "
+            "deletion this class exists to prevent")
+        assert r.carried, "the carry was not reported"
+
+    def test_the_notes_own_description_wins_over_the_files(self, tmp_path):
+        """The note is the source of truth WHEN IT HAS ONE -- that disagreement
+        is the conflict class #155 removes, so carrying must not resurrect it."""
+        d = tmp_path / "_shared" / "knowledge"
+        _note(d, "n1", description="the frontmatter's own words")
+        self._existing(d, "n1.md", "stale text from the old file")
+        r = write_navigation(_vault(tmp_path))
+        text = (d / "INDEX.md").read_text()
+        assert "the frontmatter's own words" in text
+        assert "stale text from the old file" not in text
+        assert not r.carried, "nothing should be carried when the note has one"
+
+    def test_carrying_is_idempotent(self, tmp_path):
+        """A carried description is rendered back into the file, so the next run
+        reads it again. If that did not hold, every run would rewrite."""
+        d = tmp_path / "_shared" / "knowledge"
+        _note(d, "n1", description="")
+        self._existing(d, "n1.md", "kept prose")
+        v = _vault(tmp_path)
+        write_navigation(v)
+        first = (d / "INDEX.md").read_text()
+        r2 = write_navigation(v)
+        assert (d / "INDEX.md").read_text() == first
+        assert not r2.written, "second run rewrote a file it should have left alone"
+
+    def test_a_description_ending_in_parentheses_is_not_truncated(self, tmp_path):
+        """`_META_TAIL_RE` must anchor on a KNOWN LABEL, not on any trailing
+        `(...)`, or a description that ends in parentheses loses its tail.
+
+        THE FIXTURE HAS NO `(status: …)` CLAUSE, deliberately. With one present a
+        label-blind regex still strips only the LAST group -- the metadata --
+        and the mutant survives; the discriminating state is a description whose
+        parenthesis IS the final group. Measured: the first version of this test
+        carried the metadata tail and a `\\([^()]*\\)$` mutant passed it."""
+        d = tmp_path / "_shared" / "knowledge"
+        _note(d, "n1", description="")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "INDEX.md").write_text(
+            "# Index: knowledge\n\n- [T](n1.md) — prose ending in an aside "
+            "(like this)\n")
+        write_navigation(_vault(tmp_path))
+        assert "prose ending in an aside (like this)" in (d / "INDEX.md").read_text()
+
+    def test_a_metadata_value_containing_parentheses_does_not_grow_the_line(
+            self, tmp_path):
+        """REGRESSION, found on a real vault and not reachable from a tidy
+        fixture. A frontmatter VALUE may contain parentheses -- a real note here
+        carries `status: draft — lens input (NO PR yet)`. If the metadata-tail
+        pattern cannot cross that inner `)`, the clause is never stripped, the
+        whole of it is read back as the description, and a fresh clause is
+        appended on every run: the line grows without bound. Before the fix one
+        file was rewritten on every pass, five copies and counting."""
+        d = tmp_path / "_shared" / "knowledge"
+        _note(d, "n1", description="", status="draft (NO PR yet)")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "INDEX.md").write_text(
+            "# Index: knowledge\n\n- [T](n1.md) — real prose "
+            "(status: draft (NO PR yet), owner: alex, tags: x)\n")
+        v = _vault(tmp_path)
+        write_navigation(v)
+        first = (d / "INDEX.md").read_text()
+        write_navigation(v)
+        second = (d / "INDEX.md").read_text()
+        assert second == first, "the line grew on a second run"
+        assert first.count("status:") == 1, (
+            f"metadata clause duplicated: {first.count('status:')} copies")
+
+    def test_the_bound_names_the_carry(self, tmp_path):
+        """Reported, never silent -- the defect was that the bound said
+        `nothing in any file was unaccounted for` while prose was destroyed."""
+        d = tmp_path / "_shared" / "knowledge"
+        _note(d, "n1", description="")
+        self._existing(d, "n1.md", "kept prose")
+        r = write_navigation(_vault(tmp_path))
+        bound = " ".join(r.bound_lines())
+        assert "CARRIED" in bound
+        assert "nothing in any file was unaccounted for" not in bound
+
+
+class TestTheConsumerContractIsTheRelease:
+    """Claudlobby #1723 gates on the engine version this door ships under --
+    declared in `CHANGELOG.md`, read back through `status --json` ->
+    `data.engine_version`. NOT on a constant in `navigation.py`, and NOT on the
+    `index --navigation --help` probe #1723's body proposes."""
+
+    def test_index_advertises_the_navigation_flag(self, capsys):
+        """The capability the CHANGELOG's version declaration promises.
+
+        Asserted against the HELP TEXT, not against an exit code: a
+        `--navigation --help` invocation exits 0 whether or not the flag exists
+        (the test below), so an rc assertion here would pass on an engine with
+        no door -- and did, until a mutation that deleted the flag outright left
+        every test in this file green. The help text is what actually
+        discriminates; it is how claudron 0.4.0 was measured to lack the door."""
+        from claudron.cli import main
+        with pytest.raises(SystemExit):
+            main(["index", "--help"])
+        assert "--navigation" in capsys.readouterr().out
+
+    def test_a_help_probe_cannot_detect_whether_the_flag_exists(self):
+        """THE REFUTATION, pinned so nobody wires this into a compat floor.
+
+        argparse fires `--help` as a parse action and exits 0 BEFORE it reports
+        unknown arguments, so `--help` returns 0 for a flag that does not exist
+        -- the probe passes on every engine ever shipped. Measured against
+        claudron 0.4.0, which has no navigation door (`index --help` contains no
+        "navigation") and still exits 0 for `index --navigation --help`."""
+        from claudron.cli import main
+        with pytest.raises(SystemExit) as exc:
+            main(["index", "--definitely-not-a-real-flag", "--help"])
+        assert exc.value.code == 0, (
+            "argparse no longer short-circuits on --help; #1723's help probe "
+            "may have become viable -- re-measure before relying on it")
+
+    def test_the_control_the_same_unknown_flag_without_help_is_rejected(self):
+        """The control that attributes the failure. argparse DOES reject the
+        unknown flag; it is `--help` short-circuiting that destroys the probe,
+        not a permissive parser. Without this arm the test above is equally
+        explained by "claudron accepts anything", which would be a different
+        and much worse defect."""
+        from claudron.cli import main
+        with pytest.raises(SystemExit) as exc:
+            main(["index", "--definitely-not-a-real-flag"])
+        assert exc.value.code == 2
 
 
 def _vault(root: Path):
