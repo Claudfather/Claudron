@@ -1809,6 +1809,55 @@ class TestTheLiveTreeOnlyFastForwards:
         assert "INCONCLUSIVE" not in why, (
             "the harm must never be reported as an inconclusive run")
 
+    def test_the_MOVED_check_takes_precedence_over_inconclusive_preconditions(
+            self, synced_pair, tmp_path):
+        """#166: the docstring calls ORDER load-bearing -- the tree check runs
+        BEFORE either precondition, because "a moved tree is the harm whatever
+        stopped the run, so gating it behind 'was it killed' would let a
+        differently-stopped run hide one." Nothing pinned that claim: the four
+        verdict pins above pass unchanged if the tree check is moved to run
+        LAST, gated behind driver_ran and killed -- none of their own
+        scenarios has a moved tree together with an UNCONFIRMED kill.
+
+        PRODUCED, not injected: the same straggler-write mechanism as the
+        MOVED pin above, but given the driver's OWN sleep instead of the
+        harness's timeout -- the driver exits on its own (`killed` is False),
+        so this scenario is an UNCONFIRMED kill with a genuine corruption
+        sitting underneath it.
+
+        THE ASSERTION IS DELIBERATELY NOT `verdict == KILL_RUN_MOVED`: that
+        would reach the MOVED pin's own branch and prove nothing about order
+        that pin does not already prove -- a mutation of THAT return value
+        alone reds both tests identically. What is asserted here is
+        precedence -- the classifier must not report an UNCONFIRMED kill with
+        a moved tree as inconclusive, regardless of which non-inconclusive
+        label it uses -- because a tree check reordered to run after `killed`
+        produces exactly one of the two INCONCLUSIVE verdicts here, even
+        though the tree demonstrably moved.
+        """
+        a, b = synced_pair
+        note = self._diverge_for_a_blocked_replay(a, b)
+        marker = self._block_the_replay(b, tmp_path, touch_live=note)
+        before = _tree_fingerprint(b)
+
+        # Longer than the driver's own sleep, so it exits on its own -- the
+        # NOTHING-WAS-KILLED precondition -- with the straggler write already
+        # landed underneath it.
+        result = sync(detect(b), pull=True, push=False, timeout=60.0)
+        after = _tree_fingerprint(b)
+        verdict, why = _classify_kill_run(marker, result, before, after)
+
+        assert marker.exists()                    # the driver DID run
+        assert not result.ok
+        assert "killed at the timeout" not in (result.detail or ""), (
+            "this pin needs an UNCONFIRMED kill -- fix the timeout, not the "
+            "classifier")
+        assert after != before, (
+            "the straggler write did not land, so this pin produced nothing "
+            "-- fix the producer, not the classifier")
+        assert verdict not in (KILL_RUN_NO_DRIVER, KILL_RUN_NO_KILL), (
+            f"a moved tree was classified as inconclusive ({verdict}): {why}")
+
     def test_a_REAL_rebase_REFUSAL_leaves_the_live_tree_byte_identical(
             self, synced_pair):
         """A third way to stop: a `pre-rebase` hook refuses. Different code path
