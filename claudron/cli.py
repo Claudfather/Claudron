@@ -589,7 +589,8 @@ def cmd_capture(args) -> int:
             print("--update requires --body", file=sys.stderr)
             return 2
         try:
-            result = append_addendum(vault, note_path, args.body)
+            result = append_addendum(vault, note_path, args.body,
+                                     no_commit=getattr(args, "no_commit", False))
         except ScopeError as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -638,6 +639,7 @@ def cmd_capture(args) -> int:
             project=finding.get("project") or args.project,
             fleet=finding.get("fleet") or args.fleet,
             force=args.force,
+            no_commit=getattr(args, "no_commit", False),
             source_url=finding.get("source_url") or args.source_url,
             source_type=source_type,
         )
@@ -675,9 +677,17 @@ def _emit_write_result(args, result) -> int:
             "capture",
             {"action": result.action, "path": result.path,
              "reason": result.reason, "written": result.written},
+            # A W108 rides the envelope's `warnings` array (#157): the note IS
+            # written, so this must never reach `errors` — a consumer keying on
+            # errors would read an uncommitted note as a failed write and retry
+            # a write that already succeeded.
+            result.warnings or None,
         )
     else:
         print(f"{result.action}: {result.path}")
+        for w in result.warnings:
+            # stderr, not stdout: stdout carries the payload a caller parses.
+            print(f"[{w.code}] {w.severity} — {w.message}", file=sys.stderr)
         if result.action.startswith("suggest_"):
             print(result.reason, file=sys.stderr)
             print("note: nothing written — this is a dedup suggestion, not a "
@@ -1272,6 +1282,14 @@ def main(argv=None) -> int:
     p_capture.add_argument(
         "--force", action="store_true",
         help="Create even when dedup would suggest updating an existing note",
+    )
+    p_capture.add_argument(
+        "--no-commit", dest="no_commit", action="store_true",
+        help="Write the note without committing it (#157). AN ESCAPE HATCH FOR "
+             "BATCHING, never a default: capture is durable on return precisely "
+             "because it commits, and a note that is written-not-committed "
+             "exists on one disk until something else runs. Use it when you are "
+             "about to commit a set yourself.",
     )
 
     # recall

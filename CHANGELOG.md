@@ -3,6 +3,34 @@
 ## Unreleased
 
 ### Changed
+- **A capture is a commit: the write door commits the note it wrote ([#157](https://github.com/Claudfather/Claudron/issues/157)).**
+
+  A captured note was not durable until something else ran — `engine.capture` wrote the file, `sync()` committed it whenever it happened to run next, and between them the note existed on **one disk**. Measured on a live host: **62 uncommitted paths, oldest written twelve days earlier, 17 under `_shared/knowledge/`** — on the storage whose failure is that host's known outage cause. Durability is the one property a knowledge layer must not defer.
+
+  **ORDERING IS THE WHOLE PROPERTY, and the change is strictly additive.** The file is written first and committed second, inside the `vault_write_lock` the door already holds. Every failure path therefore leaves an *uncommitted note on disk* — which is exactly the behaviour being replaced, so no path can be a regression in the property the change exists to improve. Pinned by tests that fail the commit for real, at **both** steps: a rejecting `pre-commit` hook (the commit fails) and a held `index.lock` (the stage fails). The note survives both.
+
+  **`ok` does not become "committed".** A failed commit keeps `ok=True`, leaves the note on disk, and attaches a `W108` warning — in the envelope's `warnings` array, never `errors`, because nothing about the *write* failed. A consumer keying on `errors` would otherwise read an uncommitted note as a failed write and retry a write that already succeeded. W108 is a warning in **both** catalog tiers, the only member describing a note's surroundings rather than its content.
+
+  **A wedged tree is refused, not attempted — and the capture still lands.** A capture must never repair a mid-surgery repository and must never be refused because of one. A vault that is not a git repository is **silent**: no commit, no warning, because a warning there would fire on every capture of a perfectly good plain directory.
+
+  **The safety net stays**, and `commit_paths` is now shared by both. `sync`'s commit catches everything written *around* the door — a hand-edited plan, a bot writing with a shell redirect, which this estate still does — and says `vault sync: N straggler(s)` rather than `N change(s)` so the two commit classes stay countable in `git log`. Deleting it because captures commit themselves would strand exactly that population.
+
+  `commit_paths` returns a `CommitOutcome` naming the step rather than the bare `CompletedProcess` #157 specified: `sync` must tell a failed *stage* (a refusal naming git's own message) from a failed *commit* (`committed=False`, carry on), and recovering that from the returned process means reading argv — which was wrong twice, first positionally (`run_git` injects an identity prefix for `commit` only, so positions shift) and then as a membership test that depended on a test double populating `args` faithfully. Naming the step removes the inference.
+
+  **Cost, measured rather than reasoned about — and it SCALES WITH HOST LOAD, which a single figure would have hidden.** Reference SD-card host (`/dev/mmcblk0p2`), paired and interleaved with `--no-commit` as the control so both arms share the same minutes of load, n=14 each:
+
+  | load | median delta | p90 gap | worst rep |
+  |---|---|---|---|
+  | ~4.0 | **+16 ms** (10% of a capture) | +76 ms | **+899 ms** |
+  | ~6.0 | **+36 ms** (22% of a capture) | +45 ms | +96 ms |
+
+  So the honest claim is **+16 to +36 ms at the median depending on load, 10–22% of a capture**, with a tail that reaches ~900 ms — a git commit on a loaded SD card occasionally takes about a second. The mean is reported by the harness only to show what that tail does to it (+101 ms against a +16 ms median on the first run); a mean alone overstates the typical cost and a median alone hides the tail.
+
+  **The harness is committed** (`claudron/tests/bench_capture_commit.py`, not collected by pytest), because a number justifying a design decision must travel with its repro or it expires the moment anyone doubts it. The load dependence above was only visible *because* it is re-runnable — the first measurement reported +16 ms as though it were a property of the change.
+
+  **On reconciliation cost**, since this makes the commit graph denser and that lands on the door [#156](https://github.com/Claudfather/Claudron/issues/156) just changed: a rebase replays each local commit at **~13–37 ms** (measured at 1/5/20/50 commits, noisy on SD under load), so a day's fleet divergence of 20–60 commits is roughly **0.3–1.8 s** of replay — 1–6% of `sync`'s 30 s budget. **This is safe to land only because #156 landed first.** Under the old 2-second SessionStart budget a denser graph would have made the killed-rebase wedge *more* likely, which is the outage this programme exists to close; #156 moved the rebase to a door with an honest budget, and the ordering in the programme is load-bearing rather than incidental.
+
+### Changed
 - **The SessionStart hook fast-forwards and never rewrites the live tree ([#156](https://github.com/Claudfather/Claudron/issues/156)).**
 
   **A budget that is right for latency is wrong for a history rewrite.** The hook ran `sync(pull=True)` on a 2 s budget: that commits whatever is on disk and then runs `git pull --rebase` in the live tree, and the only two outcomes of a 2 s rebase on a busy host are *nothing to do* and *killed part-way*. A killed replay detaches HEAD and leaves commits reachable from no branch. On the host that produced this issue the kill landed at 14:08:39 on 2026-09-09 — one pick completed, 58 pending, no conflict — and the tree sat detached until 20:22. SessionStart is not a rare event: hosts fire it on startup, resume, clear **and compaction**, so a long-running agent was rewriting its own vault at an unpredictable moment mid-session, and no discipline could prevent it.

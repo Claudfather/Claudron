@@ -421,3 +421,202 @@ class TestCaptureStdinTags:
     ):
         fm = self._capture_fm(vault_dir, capsys, monkeypatch, "Scalar Probe", 5)
         assert fm["tags"] == ["5"]
+
+
+# --- #157: capture is a commit ------------------------------------------------
+
+def _cgit(cwd: Path, *args: str):
+    import subprocess
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True,
+        env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+             "PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(cwd)},
+    )
+
+
+@pytest.fixture
+def git_vault(vault_dir: Path) -> Path:
+    """A vault that is a git repository, with a seed commit."""
+    _cgit(vault_dir, "init", "-q", "-b", "main")
+    _cgit(vault_dir, "config", "user.email", "t@t")
+    _cgit(vault_dir, "config", "user.name", "t")
+    _cgit(vault_dir, "add", "-A")
+    _cgit(vault_dir, "commit", "-qm", "seed")
+    return vault_dir
+
+
+def _capture(vault: Path, title: str = "A Durable Finding", extra: list[str] | None = None):
+    # The body is DERIVED FROM THE TITLE so successive captures in one test are
+    # not deduped into `suggest_update` — which is what happened on the first
+    # run of the precedence test: two captures returned a dedup suggestion, wrote
+    # nothing, and the assertion read HEAD from the first one.
+    return main(["--vault", str(vault), "capture", "--type", "knowledge",
+                 "--title", title,
+                 "--body", f"It commits itself now: {title}, distinctly.",
+                 "--owner", "bench", *(extra or [])])
+
+
+class TestCaptureIsACommit:
+    """#157. A captured note was not durable until something else ran: the
+    write door wrote the file and `sync()` committed it later. On a live host
+    that window was twelve days and 62 paths, 17 under `_shared/knowledge/`, on
+    the storage whose failure is that host's known outage cause."""
+
+    def test_capture_commits_its_note_with_the_one_subject_format(
+            self, git_vault: Path, capsys, monkeypatch):
+        monkeypatch.setenv("CLAUDRON_ACTOR", "otis")
+        assert _capture(git_vault) == 0
+        out = capsys.readouterr().out
+        rel = out.split(": ", 1)[1].strip()
+        rel = str(Path(rel).relative_to(git_vault))
+        subject = _cgit(git_vault, "log", "-1", "--format=%s", "--", rel).stdout.strip()
+        assert subject == "capture(otis): A Durable Finding", subject
+        body = _cgit(git_vault, "log", "-1", "--format=%b", "--", rel).stdout
+        assert "type: knowledge" in body and f"path: {rel}" in body, body
+        assert not _cgit(git_vault, "status", "--porcelain", "--", rel).stdout.strip(), (
+            "the NOTE must be committed, not merely staged. Scoped to the note "
+            "rather than the tree: this fixture has no .gitignore, so the local "
+            "`.claudron/` index shows untracked and always would — asserting a "
+            "clean tree would be asserting something this change does not do.")
+
+    def test_capture_without_git_is_unchanged_and_SILENT(self, vault_dir: Path, capsys):
+        """Capture must work in a plain directory — and warn about nothing
+        there, or every capture of a perfectly good non-git vault carries a
+        warning about a commit nobody asked for."""
+        assert _capture(vault_dir) == 0
+        err = capsys.readouterr().err
+        assert "W108" not in err, err
+
+    def test_capture_on_a_wedged_tree_writes_and_WARNS(self, git_vault: Path, capsys):
+        """A capture must never repair a mid-surgery repository, and must never
+        be refused because of one — so the note lands, the commit does not, and
+        the warning says which.
+
+        THIS TEST ASSERTED NONE OF THAT and was named for all of it (review).
+        Its capture line read
+
+            out, err = capsys.readouterr().out, capsys.readouterr and capsys.readouterr().err
+
+        — `readouterr()` DRAINS the buffer, so the first call took `.out` and
+        emptied it, the middle term was a truthiness check on a bound method
+        (always true), and the third call returned `''`. So `err` was always
+        empty AND nothing asserted on it. A test named `..._and_WARNS` that
+        cannot observe the warning reads as coverage to every future reader,
+        including one deciding whether this path is safe to change.
+        """
+        (git_vault / ".git" / "rebase-merge").mkdir()
+        rc = _capture(git_vault, "Written During Surgery")
+        captured = capsys.readouterr()          # ONE call: it drains
+        err = captured.err
+
+        assert rc == 0, "a wedged tree must not fail the capture"
+        notes = list((git_vault / "_shared" / "knowledge").glob("written-during-surgery*"))
+        assert notes, "THE note must be on disk — that is the whole property"
+        assert notes[0].read_text().strip(), "the note is present but empty"
+
+        # The warning the name claims, and that it NAMES THE CAUSE: a bare W108
+        # would not tell an operator whether the tree is wedged or git refused.
+        assert "W108" in err, f"no warning on a wedged tree: {err!r}"
+        assert "NOT committed" in err, err
+        # KEYED ON THE INTERPOLATED CAUSE, not on prose that is always there.
+        # The first version of this assertion accepted "mid-surgery" — which
+        # appears in the message's STATIC tail ("a capture never repairs a
+        # mid-surgery repository"), so dropping `{interrupted}` entirely still
+        # passed it. Found by mutating the message, not by reading it. The
+        # dynamic half is `_interrupted_state`'s own words, and nothing else in
+        # this message says "stopped".
+        assert "is stopped part-way" in err, (
+            "the warning does not carry the INTERPOLATED cause — a bare W108 "
+            f"cannot tell an operator a wedged tree from a refused commit: {err!r}")
+
+        # And the stated fallback holds: uncommitted, so the safety net gets it.
+        assert _cgit(git_vault, "status", "--porcelain", "--",
+                     str(notes[0].relative_to(git_vault))).stdout.strip(), (
+            "the note must be left uncommitted for `claudron sync` to pick up")
+
+    def test_capture_subject_actor_precedence(self, git_vault: Path, capsys, monkeypatch):
+        monkeypatch.delenv("CLAUDRON_ACTOR", raising=False)
+        monkeypatch.setenv("BOT_NAME", "from-bot-name")
+        assert _capture(git_vault, "Precedence One") == 0
+        capsys.readouterr()
+        assert "capture(from-bot-name): Precedence One" in _cgit(
+            git_vault, "log", "-1", "--format=%s").stdout
+
+        monkeypatch.setenv("CLAUDRON_ACTOR", "from-actor")
+        assert _capture(git_vault, "Precedence Two") == 0
+        capsys.readouterr()
+        assert "capture(from-actor): Precedence Two" in _cgit(
+            git_vault, "log", "-1", "--format=%s").stdout
+
+        monkeypatch.delenv("CLAUDRON_ACTOR")
+        monkeypatch.delenv("BOT_NAME")
+        assert _capture(git_vault, "Precedence Three") == 0
+        capsys.readouterr()
+        assert "capture(operator): Precedence Three" in _cgit(
+            git_vault, "log", "-1", "--format=%s").stdout
+
+    def test_no_commit_writes_without_committing(self, git_vault: Path, capsys):
+        assert _capture(git_vault, "Batched Note", ["--no-commit"]) == 0
+        capsys.readouterr()
+        assert _cgit(git_vault, "status", "--porcelain").stdout.strip(), (
+            "--no-commit must leave the note uncommitted — that is its purpose")
+
+
+class TestAFailedCommitNeverLosesTheNote:
+    """#157 requirement 1, and the property the whole change rests on: this must
+    be STRICTLY ADDITIVE in durability. Write the file, THEN commit. Every
+    failure path leaves an uncommitted note, which is exactly the behaviour
+    being replaced — so no ordering here can end with the note neither written
+    nor committed, which would be worse than the defect being closed in the one
+    property it exists to improve.
+
+    Both steps are driven, because they fail for different reasons: a refused
+    `commit` (a pre-commit hook) and a refused `add` (a held index.lock)."""
+
+    def test_a_refused_COMMIT_leaves_the_note_on_disk_and_warns(
+            self, git_vault: Path, capsys):
+        hook = git_vault / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+
+        rc = _capture(git_vault, "Survives A Refused Commit")
+        out, err = capsys.readouterr()
+        assert rc == 0, "a failed commit must not fail the capture"
+        notes = list((git_vault / "_shared" / "knowledge").glob("survives-a-refused-commit*"))
+        assert notes, "THE NOTE IS GONE — this is the regression the requirement forbids"
+        assert notes[0].read_text().strip(), "the note is present but empty"
+        assert "W108" in err and "NOT committed" in err, err
+        # And the safety net can still pick it up — the stated fallback.
+        assert _cgit(git_vault, "status", "--porcelain").stdout.strip()
+
+    def test_a_refused_ADD_leaves_the_note_on_disk_and_warns(
+            self, git_vault: Path, capsys):
+        lock = git_vault / ".git" / "index.lock"
+        lock.write_text("")            # git refuses to stage while this exists
+        try:
+            rc = _capture(git_vault, "Survives A Refused Add")
+            out, err = capsys.readouterr()
+            assert rc == 0, "a failed add must not fail the capture"
+            notes = list((git_vault / "_shared" / "knowledge").glob("survives-a-refused-add*"))
+            assert notes, "THE NOTE IS GONE — the requirement forbids this"
+            assert "W108" in err, err
+        finally:
+            lock.unlink(missing_ok=True)
+
+    def test_the_warning_rides_warnings_not_errors_in_json(self, git_vault: Path, capsys):
+        """A consumer keying on `errors` must not read an uncommitted note as a
+        failed write and retry a write that already succeeded."""
+        hook = git_vault / ".git" / "hooks" / "pre-commit"
+        hook.parent.mkdir(parents=True, exist_ok=True)
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        rc = main(["--vault", str(git_vault), "capture", "--json", "--type",
+                   "knowledge", "--title", "Json Shape", "--body", "b",
+                   "--owner", "o"])
+        env = json.loads(capsys.readouterr().out)
+        assert rc == 0 and env["ok"] is True, env
+        assert env["errors"] == [], env["errors"]
+        assert any(w["code"] == "W108" for w in env["warnings"]), env["warnings"]
+        assert env["data"]["written"] is True

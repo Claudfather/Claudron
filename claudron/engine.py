@@ -19,6 +19,7 @@ capture stales the index and fleet writes degrade to Θ(vault) each —
 
 from __future__ import annotations
 
+import os
 import json
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -65,6 +66,11 @@ class WriteResult:
     path: str  # written/updated note, or the existing note for suggestions
     reason: str
     errors: list[Finding] = field(default_factory=list)
+    #: Non-fatal Findings on a note that WAS written (#157). The note is on
+    #: disk; something about its surroundings is worth saying. Distinct from
+    #: ``errors``, which is non-empty exactly when nothing was written — so a
+    #: consumer must never treat a warning as a reason to retry the write.
+    warnings: list[Finding] = field(default_factory=list)
 
     @property
     def written(self) -> bool:
@@ -78,6 +84,7 @@ class WriteResult:
     def to_dict(self) -> dict:
         data = asdict(self)
         data["errors"] = [f.to_dict() for f in self.errors]
+        data["warnings"] = [f.to_dict() for f in self.warnings]
         data["written"] = self.written
         return data
 
@@ -239,6 +246,7 @@ def capture(
     project: str | None = None,
     fleet: str | None = None,
     force: bool = False,
+    no_commit: bool = False,
     source_url: str | None = None,
     source_type: str | None = None,
 ) -> WriteResult:
@@ -315,14 +323,109 @@ def capture(
         )
         write_index(vault, index)
 
+        # DURABLE ON RETURN (#157). Still inside `vault_write_lock`, which this
+        # door already holds — so the commit cannot interleave with another
+        # capture's write, and no second lock is taken.
+        #
+        # THE NOTE ALONE. The index lives under `.claudron/`, which the vault
+        # gitignores, so naming it here would stage an ignored path and fail the
+        # add on every capture — the index is a local derivative, rebuilt from
+        # the notes, and is deliberately not history.
+        #
+        # AFTER the write, always. A commit that fails here leaves an
+        # uncommitted note, which is exactly the behaviour this replaces — so
+        # the change is strictly additive in durability.
+        commit_warnings = [] if no_commit else _commit_written(
+            vault, [target], "capture", title, note_type,
+            _tier_label(project, fleet),
+        )
+
     return WriteResult(
         action="created",
         path=str(target),
         reason="strict-validated, no live duplicate" + (" (forced)" if force else ""),
+        warnings=commit_warnings,
     )
 
 
-def append_addendum(vault: Vault, note_path: Path, body: str) -> WriteResult:
+def _commit_subject(verb: str, title: str) -> str:
+    """``capture(<actor>): <title>`` — the one message format (#157).
+
+    Actor precedence is ``CLAUDRON_ACTOR``, then ``BOT_NAME``, then
+    ``operator``. The vault is private, which is what makes naming the writing
+    bot acceptable here; it is also what makes per-note attribution possible at
+    all under a shared git identity (Claudlobby #1039).
+    """
+    actor = (os.environ.get("CLAUDRON_ACTOR")
+             or os.environ.get("BOT_NAME")
+             or "operator").strip() or "operator"
+    # One line, no newlines from a title: a subject is a line.
+    return f"{verb}({actor}): " + " ".join(title.split())
+
+
+def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
+                    note_type: str, tier: str) -> list[Finding]:
+    """Commit what the door just wrote. Returns warnings, never raises.
+
+    **ORDERING IS THE DURABILITY PROPERTY (#157 requirement 1).** The caller has
+    already written the file. This runs after, so every failure path here leaves
+    an uncommitted note on disk — which is exactly today's behaviour and
+    therefore cannot be a regression in the one property the change exists to
+    improve. There is deliberately no path that touches the note again: nothing
+    here can end with the note neither written nor committed.
+
+    A vault that is not a git repository is SILENT, not warned: capture must
+    work in a plain directory, and a warning there would fire on every capture
+    of a perfectly good non-git vault.
+
+    A WEDGED TREE IS REFUSED, NOT ATTEMPTED, and still written. A capture must
+    never make a mid-surgery repository worse, and must never be refused because
+    of one — so the note lands, the commit does not, and the warning says which.
+    """
+    from .sync import (DEFAULT_GIT_TIMEOUT, SyncError, _git_dir,
+                       _interrupted_state, commit_paths)
+
+    t = DEFAULT_GIT_TIMEOUT
+    try:
+        git_dir = _git_dir(vault.root, t)
+    except SyncError:
+        return []          # no git binary: the same "not a git vault" case
+    if git_dir is None:
+        return []          # a plain directory — silent by design
+
+    rel = str(paths[0].relative_to(vault.root)) if paths else ""
+    def warn(msg: str) -> list[Finding]:
+        return [Finding(code="W108", severity="warning", path=rel,
+                        field=None, line=None, message=msg)]
+
+    try:
+        interrupted = _interrupted_state(vault.root, git_dir, t)
+    except SyncError as exc:
+        return warn(f"note written but NOT committed: {exc}")
+    if interrupted:
+        return warn(
+            f"note written but NOT committed: {interrupted} — a capture never "
+            "repairs a mid-surgery repository, and is never refused because of "
+            "one. Resolve the tree, then `claudron sync` commits this note."
+        )
+
+    subject = _commit_subject(verb, title)
+    body = f"type: {note_type}; tier: {tier}; path: {rel}"
+    try:
+        outcome = commit_paths(vault.root, paths, f"{subject}\n\n{body}",
+                               timeout=t)
+    except SyncError as exc:
+        return warn(f"note written but NOT committed: {exc}")
+    if not outcome.ok:
+        return warn(
+            f"note written but NOT committed (git {outcome.step} failed: "
+            f"{outcome.error}) — it is on disk and `claudron sync` will commit it"
+        )
+    return []
+
+
+def append_addendum(vault: Vault, note_path: Path, body: str, *,
+                    no_commit: bool = False) -> WriteResult:
     """Append a dated addendum section and bump `updated` — line-level
     edits only, the note's own formatting is preserved.
 
@@ -367,8 +470,18 @@ def append_addendum(vault: Vault, note_path: Path, body: str) -> WriteResult:
                 break
         write_index(vault, index)
 
+        # Same rule as capture (#157): written first, committed second, inside
+        # the lock already held. `addendum` rather than `capture` in the subject
+        # so the two write classes stay countable in `git log` — the same reason
+        # the safety net says "straggler(s)".
+        commit_warnings = [] if no_commit else _commit_written(
+            vault, [note_path], "addendum", fm.get("title") or rel,
+            str(fm.get("type") or "unknown"), "existing",
+        )
+
     return WriteResult(
         action="updated",
         path=str(note_path),
         reason=f"addendum appended, updated bumped to {today}",
+        warnings=commit_warnings,
     )
