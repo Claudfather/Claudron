@@ -485,10 +485,32 @@ def cmd_index(args) -> int:
         count, rebuilt = len(build_index(vault).get("entries", [])), True
         msg = f"indexed {count} docs"
 
+    nav = None
+    if getattr(args, "navigation", False):
+        from .navigation import write_navigation
+        nav = write_navigation(vault)
+
     if args.json:
-        _emit_json("index", {"entries": count, "rebuilt": rebuilt})
+        payload = {"entries": count, "rebuilt": rebuilt}
+        if nav is not None:
+            payload["navigation_written"] = [str(p) for p in nav.written]
+            payload["navigation_unchanged"] = [str(p) for p in nav.unchanged]
+            payload["navigation_preserved"] = nav.preserved
+            payload["navigation_dropped"] = nav.dropped
+            payload["navigation_skipped"] = nav.skipped
+            payload["navigation_engine_version"] = nav.engine_version
+            payload["navigation_bounds"] = nav.bound_lines()
+        _emit_json("index", payload)
     else:
         print(msg, file=sys.stderr)
+        if nav is not None:
+            print(f"navigation: {len(nav.written)} written, "
+                  f"{len(nav.unchanged)} already current "
+                  f"(engine {nav.engine_version})", file=sys.stderr)
+            # THE BOUND, ALWAYS (#1742) -- including when nothing was preserved
+            # or dropped, because that is exactly when silence is ambiguous.
+            for line in nav.bound_lines():
+                print(f"  {line}", file=sys.stderr)
     return 0
 
 
@@ -1456,6 +1478,11 @@ def main(argv=None) -> int:
     )
     p_index.add_argument(
         "--full", action="store_true", help="Force full rebuild even if fresh"
+    )
+    p_index.add_argument(
+        "--navigation", action="store_true",
+        help="also regenerate each directory's INDEX.md from the index (#155): "
+             "a derived navigation file is regenerated, never merged",
     )
 
     # version
