@@ -36,21 +36,28 @@ because one directory holds one odd line would be turned off within a week --
 at which point every `INDEX.md` is hand-edited again and the conflict class is
 back. Refusal protects the file; being switched off protects nothing.
 
-VERSION. The consumer contract is the RELEASE, not a constant in this file.
-Claudlobby #1723 gates on the engine version this door ships under: declared in
-`CHANGELOG.md` and read back through the sanctioned capability probe
-(`status --json` -> `data.engine_version`; `docs/CLI_CONTRACT.md` "Capability
-probe"). There is deliberately no second version constant here -- a private
-version sitting beside the sanctioned one only makes a consumer guess which of
-the two to read.
+DETECTION. A consumer asks for this door by NAME, never by version:
+`"navigation" in status --json -> data.capabilities` (`claudron.CAPABILITIES`;
+`docs/CLI_CONTRACT.md` "Capability probe"). That is register rule R5 --
+capability is declared to the owner, never inferred -- and it is the only form
+that works here. There is deliberately no version constant in this file either:
+a private version beside the sanctioned one only makes a consumer guess which
+to read.
 
-A `claudron index --navigation --help` probe CANNOT stand in for that gate, and
-the reason is mechanical rather than stylistic: argparse fires `--help` as a
-parse action and exits 0 BEFORE it reports unknown arguments, so the probe exits
-0 on an engine that has no navigation door at all. Measured against claudron
-0.4.0, whose `index --help` contains no "navigation": `index --navigation
---help` exits 0, while `index --navigation` without `--help` exits 2. A probe
-that passes on every engine ever shipped gates nothing.
+The three inferences a reader will reach for instead all fail, measured, and
+the reasons are mechanical rather than stylistic:
+
+* A VERSION FLOOR cannot be expressed. `engine_version` is `0.5.0.dev0` on a
+  build of this branch and `0.4.0` on the last release; PEP 440 sorts a dev
+  release BEFORE its release, so a `>= 0.5.0` floor is satisfied by neither and
+  can never pass.
+* A VERB probe (`claudron <verb> --help`, exit 2 on an unknown verb) cannot see
+  a new FLAG on a verb that already exists.
+* A FLAG probe (`claudron index --navigation --help`) cannot fail: argparse
+  fires `--help` as a parse action and exits 0 before reporting unknown
+  arguments, so it exits 0 on claudron 0.4.0, whose `index --help` contains no
+  "navigation". Control: the same engine exits 2 for `index --navigation`
+  without `--help`.
 """
 from __future__ import annotations
 

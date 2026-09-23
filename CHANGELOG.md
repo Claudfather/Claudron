@@ -6,37 +6,50 @@
 - **`claudron index --navigation` — `INDEX.md` becomes a DERIVED navigation file
   ([#155](https://github.com/Claudfather/Claudron/issues/155), PR 1 of 2).**
 
-  **THE ENGINE VERSION THIS DOOR SHIPS UNDER IS `0.5.0`.** Claudlobby
+  **HOW A CONSUMER DETECTS THIS DOOR — read this line and stop:**
+
+  ```python
+  caps = claudron_status_json["data"].get("capabilities", [])   # absent on older engines
+  if "navigation" in caps:
+      ...                                                        # the door is here
+  ```
+
+  `data.capabilities` is new in this entry and is now a **stable** field of
+  `status --json` (`docs/CLI_CONTRACT.md` §Capability probe). Claudlobby
   [#1723](https://github.com/Claudfather/Claudlobby/issues/1723) is blocked on
-  this door, and its compat floor gates on that number: the `navigation`
-  capability row in `claudlobby/claudron_compat.py` takes **minimum engine
-  version `0.5.0`**, read through the sanctioned capability probe — `status
-  --json` → `data.engine_version` (`docs/CLI_CONTRACT.md` §Capability probe).
-  It is stated as a number here, rather than left implicit in code, because a
-  consumer in another repo cannot ship until it can name it.
+  this door and should gate its `navigation` row on that name.
 
-  **The `claudron index --navigation --help` probe #1723's body proposes DOES
-  NOT WORK, and must not be wired into the floor.** argparse fires `--help` as a
-  parse action and exits 0 *before* it reports unknown arguments, so the probe
-  exits 0 for a flag that does not exist — it passes on every engine ever
-  shipped, including every one with no navigation door. Measured against the
-  engine installed on this estate, **0.4.0**, which has no door: `index --help`
-  contains no `navigation`, and `index --navigation --help` still exits **0**.
-  The control that attributes the failure: the same engine exits **2** for
-  `index --navigation` *without* `--help`, so the parser does reject the unknown
-  flag — it is `--help` short-circuiting that destroys the probe, not a
-  permissive parser. Both arms are pinned in
-  `claudron/tests/test_navigation.py::TestTheConsumerContractIsTheRelease`,
-  alongside a help-text assertion for the flag itself. **The version gate needs
-  no flag probe beside it**; one that cannot fail is worse than none, because it
-  reads as a second line of defence.
+  **Do NOT gate on the engine version, and this is the correction to an earlier
+  draft of this entry, which told you to.** That draft declared "minimum engine
+  version `0.5.0`" and invited a `>= 0.5.0` floor. Such a floor **can never
+  pass**: `engine_version` is `0.5.0.dev0` on a build of the branch that ships
+  the door and `0.4.0` on the last release, and PEP 440 sorts a dev release
+  *before* its release, so `0.5.0.dev0 < 0.5.0` and neither value satisfies it.
+  A declared interface a consumer cannot express is not a declaration, so the
+  version is no longer offered as one. (`>= 0.5.0.dev0` is the expressible form
+  if you must compare versions at all — but it gates on ship order, not on the
+  capability, and Claudlobby's own compat table says a row is met *"when the
+  capability answers, not when a version string compares"*.)
 
-  **One caveat the consumer owns**: `engine_version` is `"0.0.0-dev"` from an
-  uninstalled checkout, so a `>= 0.5.0` comparison gates a dev checkout that
-  *does* have the door **off**. That is the safe direction — the old ritual
-  composes and nothing instructs a bot to run a flag its engine may lack — but
-  it is a false negative a developer will hit, and #1723 should decide it
-  deliberately rather than discover it.
+  **Nor with a `--help` probe.** #1723's body proposes
+  `claudron index --navigation --help` resolving with exit 0, on the grounds
+  that argparse exits 2 for an unknown flag. It does not: argparse fires
+  `--help` as a parse action and exits 0 *before* it reports unknown arguments,
+  so that probe exits **0** on an engine with no such flag — it passes on every
+  engine ever shipped. Measured against **0.4.0**, which has no door and whose
+  `index --help` contains no `navigation`. The control that attributes it: the
+  same engine exits **2** for `index --navigation` *without* `--help`, so the
+  parser does reject the flag; `--help` merely short-circuits first. Both arms
+  are pinned in `claudron/tests/test_navigation.py`.
+
+  A **verb** probe (`claudron <verb> --help`, which genuinely does exit 2 on an
+  unknown verb) cannot help either, because `index` has been a verb since long
+  before `--navigation`. Those three dead ends are why the capability is
+  declared by name: register rule R5, *capability is declared to the owner,
+  never inferred*.
+
+  `engine_version` keeps its job — identity and health — and loses one it never
+  did well.
 
   **The ruling this door is built around: a generator that drops what it does
   not know about is a silent deletion.** Existing `INDEX.md` files carry

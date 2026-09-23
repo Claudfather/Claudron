@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__
+from . import CAPABILITIES, __version__
 from .engine import ScopeError, append_addendum, capture, compose_note, resolve_target_dir
 from .schema import (
     MATURITY_VALUES,
@@ -300,7 +300,8 @@ def cmd_status(args) -> int:
         # the engine's version off the envelope they already parse for the
         # vault path, instead of each maintaining a private detection ladder.
         # Presentation-layer only: vault.status() stays a pure vault summary.
-        _emit_json("status", {**info, "engine_version": __version__})
+        _emit_json("status", {**info, "engine_version": __version__,
+                              "capabilities": list(CAPABILITIES)})
         return 0
 
     print(f"vault: {info['root']}")

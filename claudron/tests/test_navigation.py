@@ -388,11 +388,47 @@ class TestADescriptionIsNotSilentlyDeleted:
         assert "nothing in any file was unaccounted for" not in bound
 
 
-class TestTheConsumerContractIsTheRelease:
-    """Claudlobby #1723 gates on the engine version this door ships under --
-    declared in `CHANGELOG.md`, read back through `status --json` ->
-    `data.engine_version`. NOT on a constant in `navigation.py`, and NOT on the
-    `index --navigation --help` probe #1723's body proposes."""
+class TestTheConsumerContractIsTheDeclaredCapability:
+    """Claudlobby #1723 detects this door by NAME -- `"navigation" in
+    status --json -> data.capabilities` -- and by nothing else.
+
+    NOT by an engine-version floor: `engine_version` is `X.Y.Z.devN` on a build
+    of the branch that ships a feature and the PREVIOUS release otherwise, and
+    PEP 440 sorts a dev release before its release, so the `>= 0.5.0` an earlier
+    draft of the CHANGELOG invited is satisfied by neither and can never pass.
+    NOT by the `index --navigation --help` probe #1723's body proposes, which
+    cannot fail. Register rule R5: capability is declared, never inferred."""
+
+    def test_the_engine_declares_the_navigation_capability(self):
+        """THE GATE. Removing the door must remove the name, or a consumer is
+        told a door is there when it is not."""
+        from claudron import CAPABILITIES
+        assert "navigation" in CAPABILITIES
+
+    def test_status_json_carries_the_declaration(self, tmp_path, capsys):
+        """The declaration has to reach the consumer through the envelope it
+        already parses -- a constant no door exposes gates nothing."""
+        import json
+        from claudron.cli import main
+        _note(tmp_path / "_shared" / "knowledge", "n1")
+        _vault(tmp_path)
+        assert main(["--vault", str(tmp_path), "status", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert "navigation" in data["capabilities"], data.get("capabilities")
+
+    def test_the_version_is_not_the_gate(self, tmp_path, capsys):
+        """Pinned because an earlier draft of the CHANGELOG said it was, and a
+        consumer wrote `>= 0.5.0` against a value that never reaches it. The
+        version is still REPORTED -- it is identity and health -- it is just not
+        what anyone gates on."""
+        import json
+        from claudron.cli import main
+        _note(tmp_path / "_shared" / "knowledge", "n1")
+        _vault(tmp_path)
+        assert main(["--vault", str(tmp_path), "status", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["engine_version"]            # reported...
+        assert "capabilities" in data            # ...but this is the gate
 
     def test_index_advertises_the_navigation_flag(self, capsys):
         """The capability the CHANGELOG's version declaration promises.

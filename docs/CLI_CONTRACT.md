@@ -73,26 +73,35 @@ consumer that needs a newer field guards on it; it never infers the engine's
 version from an installed package pin, a plugin manifest, or a private
 detection ladder.
 
-**Gate a per-feature capability on this version, never on a `--help` probe.**
-A feature that a consumer must detect declares its engine version in its
-CHANGELOG entry (`index --navigation` declares **0.5.0**); the consumer compares
-`engine_version` against it. Probing the flag instead does not work and is not a
-fallback: argparse fires `--help` as a parse action and exits 0 **before** it
-reports unknown arguments, so `claudron index --navigation --help` exits 0 on an
-engine that has no such flag. Measured against 0.4.0, whose `index --help`
-contains no `navigation`: the probe exits 0, while `index --navigation` without
-`--help` exits 2 on the same engine — the parser does reject the flag, `--help`
-merely short-circuits first. A probe that cannot fail is worse than none.
-`engine_version` is `"0.0.0-dev"` from an uninstalled checkout, so a `>=`
-comparison gates a dev checkout that has the feature **off**; that is the safe
-direction, but a consumer should choose it deliberately.
+### Gate a per-feature capability on `capabilities`, never on the version
+
+`data.capabilities` is the list of named features this engine ships — the
+**declaration**, per register rule R5: *capability is declared to the owner,
+never inferred*. A consumer asks `"navigation" in data["capabilities"]` and
+nothing else. Absent on an engine that predates the list, which is the correct
+answer for every capability in it.
+
+**`engine_version` is NOT a feature gate, and cannot be made into one.** It
+answers *"is an engine here, and which one?"*; it does not answer *"can it do
+X"*. Three ways of inferring the answer from it were measured and all three
+fail:
+
+| inference | why it fails |
+|---|---|
+| a version floor, e.g. `>= 0.5.0` | **Cannot be expressed.** `engine_version` is `0.5.0.dev0` on a build of the branch that ships the feature and `0.4.0` on the last release. PEP 440 sorts a dev release *before* its release, so `0.5.0.dev0 < 0.5.0`: the floor a CHANGELOG naturally invites is satisfied by **neither**, and the gate can never pass. `>= 0.5.0.dev0` is the expressible form, but it still gates on ship order rather than on the capability. |
+| a **verb** probe (`claudron <verb> --help`; exit 2 on an unknown verb, measured) | Cannot see a new **flag** on a verb that already exists — `index` has been a verb since long before `--navigation`. |
+| a **flag** probe (`claudron index --navigation --help`) | **Cannot fail.** argparse fires `--help` as a parse action and exits 0 *before* it reports unknown arguments, so this exits 0 on an engine with no such flag — measured against 0.4.0, whose `index --help` contains no `navigation`. The control: the same engine exits **2** for `index --navigation` *without* `--help`, so the parser does reject it; `--help` merely short-circuits first. A probe that cannot fail is worse than none, because it reads as a second line of defence. |
+
+`engine_version` remains what it always was — identity and health, reported and
+logged. `capabilities` is the gate.
 
 These `data` fields of `status --json` are **stable** — machine consumers may
 rely on them, and removing or retyping one is a breaking change:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `engine_version` | string | Installed engine version. `"0.0.0-dev"` when running from an uninstalled checkout. |
+| `engine_version` | string | Installed engine version — identity and health, **never a feature gate** (above). `"0.0.0-dev"` when running from an uninstalled checkout; `X.Y.Z.devN` on a build between releases. |
+| `capabilities` | array of string | Named features this engine ships (`claudron.CAPABILITIES`). **The feature gate.** Absent on an engine predating the list; a name is never removed or renamed without a breaking-change entry. |
 | `root` | string | Absolute path of the resolved vault. |
 | `total_docs` / `total_stale` | int | Vault-wide note counts. |
 | `tiers` | object | Per-tier `{docs, stale, path}`. |
