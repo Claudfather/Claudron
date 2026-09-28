@@ -12,6 +12,10 @@
   the `claudron` name on PyPI belongs to an unrelated project, so the job could
   only fail, and `pip install claudron` installs someone else's package. Install
   from the tag: `pip install 'claudron @ git+https://github.com/Claudfather/Claudron.git@v0.5.0'`.
+- **Release from a button.** `release.yml` also runs from *Actions → Release → Run
+  workflow* on `main`: it tags `v<pyproject version>` on that commit and creates the
+  Release, so no local tag push is needed. Manual runs refuse any ref but `main` and
+  refuse a tag that already exists.
 
 ### Added
 - **`claudron index --navigation` — `INDEX.md` becomes a DERIVED navigation file
