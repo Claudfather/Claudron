@@ -1,6 +1,14 @@
 name: Release
 
-# Runs on version tags. Consumers install claudron from a git tag
+# Two ways to release, one job:
+#   * push a tag `vX.Y.Z`             -> releases that tag;
+#   * Actions -> Release -> Run workflow on `main`
+#                                     -> tags `v<pyproject version>` on the run's
+#                                        commit and releases it (no local tag push
+#                                        needed). The version comes from
+#                                        pyproject.toml -- there are no inputs.
+#
+# Consumers install claudron from a git tag
 # (`claudron @ git+https://github.com/Claudfather/Claudron.git@vX.Y.Z`), so the
 # tag IS the release; this workflow verifies it and publishes a GitHub Release
 # with the built sdist + wheel attached.
@@ -13,6 +21,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -29,31 +38,53 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # create the GitHub Release
+      contents: write  # create the tag (dispatch) and the GitHub Release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # #136 item 1: the tag must name exactly the version being built, and a
+      # #136 item 1: a release must name exactly the version being built, and a
       # pre-release version (e.g. 0.5.0.dev0) must never ship under a release tag.
-      - name: Tag matches package version
-        run: |
-          python - <<'EOF'
-          import os, re, sys, tomllib
-          tag = os.environ["GITHUB_REF_NAME"]
-          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
-          if tag != f"v{version}":
-              sys.exit(f"tag {tag} does not match pyproject version {version}")
-          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-              sys.exit(f"refusing to release pre-release version {version} under tag {tag}")
-          print(f"ok: {tag} == v{version}")
-          EOF
-      - run: pip install build && python -m build
-      - name: Create GitHub Release
+      # A manual run may only release main, and never re-release an existing tag.
+      - name: Resolve and verify the release tag
+        id: tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "claudron $GITHUB_REF_NAME" \
-            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$GITHUB_REF_NAME/CHANGELOG.md). Install: \`pip install 'claudron @ git+https://github.com/${{ github.repository }}.git@$GITHUB_REF_NAME'\`"
+          python - <<'EOF'
+          import os, re, sys, tomllib
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              sys.exit(f"refusing to release pre-release version {version}")
+          want = f"v{version}"
+          if os.environ["GITHUB_EVENT_NAME"] == "push":
+              tag = os.environ["GITHUB_REF_NAME"]
+              if tag != want:
+                  sys.exit(f"tag {tag} does not match pyproject version {version}")
+          else:
+              if os.environ["GITHUB_REF"] != "refs/heads/main":
+                  sys.exit(f"manual releases run on main only (got {os.environ['GITHUB_REF']})")
+              tag = want
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"name={tag}\n")
+          print(f"ok: releasing {tag}")
+          EOF
+      - name: Refuse to re-release an existing tag (manual runs)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          if gh api "repos/${{ github.repository }}/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag $TAG already exists — bump the version in pyproject.toml first"; exit 1
+          fi
+      - run: pip install build && python -m build
+      - name: Create GitHub Release (and, for manual runs, the tag)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" \
+            --title "claudron $TAG" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$TAG/CHANGELOG.md). Install: \`pip install 'claudron @ git+https://github.com/${{ github.repository }}.git@$TAG'\`"
