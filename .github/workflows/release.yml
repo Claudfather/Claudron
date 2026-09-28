@@ -1,9 +1,15 @@
-name: Release to PyPI
+name: Release
 
-# Publishes on version tags via PyPI Trusted Publishing (OIDC) — no API
-# token stored anywhere. One-time setup on pypi.org: project `claudron` →
-# Publishing → add GitHub publisher (owner Claudfather, repo Claudron,
-# workflow release.yml, environment pypi).
+# Runs on version tags. Consumers install claudron from a git tag
+# (`claudron @ git+https://github.com/Claudfather/Claudron.git@vX.Y.Z`), so the
+# tag IS the release; this workflow verifies it and publishes a GitHub Release
+# with the built sdist + wheel attached.
+#
+# PyPI publishing is deliberately NOT wired: the `claudron` name on PyPI belongs
+# to an unrelated project (github.com/locngoduc/claudron, since 2026-09-02), so
+# a publish job could only fail — and `pip install claudron` must never be what
+# our docs tell anyone to run. Re-add a PyPI job only once a distribution name
+# we own is decided (see #136).
 on:
   push:
     tags: ["v*"]
@@ -19,18 +25,35 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: pytest -q
 
-  publish:
+  release:
     needs: test
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
-      id-token: write  # OIDC for trusted publishing
-      contents: read
+      contents: write  # create the GitHub Release
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install build
-      - run: python -m build
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      # #136 item 1: the tag must name exactly the version being built, and a
+      # pre-release version (e.g. 0.5.0.dev0) must never ship under a release tag.
+      - name: Tag matches package version
+        run: |
+          python - <<'EOF'
+          import os, re, sys, tomllib
+          tag = os.environ["GITHUB_REF_NAME"]
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          if tag != f"v{version}":
+              sys.exit(f"tag {tag} does not match pyproject version {version}")
+          if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+              sys.exit(f"refusing to release pre-release version {version} under tag {tag}")
+          print(f"ok: {tag} == v{version}")
+          EOF
+      - run: pip install build && python -m build
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "claudron $GITHUB_REF_NAME" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$GITHUB_REF_NAME/CHANGELOG.md). Install: \`pip install 'claudron @ git+https://github.com/${{ github.repository }}.git@$GITHUB_REF_NAME'\`"
