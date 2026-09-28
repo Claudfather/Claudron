@@ -134,6 +134,35 @@ class TestSyncRoundTrip:
         result = sync(detect(root), pull=False, push=False)
         assert result.committed, f"commit dropped on an identity-less host: {result.detail}"
 
+    def test_rebase_and_pull_get_the_fallback_identity_too(self, tmp_path, monkeypatch):
+        """A rebase REPLAYS commits and needs a committer identity just like a
+        commit does. With the fallback applied to `commit` only, an identity-less
+        host's divergent sync failed its rebase and reported a false
+        "integration conflicted ... unknown paths" (the #158 worktree path) —
+        caught when the release workflow ran the suite without the identity
+        step that tests.yml has. Read-only commands must stay untouched."""
+        import subprocess
+        from claudron import sync as sync_mod
+
+        seen: list[list[str]] = []
+        monkeypatch.setattr(sync_mod, "_has_git_identity", lambda root: False)
+        monkeypatch.setattr(
+            sync_mod.subprocess, "run",
+            lambda argv, **kw: seen.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
+        )
+        for args in (("commit", "-m", "x"), ("rebase", "abc123"),
+                     ("pull", "--rebase"), ("fetch", "origin"), ("merge", "--ff-only", "x")):
+            sync_mod.run_git(tmp_path, *args)
+
+        # argv is ["git", "-C", root, *prefix, *args]; the subcommand is the
+        # first element after the optional `-c key=value` prefix pairs.
+        by_cmd = {}
+        for argv in seen:
+            cmd = next(a for a in argv[3:] if not a.startswith("-") and "=" not in a)
+            by_cmd[cmd] = "user.name=Claudron" in argv
+        assert by_cmd == {"commit": True, "rebase": True, "pull": True,
+                          "fetch": False, "merge": False}, by_cmd
+
     def test_sync_json_envelope(self, synced_pair, capsys):
         a, _ = synced_pair
         rc = main(["--vault", str(a), "sync", "--json"])

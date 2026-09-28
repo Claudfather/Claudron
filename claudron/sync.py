@@ -105,6 +105,13 @@ class SyncTimeout(SyncError):
 # configured; a user's own identity is preserved whenever present.
 _FALLBACK_IDENTITY = ("-c", "user.name=Claudron", "-c", "user.email=claudron@claudron.invalid")
 
+# Every subcommand sync runs that WRITES commits, not only `commit`: a rebase
+# replays commits and needs a committer identity too. With `commit` alone, a
+# bare host's divergent sync failed its rebase and reported a false
+# "integration conflicted ... unknown paths" (worktree path, #158) or a failed
+# pull (in-place path).
+_WRITES_COMMITS = frozenset({"commit", "rebase", "pull"})
+
 
 def _has_git_identity(root: Path) -> bool:
     """True when a commit identity (user.name AND user.email) is configured for
@@ -135,7 +142,7 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     never silently fail on a bare host (#91); a configured identity always
     wins."""
     prefix: list[str] = []
-    if args and args[0] == "commit" and not _has_git_identity(root):
+    if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
         prefix = list(_FALLBACK_IDENTITY)
     try:
         return subprocess.run(
