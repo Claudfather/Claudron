@@ -174,42 +174,81 @@ class TestSyncRoundTrip:
 
 
 class TestConflictQuarantine:
+    """Since #193 a conflict never reaches the live tree: it is reported by
+    path and the local copy stays exactly as the human left it. Quarantine
+    still guards notes that ARRIVE carrying markers (committed that way on
+    another machine) — detection is stateless, on the file's content."""
+
+    NOTE = "_shared/knowledge/shared-note.md"
+
     def _make_conflict(self, synced_pair, capsys) -> tuple[Path, Path]:
         a, b = synced_pair
-        note_rel = "_shared/knowledge/shared-note.md"
-        (a / note_rel).write_text(
-            (a / note_rel).read_text().replace("Original line.", "A's truth.")
+        (a / self.NOTE).write_text(
+            (a / self.NOTE).read_text().replace("Original line.", "A's truth.")
         )
         assert main(["--vault", str(a), "sync"]) == 0
         capsys.readouterr()
-        (b / note_rel).write_text(
-            (b / note_rel).read_text().replace("Original line.", "B's truth.")
+        (b / self.NOTE).write_text(
+            (b / self.NOTE).read_text().replace("Original line.", "B's truth.")
         )
-        return b, b / note_rel
+        return b, b / self.NOTE
 
-    def test_conflict_reports_and_quarantines(self, synced_pair, capsys):
+    def _land_markers(self, synced_pair, capsys) -> tuple[Path, Path]:
+        """A commits a half-resolved note; B pulls it cleanly."""
+        a, b = synced_pair
+        (a / self.NOTE).write_text(
+            (a / self.NOTE).read_text().replace(
+                "Original line.",
+                "<<<<<<< HEAD\nA's truth.\n=======\nB's truth.\n>>>>>>> theirs",
+            )
+        )
+        _git(a, "commit", "-am", "half-resolved")
+        _git(a, "push", "origin", "HEAD")
+        # A clean pull: exit 0, and the landed note is NAMED, not hidden.
+        assert main(["--vault", str(b), "sync"]) == 0
+        assert (f"quarantined until resolved: {self.NOTE}"
+                in capsys.readouterr().err)
+        return b, b / self.NOTE
+
+    def test_conflict_is_reported_by_path_and_the_live_copy_is_untouched(
+        self, synced_pair, capsys
+    ):
         b, note = self._make_conflict(synced_pair, capsys)
+        before = note.read_text()
         rc = main(["--vault", str(b), "sync"])
         assert rc == 1  # findings: conflict left for the human
         err = capsys.readouterr().err
         assert "conflict" in err.lower()
+        assert self.NOTE in err
+        assert "not integrated, live copy unchanged" in err
+        assert note.read_text() == before          # B's truth, no markers
+        assert not has_conflict_markers(note.read_text())
+        assert not (b / ".git" / "rebase-merge").exists()
+
+    def test_unintegrated_note_is_still_served(self, synced_pair, capsys):
+        """No markers on disk → nothing to quarantine: recall keeps serving
+        the local copy until the human integrates."""
+        b, _ = self._make_conflict(synced_pair, capsys)
+        main(["--vault", str(b), "sync"])
+        capsys.readouterr()
+        assert main(["--vault", str(b), "lookup", "Shared Note"]) == 0
+        assert "Shared Note" in capsys.readouterr().out
+
+    def test_arrived_markers_are_quarantined(self, synced_pair, capsys):
+        _, note = self._land_markers(synced_pair, capsys)
         assert has_conflict_markers(note.read_text())
 
     def test_quarantined_note_excluded_from_recall_and_lookup(
         self, synced_pair, capsys
     ):
-        b, note = self._make_conflict(synced_pair, capsys)
-        main(["--vault", str(b), "sync"])
-        capsys.readouterr()
+        b, _ = self._land_markers(synced_pair, capsys)
         rc = main(["--vault", str(b), "lookup", "Shared Note"])
         assert rc == 0
         captured = capsys.readouterr()
         assert "Shared Note" not in captured.out  # quarantined, not served
 
     def test_status_surfaces_quarantine(self, synced_pair, capsys):
-        b, _ = self._make_conflict(synced_pair, capsys)
-        main(["--vault", str(b), "sync"])
-        capsys.readouterr()
+        b, _ = self._land_markers(synced_pair, capsys)
         rc = main(["--vault", str(b), "status"])
         assert rc == 0
         captured = capsys.readouterr()
@@ -217,9 +256,7 @@ class TestConflictQuarantine:
 
     def test_resolution_is_stateless(self, synced_pair, capsys):
         """Fix the file → it leaves quarantine with no bookkeeping step."""
-        b, note = self._make_conflict(synced_pair, capsys)
-        main(["--vault", str(b), "sync"])
-        capsys.readouterr()
+        b, note = self._land_markers(synced_pair, capsys)
         note.write_text(
             "---\ntitle: Shared Note\ntype: knowledge\nstatus: current\n"
             "owner: t\ncreated: 2026-07-01\nupdated: 2026-07-02\n"
@@ -480,8 +517,8 @@ class TestTimeoutIsReportedNotRaised:
         real = sync_mod.run_git
 
         def fake(root, *args, **kw):
-            if args and args[0] == "pull":
-                raise SyncTimeout("git pull --rebase timed out")
+            if args and args[0] == "fetch":
+                raise SyncTimeout("git fetch timed out")
             return real(root, *args, **kw)
 
         monkeypatch.setattr(sync_mod, "run_git", fake)
@@ -502,9 +539,9 @@ class TestTimeoutIsReportedNotRaised:
         real = sync_mod.run_git
 
         def fake(root, *args, **kw):
-            if args and args[0] == "pull":
+            if args and args[0] == "fetch":
                 (Path(root) / ".git" / "rebase-merge").mkdir(parents=True, exist_ok=True)
-                raise SyncTimeout("git pull --rebase timed out")
+                raise SyncTimeout("git fetch timed out")
             return real(root, *args, **kw)
 
         monkeypatch.setattr(sync_mod, "run_git", fake)
@@ -1583,7 +1620,7 @@ def _classify_kill_run(marker: Path, result, before: tuple, after: tuple
 
 
 class TestTheLiveTreeOnlyFastForwards:
-    """#158 phase 1. THE SAFETY PROPERTY IS THE DELIVERABLE, so every test here
+    """#158 phase 1, unconditional since #193. THE SAFETY PROPERTY IS THE DELIVERABLE, so every test here
     stops an integration for real and asserts the live tree is byte-identical.
 
     The harm being prevented, measured 2026-09-09: a stopped rebase checked out
@@ -1592,10 +1629,6 @@ class TestTheLiveTreeOnlyFastForwards:
     a review reported the fleet as having no charter and no projects file, and
     the fleet re-drafted both. Nobody saw a deletion; they saw an absence.
     """
-
-    @pytest.fixture(autouse=True)
-    def _armed(self, monkeypatch):
-        monkeypatch.setenv(sync_mod.WORKTREE_FLAG, "1")
 
     def _diverge(self, a: Path, b: Path, *, conflict: bool):
         """Both sides commit. With `conflict`, on the SAME line of the SAME file —

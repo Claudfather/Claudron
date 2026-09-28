@@ -41,7 +41,7 @@ claudron/
   structure.py    # Vault directory-structure validation (VAULT-STRUCTURE.md)
   graph.py        # Wikilink graph: related, links, HTML render
   session.py      # Session loop: recall + the injectable brief
-  sync.py         # Git leg: commit, pull --rebase, push, quarantine
+  sync.py         # Git leg: commit, off-tree integrate, push, quarantine
   hooks.py        # Claude Code lifecycle adapters (fail-open)
   locking.py      # flock + atomic writes (the write-safety floor)
   promote.py      # Maturity promotion (E5)

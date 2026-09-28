@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Changed (breaking)
+- **Worktree integration is now the only way `sync` integrates; `CLAUDRON_SYNC_WORKTREE` is gone ([#193](https://github.com/Claudfather/Claudron/issues/193)).**
+
+  #158 shipped off-tree integration behind an opt-in switch. A switch that makes the live tree unable to wedge should not be something an operator has to know to turn on, so it is now unconditional and the in-place `pull --rebase` is deleted rather than kept as a fallback. Setting the variable does nothing, and unsetting it no longer brings the old path back.
+
+  What changes for a caller:
+  - **A conflict leaves no markers.** It is reported by path in `detail`, the local copy stays exactly as it was and is still served by recall, and the clone is left un-integrated for the human to resolve on the default branch. On a failed integration (`pulled: false`), `quarantined` names the notes that could not be integrated. After a clean pull it still names notes that *arrived* carrying markers, and those are still excluded from search. The CLI line now says which case applies: `not integrated, live copy unchanged` vs `quarantined until resolved`.
+  - **`sync` never starts a rebase in the live tree, so it never aborts one.** A clone left mid-rebase by something else is refused, and `sync --check` still names it.
+  - **A timeout during fetch, fast-forward or reset** is reported in `detail`, not raised (#147 defect 3 still holds).
+
+  Migration: remove `CLAUDRON_SYNC_WORKTREE=1` from any job or env file (Claudlobby's `vault-sync` included) once the pin reaches this release. Leaving it set is harmless.
+
 ## 0.5.0 — 2026-09-28
 
 ### Fixed (release blocker)

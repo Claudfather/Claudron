@@ -829,8 +829,13 @@ def cmd_sync(args) -> int:
         print(f"sync: {', '.join(parts) if parts else 'nothing to do'}")
         if result.detail:
             print(result.detail, file=sys.stderr)
+        # A failed integration names notes it COULD NOT INTEGRATE (the live
+        # copy is untouched and still served); a clean pull names notes that
+        # arrived carrying markers (excluded from search until resolved).
+        label = ("quarantined until resolved" if result.pulled
+                 else "not integrated, live copy unchanged")
         for path in result.quarantined:
-            print(f"conflict — quarantined until resolved: {path}", file=sys.stderr)
+            print(f"conflict — {label}: {path}", file=sys.stderr)
     return 0 if result.ok else 1
 
 
@@ -1338,7 +1343,7 @@ def main(argv=None) -> int:
     # sync
     p_sync = sub.add_parser(
         "sync",
-        help="Commit vault changes, pull --rebase, push (the SD-card git leg)",
+        help="Commit vault changes, integrate the upstream off the live tree, push (the SD-card git leg)",
         parents=[vault_parent, json_parent],
     )
     p_sync.add_argument(
