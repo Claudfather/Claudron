@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.5.0 — 2026-09-28
+
+### Release process
+- **Releases are git tags + GitHub Releases, not PyPI ([#136](https://github.com/Claudfather/Claudron/issues/136)).**
+  `release.yml` now refuses a tag that does not equal the `pyproject` version and
+  refuses any pre-release version under a release tag (#136 item 1), then attaches
+  the built sdist + wheel to a GitHub Release. The PyPI publish job is removed:
+  the `claudron` name on PyPI belongs to an unrelated project, so the job could
+  only fail, and `pip install claudron` installs someone else's package. Install
+  from the tag: `pip install 'claudron @ git+https://github.com/Claudfather/Claudron.git@v0.5.0'`.
+
 ### Added
 - **`claudron index --navigation` — `INDEX.md` becomes a DERIVED navigation file
   ([#155](https://github.com/Claudfather/Claudron/issues/155), PR 1 of 2).**
