@@ -32,6 +32,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e '.[dev]'
+      # Deliberately NO git identity here (tests.yml sets one): this run is the
+      # bare-host check — a fresh Pi or container has no identity, and the
+      # engine must still sync there. It caught the rebase-identity bug in 0.5.0.
       - run: pytest -q
 
   release:

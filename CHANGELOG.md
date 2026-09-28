@@ -4,6 +4,17 @@
 
 ## 0.5.0 — 2026-09-28
 
+### Fixed (release blocker)
+- **An identity-less host's divergent sync no longer fails as a false conflict.**
+  The #91 fallback git identity was injected for `commit` only, but a rebase
+  replays commits and needs one too. On a host with no git identity (a fresh Pi,
+  a container) every divergent sync failed its rebase: the #158 worktree path
+  reported `integration conflicted ... unknown paths`, the in-place path a failed
+  pull. `run_git` now injects the fallback for `commit`, `rebase` and `pull`;
+  a configured identity still always wins. Found because the release workflow
+  runs the suite without the identity step `tests.yml` has — it now stays that
+  way on purpose, as the bare-host check.
+
 ### Release process
 - **Releases are git tags + GitHub Releases, not PyPI ([#136](https://github.com/Claudfather/Claudron/issues/136)).**
   `release.yml` now refuses a tag that does not equal the `pyproject` version and
