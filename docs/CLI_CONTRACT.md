@@ -354,7 +354,7 @@ stdout, and never to stderr where a host might surface them as a session error.
 
 | Group | Commands |
 |---|---|
-| vault | `init`, `status`, `validate`, `index` |
+| vault | `init`, `status`, `validate`, `doctor`, `index` |
 | notes | `new`, `lookup`, `related`, `links`, `graph` |
 | session | `recall`, `capture`, `sync`, `hooks` *(E2)* |
 | fleet | `fleet add`, `fleet list` |
@@ -374,6 +374,45 @@ stdout, and never to stderr where a host might surface them as a session error.
   exactly what the engine/bot write paths will accept. The `--json` envelope
   carries structure findings but no per-finding fixability flag; a machine
   consumer derives it from the code (`S1` is the fixable structure code).
+- `doctor [--fix]` — **the vault's health-and-migration door** (#190). Diagnoses
+  the vault against *this* engine's rules and names what `--fix` would change.
+  - **Read-only unless `--fix` is passed** — no file, index or journal is
+    written, which a test pins by fingerprinting the tree around a diagnosis.
+    Its git leg is `sync --check`'s verdict (read-only, offline).
+  - **Findings** are ordinary `Finding`s in the envelope: structure codes `S1`–`S4`
+    as `validate` reports them, plus the `D` codes below. Exit **1** when any
+    finding is an error, else **0** — the §Exit codes rule, no special case.
+
+    | Code | Severity | Meaning | `--fix` acts? |
+    |---|---|---|---|
+    | `D001` | error | A migration is pending: the vault's format is older than the engine's | yes |
+    | `D002` | error / warning | Notes carry schema findings (a count; `validate` has the detail) | no |
+    | `D003` | warning | The index has drifted from the notes — `claudron index` | no |
+    | `D004` | warning | Git health is not `clean`/`ahead`/`behind` (the `sync --check` verdict) | no |
+    | `D005` | error | *(`--fix` only)* A migration needs a human decision; the chain stopped | — |
+    | `D006` | error | *(`--fix` only)* A migration ran but is still needed; the chain stopped | — |
+
+  - **`data`**: `vault_format` / `engine_format` (int — the vault is current when
+    no migration between them is pending), `pending` (`[{id, version, title}]`),
+    `fixable` (migration ids and finding codes `--fix` acts on), `schema`
+    (`{errors, warnings}`), `index` (the `status` divergence dict), `git` (the
+    `sync --check` `data`, or `null` for a vault that is not a git repository —
+    a legal vault, so not a finding), `fixed` (bool). With `--fix` also:
+    `applied` (migration ids, in order), `repairs` (one line per action), and
+    `commit` (`{committed, message, error}`, or `null` when nothing was written).
+  - **`--fix`** applies fixable structure repairs, then pending migrations **in
+    format order**, under the vault write lock. Migrations are idempotent,
+    creation- or edit-only, never delete a note, and never write outside the
+    vault root — an escape aborts the run (exit 1, `--fix aborted: …`). A
+    migration that cannot decide something reports `D005` and stops rather than
+    guess. What was written lands as **one commit**,
+    `migrate(<ids>): claudron doctor --fix`, staging only those paths; a
+    mid-rebase clone gets the files but not the commit, and says so in
+    `data.commit.error`. The result is re-diagnosed, so `pending` after a
+    successful run is `[]`.
+  - `validate --fix` remains as an **alias** for the structure half of `doctor
+    --fix`, and says so on stderr; `doctor` is the one repair door.
+  - Gate on `"doctor" in status --json → data.capabilities` (§Capability probe).
 - `index [--full] [--navigation]` — rebuilds the derived index. **`--navigation`
   (engine 0.5.0)** additionally regenerates every directory's `INDEX.md` from
   that index, making it a *derived* file rather than a hand-appended one

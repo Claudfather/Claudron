@@ -16,6 +16,10 @@ schema and vault structure are the same register but live at the repo root (`SCH
 - A consumer needing a change PRs this repo first (the `SCHEMA.md` precedent, generalized).
 - Never document a consumer by name as a mechanism — capabilities are declared to the engine.
 - Breaking changes get CHANGELOG entries and a version window.
+- **A vault-shape change ships a migration** (#190). Anything that changes what a vault must
+  contain (an identity file, an ignore pattern, a directory rule) registers a `claudron.doctor`
+  migration and bumps `VAULT_FORMAT` in the same PR, so `claudron doctor --fix` brings existing
+  vaults along. A shape rule without a migration strands every vault that predates it.
 
 **What must never land here.** Repo-internal design records (those are
 `documentation/plans/` — the plane doctrine); aspirational surfaces that are not shipped

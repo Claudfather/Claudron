@@ -45,6 +45,7 @@ claudron/
   hooks.py        # Claude Code lifecycle adapters (fail-open)
   locking.py      # flock + atomic writes (the write-safety floor)
   promote.py      # Maturity promotion (E5)
+  doctor.py       # Vault diagnosis + versioned migrations (`doctor [--fix]`)
   tests/
     conftest.py   # Shared fixtures (vault_dir, vault_with_projects, etc.)
     test_*.py     # Per-module tests

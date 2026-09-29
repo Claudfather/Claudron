@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+- **`claudron doctor [--fix]`: diagnose a vault against this engine's rules, and migrate it ([#190](https://github.com/Claudfather/Claudron/issues/190), part A).**
+
+  Every change to what a vault must contain used to ship as a bespoke manual step ("add this file to your vault"), which is how a vault silently falls behind its engine. `doctor` makes "is my vault current?" one command.
+  - **Read-only by default.** It reports pending migrations (`D001`), structure (`S1`–`S4`), a schema summary (`D002`), index drift (`D003`) and git health from `sync --check` (`D004`), each as a finding. With `--json` it returns the standard envelope. The capability is `doctor`.
+  - **`--fix`** applies structure repairs and pending migrations in format order. The migrations are idempotent, creation- or edit-only and confined to the vault root. The result lands as one `migrate(<ids>): …` commit that stages only what the run wrote.
+  - **The migration registry ships empty.** The first migrations, the `.claudron-vault` identity file (#183) and the F9 ignore patterns (#182), land with the changes that need them. From now on, a vault-shape change ships its migration in the same PR (`docs/CLAUDE.md`).
+  - `validate --fix` still works as an alias for the structure half, and says so. Its "fixable" hint now points at `doctor --fix`.
+
 ## 0.5.1 — 2026-09-29
 
 ### Changed (breaking)

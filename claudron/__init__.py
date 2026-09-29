@@ -43,6 +43,7 @@ except PackageNotFoundError:
 #: or rename one without a breaking-change entry.
 CAPABILITIES: tuple[str, ...] = (
     "navigation",   # `index --navigation` regenerates INDEX.md from the index
+    "doctor",       # `doctor [--fix]` diagnoses a vault + applies migrations (#190)
 )
 
 from .vault import Vault, detect
