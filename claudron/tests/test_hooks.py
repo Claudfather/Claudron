@@ -546,6 +546,17 @@ class TestInstallRecordsTheVault:
             assert len(hooks[event]) == 1, hooks[event]
             assert shlex.split(hooks[event][0]["hooks"][0]["command"])[2] == str(other.resolve())
 
+    def test_the_executable_is_a_prefix_and_is_not_quoted(self):
+        # resolve_executable() falls back to `<python> -m claudron.cli` when no
+        # console script sits beside the interpreter. Quoting that as one word
+        # would make the shell look for a file of that name, so every hook
+        # would fail open, silently.
+        snippet = settings_snippet("/usr/bin/python3 -m claudron.cli", "/v")
+        command = self._commands(snippet)["SessionStart"]
+        assert shlex.split(command) == [
+            "/usr/bin/python3", "-m", "claudron.cli", "--vault", "/v",
+            "hook", "session-start"]
+
     def test_a_vault_path_with_a_space_survives_the_shell(self):
         # Claude Code runs a hook command through a shell.
         snippet = settings_snippet("/opt/claudron/bin/claudron", "/home/u/My Vault")

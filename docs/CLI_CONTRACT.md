@@ -335,8 +335,10 @@ gate against this block** (register rule R3).
   servers, the model's own shell, not only these hooks. Where several sessions
   share one settings file, it would re-point every Claudron call they make.
   `--vault` reaches exactly the three commands `hooks install` writes.
-- **Paths are shell-quoted when they need it** (`shlex.quote`). Claude Code runs
-  a hook command through a shell, and an unquoted path with a space would split.
+- **The vault root is shell-quoted when it needs it** (`shlex.quote`). Claude
+  Code runs a hook command through a shell, and an unquoted path with a space
+  would split. The executable is written as `hooks install` resolved it: a
+  command prefix, which may be `<python> -m claudron.cli`.
 - **The identity rule:** a Claudron hook entry is identified by its
   `hook <event>` command *suffix*, not by the full command string. That is what
   `merge_settings` keys on to replace a stale entry instead of appending beside
