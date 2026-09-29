@@ -2,13 +2,24 @@
 
 ## Unreleased
 
+### Changed (breaking)
+- **Walk-up detection binds only a vault carrying `.claudron-vault` ([#183](https://github.com/Claudfather/Claudron/issues/183), F6).**
+
+  Before, walk-up bound the first ancestor holding a `_shared/` or `shared/` directory. A stray `~/shared` (clauDNA's old raw-tree default) therefore made every repo under `$HOME` resolve `$HOME` as the vault: captures landed in the home directory, the index went to `~/.claudron/`, and a dotfiles repo would have been swept by the safety net. Walk-up now binds only a directory carrying the committed identity file, `.claudron-vault` (`claudron: <format>`, `name`, `hub`). Fleet dirs and `.claudron-system` containers never bind, as before.
+  - `init` writes the file.
+  - An **explicit** address (`--vault`, `CLAUDRON_VAULT_PATH`) still opens a vault without it, so the vault can be migrated.
+  - When walk-up passes such a vault, "no vault found" names it and the fix: `claudron doctor --vault <path> --fix`.
+
+  **Migration, before anything relies on walk-up:** run `claudron doctor --vault <vault> --fix` right after upgrading. It creates the file (`m001`) and commits it; `git push` it so other clones get it on their next pull. Bots addressed by `CLAUDRON_VAULT_PATH` are unaffected. Bots that find the vault by walk-up see no vault until the file is there, and their hooks fail open (they do nothing) in the meantime.
+- **The vault `.gitignore` covers nested `runtime/`, bot telemetry and `*.bak` ([#182](https://github.com/Claudfather/Claudron/issues/182), F9).** `*/runtime/` becomes `**/runtime/`, and `**/data/events/fleet-*.jsonl`, `**/data/.last-tool-call`, `**/data/.idle` and `*.bak` are added. `sync` keeps `add -A`. `claudron doctor --fix` appends whatever rules an existing vault lacks (`m002`), without touching its existing lines. A file that is already tracked stays tracked; `doctor` names such files (`D008`) for a human to `git rm --cached`.
+
 ### Added
 - **`claudron doctor [--fix]`: diagnose a vault against this engine's rules, and migrate it ([#190](https://github.com/Claudfather/Claudron/issues/190), part A).**
 
   Every change to what a vault must contain used to ship as a bespoke manual step ("add this file to your vault"), which is how a vault silently falls behind its engine. `doctor` makes "is my vault current?" one command.
   - **Read-only by default.** It reports pending migrations (`D001`), structure (`S1`–`S4`), a schema summary (`D002`), index drift (`D003`) and git health from `sync --check` (`D004`), each as a finding. With `--json` it returns the standard envelope. The capability is `doctor`.
   - **`--fix`** applies structure repairs and pending migrations in format order. The migrations are idempotent, creation- or edit-only and confined to the vault root. The result lands as one `migrate(<ids>): …` commit that stages only what the run wrote.
-  - **The migration registry ships empty.** The first migrations, the `.claudron-vault` identity file (#183) and the F9 ignore patterns (#182), land with the changes that need them. From now on, a vault-shape change ships its migration in the same PR (`docs/CLAUDE.md`).
+  - **The first two migrations** are `m001` (create `.claudron-vault`) and `m002` (add the F9 ignore rules). They bring a vault from format 0 to format 2, and the result is recorded in the identity file. `doctor` also flags an unreadable identity file (`D007`) and tracked files the ignore rules now match (`D008`). From now on, a vault-shape change ships its migration in the same PR (`docs/CLAUDE.md`).
   - `validate --fix` still works as an alias for the structure half, and says so. Its "fixable" hint now points at `doctor --fix`.
 
 ## 0.5.1 — 2026-09-29

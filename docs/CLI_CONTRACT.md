@@ -122,11 +122,19 @@ yields a path wins, and a hit is never re-checked against a lower row.
 |---|---|---|---|
 | 1 | `--vault PATH` | flag | Explicit; wins over everything. Accepted by every subcommand. |
 | 2 | `CLAUDRON_VAULT_PATH` | env | **The canonical name.** What Claudlobby's composer emits per bot; what any integrator should set. |
-| 3 | walk up from CWD | discovery | Ascend from the working directory for a `_shared/` (or `shared/`) marker, the way git ascends for `.git/`. |
+| 3 | walk up from CWD | discovery | Ascend from the working directory for a directory carrying the **`.claudron-vault` identity file** (VAULT-STRUCTURE.md), the way git ascends for `.git/`. A bare `_shared/` or `shared/` does not bind. |
 
-A path that resolves but is not a vault (no `_shared/`) is not a fallback —
-resolution stops and the command exits 3. When nothing resolves, `claudron`
-exits **3** with the no-vault message on stderr.
+An explicit address (rows 1–2) also opens a vault that has a `_shared/` (or
+`shared/`) hub but no identity file yet — an address given on purpose is not a
+guess, and it is what lets `doctor --fix` migrate such a vault. A path that
+resolves but is neither is not a fallback — resolution stops and the command
+exits 3. When nothing resolves, `claudron` exits **3** with the no-vault
+message on stderr; when walk-up passed a vault that lacks only its identity
+file, the message names it and the command that migrates it
+(`claudron doctor --vault <path> --fix`).
+
+> Breaking change (#183): walk-up bound any `_shared/` or `shared/`
+> before; it now binds only on the identity file.
 
 **`CLAUDRON_VAULT` (removed in 0.3.0).** An earlier lower-precedence spelling of
 `CLAUDRON_VAULT_PATH`, removed rather than deprecated: read at all, a second
@@ -391,9 +399,17 @@ stdout, and never to stderr where a host might surface them as a session error.
     | `D004` | warning | Git health is not `clean`/`ahead`/`behind` (the `sync --check` verdict) | no |
     | `D005` | error | *(`--fix` only)* A migration needs a human decision; the chain stopped | — |
     | `D006` | error | *(`--fix` only)* A migration ran but is still needed; the chain stopped | — |
+    | `D007` | error / warning | The identity file is unreadable (error), or records a format newer than the engine (warning) | no |
+    | `D008` | warning | Tracked files match the ignore rules, so they keep being committed — a human decides (`git rm --cached`) | no |
 
-  - **`data`**: `vault_format` / `engine_format` (int — the vault is current when
-    no migration between them is pending), `pending` (`[{id, version, title}]`),
+  - **Migrations shipped:** `m001` creates `.claudron-vault` (format 1);
+    `m002` appends the missing F9 `.gitignore` rules (format 2). After the chain
+    completes, `--fix` records the engine's format in the identity file, in the
+    same commit.
+
+  - **`data`**: `vault_format` (int — `claudron:` in the identity file, 0 when
+    there is none) / `engine_format` (int — the vault is current when they are
+    equal), `pending` (`[{id, version, title}]`),
     `fixable` (migration ids and finding codes `--fix` acts on), `schema`
     (`{errors, warnings}`), `index` (the `status` divergence dict), `git` (the
     `sync --check` `data`, or `null` for a vault that is not a git repository —

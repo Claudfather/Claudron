@@ -31,28 +31,30 @@ migrations between the two.
 The written result is ONE commit, ``migrate(<ids>): …``, staging only the paths
 the run wrote — a doctor run never sweeps up someone else's half-finished edit.
 
-The registry ships EMPTY with the framework (#190 part A). The first entries —
-the ``.claudron-vault`` identity file and the F9 ignore patterns — land with the
-changes that require them (#183, #182), and with them the storage for the
-vault's own format number; until then every vault reads as format 0.
+The vault's format lives in its identity file (``.claudron-vault``,
+``claudron: N``); a vault without one is format 0. After a chain completes the
+runner records :data:`VAULT_FORMAT` there — the bump is part of the same commit.
 """
 
 from __future__ import annotations
 
+import re
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+
+import yaml
 
 from .knowledge import index_divergence
 from .locking import vault_write_lock
 from .schema import Finding, validate_path
 from .structure import StructureError, check_structure, fix_structure, is_fixable
-from .vault import Vault, is_within_root
+from .vault import (IDENTITY_FILE, VAULT_FORMAT, Vault, _ensure_gitignore,
+                    identity_text, is_within_root, missing_gitignore_rules)
 
-#: The vault format this engine writes. A vault whose recorded format is lower
-#: has migrations pending. Bumped only by the PR that registers the migration
-#: bringing vaults to the new number.
-VAULT_FORMAT = 0
+__all__ = ["VAULT_FORMAT", "Migration", "MigrationRefused", "MIGRATIONS",
+           "diagnose", "fix", "pending_migrations", "vault_format"]
 
 #: Git verdicts (docs/CLI_CONTRACT.md, `sync --check`) that need no attention:
 #: a clone that is merely ahead or behind is the ordinary between-syncs state.
@@ -80,14 +82,78 @@ class Migration:
     apply: Callable[[Vault], list[Path]]
 
 
-#: The registry, in application order. EMPTY until #183/#182 (see module doc).
-MIGRATIONS: tuple[Migration, ...] = ()
+# ── the registry ──────────────────────────────────────────────────────
+
+
+def _m001_needed(vault: Vault) -> bool:
+    return not (vault.root / IDENTITY_FILE).is_file()
+
+
+def _m001_apply(vault: Vault) -> list[Path]:
+    """Create the identity file (#183, F6) — format 1; the runner records the
+    engine's format after the chain."""
+    path = vault.root / IDENTITY_FILE
+    if path.exists():                       # idempotent, and never overwrites
+        return []
+    path.write_text(identity_text(vault.root.name, vault.shared.name, fmt=1))
+    return [path]
+
+
+def _m002_needed(vault: Vault) -> bool:
+    return bool(missing_gitignore_rules(vault.root))
+
+
+def _m002_apply(vault: Vault) -> list[Path]:
+    """Append the F9 ignore rules (#182) that are missing — existing lines are
+    never touched. A file that is ALREADY tracked stays tracked (ignore rules do
+    not untrack): those are reported by the D008 check for a human to decide."""
+    changed = _ensure_gitignore(vault.root, added_by="`claudron doctor --fix` (m002)")
+    return [vault.root / ".gitignore"] if changed else []
+
+
+#: The registry, in application order. A vault-shape change adds its entry here
+#: and bumps VAULT_FORMAT in the same PR (docs/CLAUDE.md).
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration("m001", 1, "create the .claudron-vault identity file (#183)",
+              _m001_needed, _m001_apply),
+    Migration("m002", 2, "add the F9 .gitignore rules: runtime, telemetry, *.bak (#182)",
+              _m002_needed, _m002_apply),
+)
+
+
+def _read_identity(vault: Vault) -> dict | None:
+    """The identity file's mapping; ``None`` when absent; ``{}`` when present
+    but unreadable (reported by D007, never guessed at)."""
+    path = vault.root / IDENTITY_FILE
+    if not path.is_file():
+        return None
+    try:
+        data = yaml.safe_load(path.read_text())
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def vault_format(vault: Vault) -> int:
-    """The format version a vault records. No vault records one yet — the
-    identity file that will carry it is #183's — so every vault is format 0."""
-    return 0
+    """The format a vault records: ``claudron:`` in its identity file, or 0
+    when it has none (or it cannot be read as an int)."""
+    ident = _read_identity(vault)
+    fmt = (ident or {}).get("claudron")
+    return fmt if isinstance(fmt, int) and not isinstance(fmt, bool) else 0
+
+
+def _record_format(vault: Vault, fmt: int) -> Path | None:
+    """Rewrite ``claudron: N`` in place — an edit of one line, every other line
+    (comments, name, hub, anything a human added) kept byte-for-byte."""
+    path = vault.root / IDENTITY_FILE
+    if not path.is_file() or vault_format(vault) >= fmt:
+        return None
+    text = path.read_text()
+    new, n = re.subn(r"(?m)^claudron:[ \t]*\S*[ \t]*$", f"claudron: {fmt}", text, count=1)
+    if n == 0:
+        new = text + ("" if text.endswith("\n") else "\n") + f"claudron: {fmt}\n"
+    path.write_text(new)
+    return path
 
 
 def pending_migrations(vault: Vault,
@@ -160,12 +226,29 @@ def diagnose(vault: Vault, *,
              migrations: tuple[Migration, ...] | None = None) -> DoctorReport:
     """Read-only diagnosis against this engine's rules. Never writes."""
     report = DoctorReport(vault_format=vault_format(vault))
+    ident = _read_identity(vault)
+    if ident == {} or (ident and "claudron" in ident and report.vault_format == 0):
+        report.findings.append(_finding(
+            "D007", "error",
+            f"{IDENTITY_FILE} is present but unreadable (want YAML with an integer "
+            "`claudron:`) — fix it by hand; doctor never guesses", IDENTITY_FILE))
+    elif report.vault_format > report.engine_format:
+        report.findings.append(_finding(
+            "D007", "warning",
+            f"vault format {report.vault_format} is newer than this engine's "
+            f"{report.engine_format} — upgrade claudron", IDENTITY_FILE))
     report.pending = pending_migrations(vault, migrations)
     for m in report.pending:
         report.findings.append(_finding(
             "D001", "error",
             f"migration {m.id} pending (format {m.version}): {m.title} "
             "— run: claudron doctor --fix"))
+    if not report.pending and ident and 0 < report.vault_format < report.engine_format:
+        report.findings.append(_finding(
+            "D001", "error",
+            f"vault records format {report.vault_format}, engine is at "
+            f"{report.engine_format}, and nothing needs migrating — run: "
+            "claudron doctor --fix to record it", IDENTITY_FILE))
 
     report.findings += check_structure(vault)
 
@@ -191,6 +274,16 @@ def diagnose(vault: Vault, *,
             f"index drifted from the notes ({what}) — rebuild: claudron index"))
 
     report.git = _git_health(vault)
+    if report.git is not None:
+        tracked = _tracked_but_ignored(vault)
+        if tracked:
+            shown = ", ".join(tracked[:5]) + (f" (+{len(tracked) - 5} more)"
+                                               if len(tracked) > 5 else "")
+            report.findings.append(_finding(
+                "D008", "warning",
+                f"{len(tracked)} tracked file(s) match the ignore rules, so they keep "
+                f"being committed: {shown} — a human decides: "
+                "`git rm --cached <path>` stops tracking without deleting the file"))
     if report.git is not None and report.git.get("state") not in _GIT_FINE:
         state = report.git.get("state")
         detail = report.git.get("detail") or ""
@@ -199,6 +292,22 @@ def diagnose(vault: Vault, *,
             f"git health: {state}" + (f" — {detail}" if detail else "")
             + " (see: claudron sync --check)"))
     return report
+
+
+def _tracked_but_ignored(vault: Vault) -> list[str]:
+    """Files git tracks that the ignore rules now match (read-only query).
+    Ignore rules never untrack a file, so after m002 these are exactly the
+    paths the safety net will go on committing."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(vault.root), "ls-files", "-ci", "--exclude-standard", "-z"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    return sorted(p for p in out.stdout.split("\0") if p)
 
 
 def _rel(vault: Vault, p: Path) -> Path:
@@ -253,6 +362,15 @@ def fix(vault: Vault, *,
                     f"migration {m.id} ran but is still needed — not idempotent; "
                     "stopping the chain"))
                 break
+
+        chain_done = not refusals
+        if chain_done and (vault.root / IDENTITY_FILE).is_file():
+            bumped = _record_format(vault, VAULT_FORMAT)
+            if bumped is not None:
+                written.append(bumped)
+                repairs.append(f"recorded vault format {VAULT_FORMAT} in {IDENTITY_FILE}")
+                if not ids:
+                    ids.append(f"format{VAULT_FORMAT}")
 
         commit = _commit(vault, written, ids, repairs) if written else None
 

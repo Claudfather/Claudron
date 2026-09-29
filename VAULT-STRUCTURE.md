@@ -53,8 +53,9 @@ If you are a human opening a vault for the first time:
       knowledge/  decisions/  runbooks/  planning/{active,completed}/
     runtime/                   #   generated bot dirs — gitignored within the vault
   _packs/<name>/               # subscribed packs, read-only (E6)
+  .claudron-vault              # the vault's IDENTITY file — committed (see below)
   .claudron/                   # Claudron's derived index — gitignored, disposable, never hand-edited
-  .gitignore                   # vault-root ignores: */runtime/, .env, .claudron/ (claudron init writes this)
+  .gitignore                   # vault-root ignores (see below; claudron init writes this)
 ```
 
 The tree is normative. Beyond what its comments state:
@@ -62,8 +63,24 @@ The tree is normative. Beyond what its comments state:
 - **One git repository per tenant vault** — self-contained. A second tenant (an
   employer's systems, another person's data) is a **separate vault**, never a
   directory inside this one.
-- **`_shared/` (or legacy `shared/`) is the vault marker** — `detect()` keys on
-  its presence at the root.
+- **`.claudron-vault` is the vault's identity** (#183). A committed YAML
+  dotfile at the root, the sibling of `.claudron-system`:
+
+  ```yaml
+  claudron: 2      # the vault format — an int; `claudron doctor` migrates it forward
+  name: <vault>    # the vault's name (its directory name when created)
+  hub: _shared     # the hub directory: `_shared`, or legacy `shared`
+  ```
+
+  **Walk-up detection binds only a directory carrying this file** — a bare
+  `_shared/` or `shared/` no longer binds on its own, so a stray `~/shared`
+  cannot make `$HOME` a vault, and `$HOME` binds only if it carries the file. A
+  fleet overlay or a `.claudron-system` container never binds, file or not. An
+  **explicit** address (`--vault`, `CLAUDRON_VAULT_PATH`) still opens a vault
+  that lacks the file, so it can be migrated. The file holds identity and format
+  only — never machine-specific values, fleet config or derived data. `init`
+  writes it; `claudron doctor --fix` adds it to an older vault (migration
+  `m001`). `_shared/` (or legacy `shared/`) remains the knowledge hub.
 - **Fleets are discovered structurally** — `_scan_vault` treats any root-level
   dir containing a `fleet.yaml` as a fleet. There is no `fleets/` nesting layer.
 - **Bridge file.** A `.claudron` *file* (distinct from the `.claudron/` index
@@ -76,6 +93,15 @@ The tree is normative. Beyond what its comments state:
   per-machine secrets. `fleet add` scaffolds each fleet's `.env`+`.gitignore`;
   `init` writes (or, on `--adopt`, augments) the vault-root `.gitignore`; a
   root `.env` is the operator's to create.
+- **The vault-root `.gitignore` is `sync`'s safety net** (#182, F9). `sync`
+  keeps `git add -A`, so these rules are what stop machine droppings entering
+  history: `**/runtime/` (any depth — a nested fleet's `runtime/` too),
+  `**/data/events/fleet-*.jsonl`, `**/data/.last-tool-call`, `**/data/.idle`,
+  `*.bak`, `.env`, `.claudron/`. `fleet.yaml`, `library/`, `voices/`,
+  `missions/` and `shared/` keep flowing and stay browsable. `claudron doctor
+  --fix` appends any missing rule (migration `m002`) without touching existing
+  lines. An ignore rule never untracks a file already committed; `doctor`
+  names those (`D008`) for a human to `git rm --cached`.
 
 This tree is the full tenant vault; `SCHEMA.md` §Vault directory taxonomy draws
 the same knowledge tiers from the note-filing side. The Claudlobby-injected

@@ -50,6 +50,30 @@ SHARED_MARKERS = ("_shared", "shared")
 # such marker is flat and scans byte-identically to before — the invariant.
 SYSTEM_MARKER = ".claudron-system"
 
+# The vault IDENTITY file (#183, F6). A committed YAML dotfile at the vault
+# root, the sibling of `.claudron-system`: walk-up binds ONLY a directory that
+# carries it, so a stray `~/shared/` can no longer make `$HOME` a vault. It
+# holds identity and format only -- never machine-specific values, fleet
+# config or derived data. Keys: `claudron` (the vault format, an int),
+# `name`, `hub` (`_shared` or legacy `shared`).
+IDENTITY_FILE = ".claudron-vault"
+
+# The vault format this engine writes. A vault whose `claudron:` is lower has
+# migrations pending (`claudron doctor`); a vault with no identity file is
+# format 0. Bumped only by the PR that registers the migration reaching it.
+VAULT_FORMAT = 2
+
+
+def identity_text(name: str, hub: str, fmt: int = VAULT_FORMAT) -> str:
+    """The identity file's content. Hand-rendered (not yaml.dump) so the
+    comment survives and key order is stable across every writer."""
+    return (
+        "# claudron vault identity -- committed; see VAULT-STRUCTURE.md\n"
+        f"claudron: {fmt}\n"
+        f"name: {name}\n"
+        f"hub: {hub}\n"
+    )
+
 # Single source of truth for the shared tier tree: keys are the tiers that
 # status/index/search walk; values are on-disk filing subdirs (scaffolded
 # nested, walked as one tier — rglob sweeps them in the tier's pass).
@@ -118,18 +142,38 @@ def iter_markdown_files(base: Path, *, skip_non_notes: bool = True):
             yield md
 
 
-# `runtime/` stays fleet-scoped (`*/runtime/`) — it only ever lives at
-# `<fleet>/runtime/`; `.env` is any-depth (not `*/.env`) because secrets can
-# also sit at the vault root. Do not "fix" the asymmetry to match.
+# F9 (#182): `sync` keeps `add -A`, so the ignore file is the whole safety net.
+# `runtime/` is any-depth now: a nested fleet's `<system>/<fleet>/runtime/` is
+# not matched by `*/runtime/`. Bot telemetry and `*.bak` droppings never
+# belong in history; `.env` is any-depth because secrets can sit at the root.
+# `fleet.yaml`, `library/`, `voices/`, `missions/` and `shared/` keep flowing.
 _GITIGNORE_CONTENT = """\
-# claudron vault — gitignored runtime & secrets
-*/runtime/
+# claudron vault — gitignored runtime, telemetry, backups & secrets
+**/runtime/
+**/data/events/fleet-*.jsonl
+**/data/.last-tool-call
+**/data/.idle
+*.bak
 .env
 .claudron/
 """
 
+#: The rules every vault's .gitignore must carry (m002 and `init` both apply
+#: exactly these).
+GITIGNORE_RULES: tuple[str, ...] = tuple(
+    ln for ln in _GITIGNORE_CONTENT.splitlines() if ln.strip() and not ln.startswith("#")
+)
 
-def _ensure_gitignore(root: Path) -> None:
+
+def missing_gitignore_rules(root: Path) -> list[str]:
+    """The required rules absent from *root*/.gitignore (line-exact)."""
+    gitignore = root / ".gitignore"
+    have = ({ln.strip() for ln in gitignore.read_text().splitlines()}
+            if gitignore.is_file() else set())
+    return [ln for ln in GITIGNORE_RULES if ln not in have]
+
+
+def _ensure_gitignore(root: Path, *, added_by: str = "`init --adopt`") -> bool:
     """Guarantee the vault's ignore rules are present at *root*/.gitignore.
 
     A fresh vault gets the full template. An *adopted* vault that already has
@@ -142,21 +186,18 @@ def _ensure_gitignore(root: Path) -> None:
     gitignore = root / ".gitignore"
     if not gitignore.exists():
         gitignore.write_text(_GITIGNORE_CONTENT)
-        return
+        return True
     existing = gitignore.read_text()
-    have = {ln.strip() for ln in existing.splitlines()}
-    missing = [
-        ln
-        for ln in _GITIGNORE_CONTENT.splitlines()
-        if ln.strip() and not ln.startswith("#") and ln not in have
-    ]
+    missing = missing_gitignore_rules(root)
     if missing:
         sep = "" if existing.endswith("\n") else "\n"
         gitignore.write_text(
-            f"{existing}{sep}\n# claudron vault — added by `init --adopt`\n"
+            f"{existing}{sep}\n# claudron vault — added by {added_by}\n"
             + "\n".join(missing)
             + "\n"
         )
+        return True
+    return False
 
 
 # ── data model ────────────────────────────────────────────────────────
@@ -248,22 +289,59 @@ def is_within_root(path: Path, root: Path) -> bool:
 
 
 def detect(path: Path | None = None) -> Vault | None:
-    """Walk up from *path* looking for ``_shared/`` or ``shared/``.
+    """Find the vault for *path* (default: the working directory).
+
+    **Walk-up binds only a directory carrying the identity file**
+    (:data:`IDENTITY_FILE`, #183/F6). A bare ``_shared/`` or ``shared/`` no
+    longer binds on its own, so a stray ``~/shared`` cannot make ``$HOME`` a
+    vault, and ``$HOME`` binds only if it carries the file.
+
+    **An explicit *path* is also accepted as a legacy vault** — a root with a
+    hub but no identity file yet — because an address someone gave on purpose
+    (``--vault``, ``CLAUDRON_VAULT_PATH``, a caller's own path) is not a guess.
+    That leniency applies to *path* itself only, never to its ancestors, and
+    is what lets ``claudron doctor --vault PATH --fix`` migrate such a vault.
 
     Returns a :class:`Vault` on success, ``None`` if no vault found.
     """
+    explicit = path is not None
     start = (path or Path.cwd()).resolve()
+    if explicit and not _is_identity_root(start) and _is_legacy_root(start):
+        return _scan_vault(start)
     for candidate in [start, *start.parents]:
-        # `_shared/` and plain `shared/` both mark a vault root, but NEITHER
-        # binds when it is a fleet overlay's dir (fleet.yaml sits beside it) or a
-        # `.claudron-system` container (B2): those live *inside* the vault, and
-        # binding one would lose the true global root above it. A system
-        # container can use the preferred `_shared/` spelling, so the same guard
-        # must apply to both branches — keep walking up to the true root, whose
-        # markers carry no sibling fleet.yaml / system marker.
-        if _is_binding_root(candidate, "_shared") or _is_binding_root(candidate, "shared"):
+        if _is_identity_root(candidate):
             return _scan_vault(candidate)
     return None
+
+
+def find_legacy_root(path: Path | None = None) -> Path | None:
+    """The nearest ancestor that WOULD have bound before the identity file
+    (#183): a hub, no identity file. Only for naming the migration when
+    detection finds nothing — it never binds anything."""
+    start = (path or Path.cwd()).resolve()
+    for candidate in [start, *start.parents]:
+        if _is_identity_root(candidate):
+            return None
+        if _is_legacy_root(candidate):
+            return candidate
+    return None
+
+
+def _is_identity_root(candidate: Path) -> bool:
+    """A vault root by identity file — and not a fleet overlay or a system
+    container, which live inside a vault and must never bind in its place."""
+    return (
+        (candidate / IDENTITY_FILE).is_file()
+        and not (candidate / "fleet.yaml").is_file()
+        and not (candidate / SYSTEM_MARKER).is_file()
+    )
+
+
+def _is_legacy_root(candidate: Path) -> bool:
+    """The pre-identity rule: `_shared/` or plain `shared/` marks a root, but
+    NEITHER when it is a fleet overlay's dir (fleet.yaml beside it) or a
+    `.claudron-system` container — those live *inside* a vault."""
+    return _is_binding_root(candidate, "_shared") or _is_binding_root(candidate, "shared")
 
 
 def _is_binding_root(candidate: Path, marker: str) -> bool:
@@ -361,6 +439,7 @@ def init(path: str | Path, *, adopt: bool = False) -> Path:
     projects.mkdir(parents=True, exist_ok=True)
     _write_if_absent(projects / "CLAUDE.md", PROJECTS_CLAUDE_TEMPLATE)
     _write_if_absent(root / "_shared" / "CONVENTIONS.md", CONVENTIONS_TEMPLATE)
+    _write_if_absent(root / IDENTITY_FILE, identity_text(root.name, "_shared"))
     _ensure_gitignore(root)
 
     if adopt:

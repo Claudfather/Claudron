@@ -21,11 +21,13 @@ from .schema import (
 )
 from .structure import StructureError, check_structure, fix_structure, is_fixable
 from .vault import (
+    IDENTITY_FILE,
     SCAFFOLD_TREE,
     SKIP_DIRS,
     Vault,
     VaultError,
     detect,
+    find_legacy_root,
     init,
     is_within_root,
     scaffold_shared_tree,
@@ -106,6 +108,18 @@ def _resolve_vault(args) -> Vault:
     """Resolve vault or exit 3 (environment error, CLI contract)."""
     vault = _detect_vault(args)
     if vault is None:
+        legacy = find_legacy_root()
+        if legacy is not None:
+            # A vault from before the identity file (#183): walk-up no longer
+            # binds it. Name the one command that brings it current, instead of
+            # a bare "no vault" that reads as if the vault were gone.
+            print(
+                f"no vault found — {legacy} looks like a vault without its "
+                f"identity file ({IDENTITY_FILE}), which walk-up now requires\n"
+                f"  migrate it:  claudron doctor --vault {legacy} --fix",
+                file=sys.stderr,
+            )
+            sys.exit(3)
         print(
             "no vault found\n"
             "  create one:  claudron init <path>\n"

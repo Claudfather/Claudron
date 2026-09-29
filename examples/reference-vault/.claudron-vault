@@ -1,0 +1,4 @@
+# claudron vault identity -- committed; see VAULT-STRUCTURE.md
+claudron: 2
+name: reference-vault
+hub: _shared

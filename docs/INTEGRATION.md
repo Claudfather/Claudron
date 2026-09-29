@@ -235,7 +235,8 @@ One table governs this, and it lives in the contract:
 
 1. `--vault PATH` — explicit, wins over everything.
 2. `CLAUDRON_VAULT_PATH` — the canonical environment name. Set this.
-3. Walk up from the working directory for a `_shared/` marker.
+3. Walk up from the working directory for a directory carrying the
+   `.claudron-vault` identity file (a bare `_shared/` no longer binds).
 
 Emit and read **only** `CLAUDRON_VAULT_PATH`. Do not invent additional names; a
 new address source is a change to that table, PR'd against this repository

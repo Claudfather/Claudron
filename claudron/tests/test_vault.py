@@ -8,8 +8,10 @@ from textwrap import dedent
 import pytest
 
 from claudron.vault import (
+    IDENTITY_FILE,
     VaultError,
     detect,
+    identity_text,
     init,
     is_within_root,
     note_tiers,
@@ -45,6 +47,7 @@ class TestDetect:
     def test_detect_nested_vaults(self, vault_dir: Path):
         inner = vault_dir / "nested"
         (inner / "_shared").mkdir(parents=True)
+        (inner / IDENTITY_FILE).write_text(identity_text("nested", "_shared"))
         vault = detect(inner / "_shared")
         assert vault is not None
         assert vault.root == inner  # inner wins
@@ -250,6 +253,7 @@ class TestSystemContainerDetect:
     def test_shared_spelled_system_container_does_not_bind(self, tmp_path: Path):
         root = tmp_path / "v"
         (root / "_shared" / "knowledge").mkdir(parents=True)
+        (root / IDENTITY_FILE).write_text(identity_text("v", "_shared"))
         sysd = root / "sys1"
         (sysd / "_shared" / "knowledge").mkdir(parents=True)  # preferred spelling, INSIDE
         (sysd / ".claudron-system").write_text("")
