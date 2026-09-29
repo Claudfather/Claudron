@@ -35,6 +35,7 @@ from .vault import (
 )
 from .hooks import (
     HOOK_EVENTS,
+    default_settings_path,
     merge_settings,
     resolve_executable,
     run_hook,
@@ -899,9 +900,7 @@ def cmd_hooks_install(args) -> int:
         )
         return 0
 
-    settings_path = Path(
-        args.settings or Path.home() / ".claude" / "settings.json"
-    ).expanduser()
+    settings_path = Path(args.settings or default_settings_path()).expanduser()
     current: dict = {}
     if settings_path.is_file():
         try:
@@ -1005,14 +1004,16 @@ def cmd_doctor(args) -> int:
     from .doctor import diagnose, fix as doctor_fix
 
     vault = _resolve_vault(args)
+    settings = ([Path(os.path.abspath(os.path.expanduser(p))) for p in args.settings]
+                if args.settings else None)
     if args.fix:
         try:
-            report = doctor_fix(vault)
+            report = doctor_fix(vault, settings=settings)
         except StructureError as e:
             print(f"--fix aborted: {e}", file=sys.stderr)
             return 1
     else:
-        report = diagnose(vault)
+        report = diagnose(vault, settings=settings)
 
     findings = report.findings
     errors = [f for f in findings if f.severity == "error"]
@@ -1024,6 +1025,12 @@ def cmd_doctor(args) -> int:
                f"{len(report.pending)} migration(s) pending")
     print(f"vault format: {report.vault_format} (engine: {report.engine_format}) — {current}")
     print(f"git: {report.git['state'] if report.git else 'not a git repository'}")
+    for h in report.hooks:
+        n = len(h["entries"])
+        what = (f"{n} claudron entr{'y' if n == 1 else 'ies'}" if h["state"] == "ok"
+                else h["state"])
+        print(f"hooks: {h['path']} — {what}"
+              + ("" if h["declared"] else " (the default install target)"))
     for f in findings:
         loc = f.path + (f":{f.line}" if f.line else "")
         print(f"[{f.code}] {f.severity} {loc} — {f.message}")
@@ -1362,6 +1369,14 @@ def main(argv=None) -> int:
         action="store_true",
         help="Apply structure repairs + pending migrations as one commit; "
         "creation/edit-only, never deletes",
+    )
+    p_doctor.add_argument(
+        "--settings",
+        action="append",
+        metavar="PATH",
+        help="A Claude Code settings file whose claudron hooks to check "
+        "(repeatable; default: the file `hooks install --write` writes, "
+        "~/.claude/settings.json)",
     )
 
     # new

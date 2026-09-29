@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+from dataclasses import dataclass
 import sys
 import tempfile
 from datetime import datetime
@@ -201,6 +202,16 @@ _HOOK_HANDLERS = {
 HOOK_EVENTS = tuple(sorted(_HOOK_HANDLERS))
 
 
+#: Claude Code event -> the engine's `hook <event>` dispatch verb, in the
+#: snippet's order. `settings_snippet` renders from it and doctor's hook checks
+#: (#204) walk it, so the two agree on which events the loop needs.
+SNIPPET_EVENTS = {
+    "SessionStart": "session-start",
+    "PreCompact": "pre-compact",
+    "SessionEnd": "session-end",
+}
+
+
 def settings_snippet(executable: str, vault_root: str) -> dict:
     """The Claude Code settings.json hooks block.
 
@@ -223,13 +234,62 @@ def settings_snippet(executable: str, vault_root: str) -> dict:
             }
         ]
 
-    return {
-        "hooks": {
-            "SessionStart": entry("session-start"),
-            "PreCompact": entry("pre-compact"),
-            "SessionEnd": entry("session-end"),
-        }
-    }
+    return {"hooks": {event: entry(cmd) for event, cmd in SNIPPET_EVENTS.items()}}
+
+
+def default_settings_path() -> Path:
+    """The settings file `hooks install --write` writes when not given
+    `--settings`, and so the one `doctor` checks by default (#204)."""
+    return Path.home() / ".claude" / "settings.json"
+
+
+@dataclass(frozen=True)
+class HookCommand:
+    """A claudron hook command read back into its parts (#204)."""
+
+    prefix: str  # the executable, as written: a command prefix
+    vault: str | None  # the recorded `--vault` address, or None if it names none
+    canonical: bool  # `settings_snippet` renders exactly this command from them
+
+
+def parse_hook_command(command: str, event_cmd: str) -> HookCommand | None:
+    """Read a hook command back into its executable prefix and `--vault`
+    address, or return None when it is not a claudron hook for *event_cmd*.
+
+    It is one when it ends in ``hook <event_cmd>``, the identity rule
+    `merge_settings` keys on. It is *canonical* when `settings_snippet` would
+    render exactly this string from the parts read. Anything else (an entry
+    from before #183, `--vault=PATH`, stray spacing) is read best-effort from
+    its shell words, so doctor can say what it found."""
+    suffix = f"hook {event_cmd}"
+    if not command.endswith(suffix):
+        return None
+    marker, start = " --vault ", 0
+    while (i := command.find(marker, start)) != -1:
+        start = i + 1
+        prefix, rest = command[:i], command[i + len(marker):]
+        if not prefix or prefix != prefix.strip() or not rest.endswith(" " + suffix):
+            continue
+        try:
+            words = shlex.split(rest[: -len(suffix) - 1])
+        except ValueError:
+            continue
+        if (len(words) == 1
+                and f"{prefix} --vault {shlex.quote(words[0])} {suffix}" == command):
+            return HookCommand(prefix, words[0], True)
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    vault, at = None, len(words) - 2
+    for k, word in enumerate(words):
+        if word == "--vault" and k + 1 < len(words):
+            vault, at = words[k + 1], k
+            break
+        if word.startswith("--vault="):
+            vault, at = word[len("--vault="):], k
+            break
+    return HookCommand(" ".join(words[:at]), vault, False)
 
 
 def _is_claudron_hook(entry: dict, event_cmd: str) -> bool:

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+- **`doctor` checks the hooks a host has installed ([#204](https://github.com/Claudfather/Claudron/issues/204)): #190's two per-host rows.** `D009` compares each checked settings file's claudron entries with the current snippet shape: an event with no entry or with two, an entry with no `--vault` (installed before #183), or any other difference. `D010` asks whether each entry reaches a vault from where it runs. Errors: an executable that does not exist, an address that is not a vault, or one that walk-up binds to another vault. Warnings: a bare executable, a relative address, or hooks for a vault other than the one diagnosed.
+  - **Which file:** `doctor --settings PATH` (repeatable), or by default the file `hooks install --write` writes, `~/.claude/settings.json`. Doctor never looks for other files, and a default file that does not exist is not a finding. `data.hooks` names every file checked.
+  - **Read-only.** Nothing from a settings file is executed, and `--fix` acts on neither code; each finding names `claudron --vault <vault> hooks install --write`.
+  - **The doctor table is bound to the code.** A doc-parity test pins `docs/CLI_CONTRACT.md`'s D table to `doctor.CODES`, and `_finding` refuses an unregistered code or severity.
+  - **Every test gets an empty `HOME`** (conftest), so the default file is never a developer's own.
+
 ### Changed (breaking)
 - **`hooks install` records the vault address in each hook command ([#183](https://github.com/Claudfather/Claudron/issues/183)).** Walk-up ascends from the working directory, so it finds a vault only from inside one (and, since 0.5.2, only one carrying `.claudron-vault`). A session started anywhere else, such as a repo checkout or a GUI launch that skips the shell profile, found no vault unless `CLAUDRON_VAULT_PATH` was set, and every hook silently did nothing. `hooks install` now resolves the vault the usual way and writes it into each command as the global `--vault`: `<exe> --vault <root> hook <event>`.
   - **The identity suffix is unchanged.** A reinstall replaces the old unaddressed entries, and anything that detects the engine's hooks by their `hook <event>` suffix still sees them.
