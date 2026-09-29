@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+- **A refused or failed `sync` no longer reads as a success ([#142](https://github.com/Claudfather/Claudron/issues/142), Claudfather/Claudlobby#1970).** `sync --json` and `sync --ff-only --json` emitted `"ok": true` even when the run exited 1 with a reason in `data.detail`. The envelope never received a finding, so its `ok` could not be false. Claudlobby's `vault-sync` reads `ok`, so a clone refusing every sync (the side-branch guard, a live `index.lock`) was logged as a success every 15 minutes.
+
+  Now any run with a non-empty `detail` carries one `G001` error whose message is that detail, so `ok` agrees with the exit code. The plain-text summary also stops sounding like success: instead of `sync: nothing to do` (#142, which hid a seven-day outage) or `sync --ff-only: already up to date`, such a run prints `… — needs attention (see stderr)`.
+
+  **Consumers that keyed on `ok`:** a refusal now reads `false`, which is what it always should have read. That includes a run that expired a stale lock and then succeeded: it already exited 1 because `detail` names the repair, and its `ok` now matches. `sync --check` is unchanged, and every verdict still exits 0.
+
 ## 0.5.2 — 2026-09-29
 
 ### Changed (breaking)

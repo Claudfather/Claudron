@@ -770,6 +770,18 @@ def _check_line(r) -> str:
     return f"sync check: {r.state} ({', '.join(bits)})"
 
 
+def _sync_findings(result) -> list[Finding]:
+    """The envelope's view of a sync outcome: one `G001` error carrying
+    `detail` whenever the run needs the human, so the envelope's `ok` and the
+    exit code can never disagree (#142, Claudlobby#1970: a refused sync read
+    `"ok": true` while exiting 1, and a job keyed on `ok` logged a week of
+    refusals as successes)."""
+    if result.ok:
+        return []
+    return [Finding(code="G001", severity="error", path=".", field=None,
+                    line=None, message=result.detail)]
+
+
 def cmd_sync(args) -> int:
     vault = _resolve_vault(args)
 
@@ -802,13 +814,17 @@ def cmd_sync(args) -> int:
             print(str(exc), file=sys.stderr)
             return 3  # environment error (CLI contract)
         if args.json:
-            _emit_json("sync", result.to_dict())
+            _emit_json("sync", result.to_dict(), _sync_findings(result))
         else:
             if result.pulled:
                 print("sync --ff-only: fast-forwarded")
             elif result.local_ahead:
                 print(f"sync --ff-only: not fast-forwardable — "
                       f"{result.local_ahead} local commit(s) await reconciliation")
+            elif not result.ok:
+                # Never "already up to date" for a run that did not get there
+                # — the #142 shape: a success-shaped line over a failure.
+                print("sync --ff-only: not pulled — needs attention (see stderr)")
             else:
                 print("sync --ff-only: already up to date")
             if result.detail:
@@ -829,7 +845,7 @@ def cmd_sync(args) -> int:
         return 3  # environment error (CLI contract)
 
     if args.json:
-        _emit_json("sync", result.to_dict())
+        _emit_json("sync", result.to_dict(), _sync_findings(result))
     else:
         parts = [
             name
@@ -840,7 +856,14 @@ def cmd_sync(args) -> int:
             )
             if done
         ]
-        print(f"sync: {', '.join(parts) if parts else 'nothing to do'}")
+        # "nothing to do" only when there really was nothing to do (#142): a
+        # run that needs the human says so on the SAME channel as the summary,
+        # not only on stderr, where the reassuring line used to land last.
+        if result.ok:
+            print(f"sync: {', '.join(parts) if parts else 'nothing to do'}")
+        else:
+            done_txt = ", ".join(parts) if parts else "nothing completed"
+            print(f"sync: {done_txt} — needs attention (see stderr)")
         if result.detail:
             print(result.detail, file=sys.stderr)
         # A failed integration names notes it COULD NOT INTEGRATE (the live

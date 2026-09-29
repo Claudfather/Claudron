@@ -382,6 +382,15 @@ stdout, and never to stderr where a host might surface them as a session error.
   exactly what the engine/bot write paths will accept. The `--json` envelope
   carries structure findings but no per-finding fixability flag; a machine
   consumer derives it from the code (`S1` is the fixable structure code).
+- `sync` / `sync --ff-only` — **the envelope, the exit code and the summary
+  line always agree** (#142). A run whose `data.detail` is non-empty (a
+  refusal, a failed push, a timeout, a repair the human should know about)
+  exits **1**, carries exactly one `G001` error whose `message` is that
+  `detail`, so `ok` is `false`, and prints a summary line ending
+  `— needs attention (see stderr)`; it never prints `nothing to do` or
+  `already up to date`. A clean run exits 0 with `ok: true` and no errors.
+  Branch on `ok` or the exit code; `detail` is prose. `sync --check` is
+  unaffected: every verdict exits 0 (§Exit codes).
 - `doctor [--fix]` — **the vault's health-and-migration door** (#190). Diagnoses
   the vault against *this* engine's rules and names what `--fix` would change.
   - **Read-only unless `--fix` is passed** — no file, index or journal is
