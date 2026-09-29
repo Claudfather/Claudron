@@ -4,6 +4,7 @@ idempotent migration runner behind `--fix`."""
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from claudron.doctor import (VAULT_FORMAT, Migration, MigrationRefused,
 # current) still have them pending.
 V1, V2 = VAULT_FORMAT + 1, VAULT_FORMAT + 2
 from claudron.structure import StructureError
+from claudron.tests.doc_parity import code_values, doc_table
 from claudron.vault import detect
 
 
@@ -229,6 +231,25 @@ class TestRegistry:
 
     def test_the_engine_format_is_reached_by_a_registered_migration(self):
         assert max(m.version for m in doctor_mod.MIGRATIONS) == VAULT_FORMAT
+
+    def test_the_contract_d_table_matches_the_code(self):
+        """docs/CLI_CONTRACT.md's doctor table, code by code and severity by
+        severity, is the registry `_finding` enforces (#204)."""
+        rows = doc_table("docs/CLI_CONTRACT.md", "DOCTOR_CODES")
+        doc = {code_values(r[0])[0]: frozenset(s.strip() for s in r[1].split("/"))
+               for r in rows}
+        assert doc == doctor_mod.CODES
+
+    def test_every_code_doctor_emits_is_registered(self):
+        src = Path(doctor_mod.__file__).read_text()
+        emitted = set(re.findall(r'_finding\(\s*"(D\d{3})"', src))
+        assert emitted and emitted <= set(doctor_mod.CODES)
+
+    def test_an_unregistered_code_or_severity_is_refused(self):
+        with pytest.raises(ValueError):
+            doctor_mod._finding("D999", "error", "x")
+        with pytest.raises(ValueError):
+            doctor_mod._finding("D003", "error", "x")  # D003 is warning-only
 
     def test_doctor_is_a_declared_capability(self):
         assert "doctor" in CAPABILITIES

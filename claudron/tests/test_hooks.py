@@ -22,6 +22,7 @@ from claudron.hooks import (
     SESSION_START_PULL_TIMEOUT,
     settings_snippet,
 )
+from claudron import hooks as hooks_mod
 from claudron.tests.doc_parity import code_values, doc_table, fenced_block, section
 
 CONTRACT = "docs/CLI_CONTRACT.md"
@@ -585,3 +586,47 @@ class TestInstallRecordsTheVault:
             assert shlex.split(command) == [
                 "/opt/claudron/bin/claudron", "--vault", "/home/u/My Vault",
                 "hook", EVENT_CMD[event]]
+
+
+class TestParseHookCommand:
+    """The inverse of `settings_snippet`, for doctor's hook checks (#204): a
+    claudron entry is found by its `hook <event>` suffix (the identity rule),
+    and its executable prefix and `--vault` address are read back out."""
+
+    @pytest.mark.parametrize("exe", ["/opt/claudron/bin/claudron",
+                                     "/usr/bin/python3 -m claudron.cli"])
+    @pytest.mark.parametrize("root", ["/srv/vault", "/home/user/My Vault",
+                                      "/srv/it's a vault"])
+    def test_it_reads_back_what_the_snippet_wrote(self, exe, root):
+        for event, groups in settings_snippet(exe, root)["hooks"].items():
+            parsed = hooks_mod.parse_hook_command(groups[0]["hooks"][0]["command"],
+                                        EVENT_CMD[event])
+            assert parsed is not None
+            assert (parsed.prefix, parsed.vault, parsed.canonical) == (exe, root, True)
+
+    def test_an_entry_from_before_183_has_no_address(self):
+        parsed = hooks_mod.parse_hook_command("/opt/claudron/bin/claudron hook session-start",
+                                    "session-start")
+        assert (parsed.prefix, parsed.vault, parsed.canonical) == (
+            "/opt/claudron/bin/claudron", None, False)
+
+    @pytest.mark.parametrize("command,event_cmd", [
+        ("/opt/fleet/vitals.sh", "session-start"),
+        ("/opt/claudron/bin/claudron hook session-end", "session-start"),
+    ])
+    def test_a_command_that_is_not_ours_is_none(self, command, event_cmd):
+        assert hooks_mod.parse_hook_command(command, event_cmd) is None
+
+    @pytest.mark.parametrize("command", [
+        "/opt/claudron/bin/claudron  --vault /v hook session-start",
+        "/opt/claudron/bin/claudron --vault=/v hook session-start",
+    ])
+    def test_an_address_in_another_form_is_read_but_not_canonical(self, command):
+        parsed = hooks_mod.parse_hook_command(command, "session-start")
+        assert (parsed.vault, parsed.canonical) == ("/v", False)
+
+    def test_the_default_settings_file_is_the_install_target(self, tmp_path, monkeypatch):
+        # `hooks install --write` without --settings writes here; doctor reads
+        # the same file by default. One definition for both.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert hooks_mod.default_settings_path() == tmp_path / ".claude" / "settings.json"

@@ -17,6 +17,14 @@ from claudron.vault import IDENTITY_FILE, identity_text
 from .doc_parity import REPO_ROOT
 
 
+@pytest.fixture(autouse=True)
+def _isolated_home(tmp_path_factory, monkeypatch):
+    """Every test gets its own empty HOME. `doctor` checks the settings file
+    `hooks install --write` writes by default (`~/.claude/settings.json`, #204),
+    and a test must never read, or write, the developer's own."""
+    monkeypatch.setenv("HOME", str(tmp_path_factory.mktemp("home")))
+
+
 def _identify(root: Path, hub: str = "_shared") -> Path:
     """Stamp a fixture vault with its identity file (#183): these fixtures
     stand for CURRENT vaults, which walk-up binds only by that file."""
