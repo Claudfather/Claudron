@@ -173,6 +173,66 @@ class TestSyncRoundTrip:
         assert {"pulled", "pushed", "quarantined"} <= set(env["data"])
 
 
+class TestRefusalIsNeverSuccessShaped:
+    """#142 and Claudlobby#1970. A refused sync exited 1 with its reason in
+    `detail`, but printed `sync: nothing to do` on stdout, and its `--json`
+    envelope said `"ok": true`. A job keyed on `ok` logged a week of refusals
+    as successes. Exit code, envelope and summary line must all agree."""
+
+    @staticmethod
+    def _wedge(a: Path) -> None:
+        # A fresh index.lock: the #142 trigger. Fresh means never expired —
+        # sync refuses and writes nothing.
+        (a / ".git" / "index.lock").write_text("")
+
+    def test_json_envelope_ok_matches_the_exit_code(self, synced_pair, capsys):
+        import json
+        a, _ = synced_pair
+        self._wedge(a)
+        rc = main(["--vault", str(a), "sync", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert rc == 1
+        assert env["ok"] is False
+        assert [e["code"] for e in env["errors"]] == ["G001"]
+        assert env["errors"][0]["message"] == env["data"]["detail"] != ""
+
+    def test_ff_only_envelope_ok_matches_the_exit_code(self, synced_pair, capsys):
+        import json
+        a, _ = synced_pair
+        _git(a, "switch", "-q", "-c", "side")         # the Pi's refusal shape
+        rc = main(["--vault", str(a), "sync", "--ff-only", "--json"])
+        env = json.loads(capsys.readouterr().out)
+        assert rc == 1                                  # the side-branch refusal
+        assert "refusing to sync" in env["data"]["detail"]
+        assert env["ok"] is False
+        assert [e["code"] for e in env["errors"]] == ["G001"]
+
+    def test_ff_only_refusal_is_not_already_up_to_date(self, synced_pair, capsys):
+        a, _ = synced_pair
+        _git(a, "switch", "-q", "-c", "side")
+        assert main(["--vault", str(a), "sync", "--ff-only"]) == 1
+        out = capsys.readouterr().out
+        assert "already up to date" not in out and "needs attention" in out
+
+    def test_refusal_never_prints_nothing_to_do(self, synced_pair, capsys):
+        a, _ = synced_pair
+        self._wedge(a)
+        rc = main(["--vault", str(a), "sync"])
+        out = capsys.readouterr().out
+        assert rc == 1
+        assert "nothing to do" not in out
+        assert "needs attention" in out
+
+    def test_a_clean_run_stays_success_shaped(self, synced_pair, capsys):
+        import json
+        a, _ = synced_pair
+        assert main(["--vault", str(a), "sync"]) == 0
+        assert "needs attention" not in capsys.readouterr().out
+        assert main(["--vault", str(a), "sync", "--json"]) == 0
+        env = json.loads(capsys.readouterr().out)
+        assert env["ok"] is True and env["errors"] == []
+
+
 class TestConflictQuarantine:
     """Since #193 a conflict never reaches the live tree: it is reported by
     path and the local copy stays exactly as the human left it. Quarantine
