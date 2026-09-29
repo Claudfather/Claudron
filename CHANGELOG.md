@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.1 — 2026-09-29
+
 ### Changed (breaking)
 - **Worktree integration is now the only way `sync` integrates; `CLAUDRON_SYNC_WORKTREE` is gone ([#193](https://github.com/Claudfather/Claudron/issues/193)).**
 
