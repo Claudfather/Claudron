@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.2 — 2026-09-29
+
 ### Changed (breaking)
 - **Walk-up detection binds only a vault carrying `.claudron-vault` ([#183](https://github.com/Claudfather/Claudron/issues/183), F6).**
 
