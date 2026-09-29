@@ -1,16 +1,18 @@
 """Vault sync: the git leg of the SD-card loop (E2).
 
-`sync` is a thin, explicit git wrapper — commit vault changes, pull
---rebase, push. Conflicts are reported and left as markers for the human
-(the rebase stays stopped for the standard resolve/--continue flow),
-never auto-resolved; marker-bearing notes are quarantined (excluded from
-index/lookup/recall — detection is stateless, see
-schema.has_conflict_markers) until resolved.
+`sync` is a thin, explicit git wrapper — commit vault changes, integrate
+the upstream, push. Integration never rewrites the live tree: a behind
+clone fast-forwards, a diverged one is rebased in a throwaway worktree and
+the live tree moves only once, by `reset --keep`, to the finished tip
+(#158; unconditional since #193). A conflict or a kill is reported by path
+and leaves the live tree byte-identical — no markers, nothing half-checked-
+out — never auto-resolved. Notes that arrive CARRYING markers (committed
+that way elsewhere) are quarantined (excluded from index/lookup/recall —
+detection is stateless, see schema.has_conflict_markers) until resolved.
 
 The quarantine scan is bounded to what the pull actually changed
-(``ORIG_HEAD..HEAD`` on a clean pull, unmerged files on a conflict) — a
-no-op pull reads zero notes, which keeps the SessionStart hook O(changed),
-not O(vault).
+(``ORIG_HEAD..HEAD``) — a no-op pull reads zero notes, which keeps the
+SessionStart hook O(changed), not O(vault).
 
 Single-writer-per-machine is the E2 assumption; cross-machine
 serialization happens here at the git layer. Hooks call the halves
@@ -542,15 +544,6 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
     return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
 
 
-WORKTREE_FLAG = "CLAUDRON_SYNC_WORKTREE"
-
-
-def _worktree_armed() -> bool:
-    """`1` arms phase 1; anything else, including empty, is off — the estate's
-    polarity rule, so an empty assignment at a tier is not an arming."""
-    return os.environ.get(WORKTREE_FLAG, "").strip() == "1"
-
-
 def _reap_integration(root: Path, wt: Path | None, branch: str | None,
                       t: float) -> None:
     """Remove a throwaway worktree and its temporary branch. Never raises.
@@ -735,8 +728,8 @@ def sync(
     timeout: float | None = None,
     branch: str | None = None,
 ) -> SyncResult:
-    """Commit → pull --rebase → push. Raises SyncError for environment
-    problems; returns ok=False (with detail + quarantine list) when a
+    """Commit → integrate (off the live tree) → push. Raises SyncError for
+    environment problems; returns ok=False (with detail + quarantine list) when a
     conflict or push failure was left for the human.
 
     Every git op is bounded (``timeout`` or :data:`DEFAULT_GIT_TIMEOUT`): sync
@@ -781,9 +774,9 @@ def sync(
         # Reporting and stopping is the whole remedy: repairing a stopped
         # rebase stays the human's call, exactly as on the conflict path below.
         # Sweep debris from a run that died where even the `finally` could not
-        # run -- a SIGKILL, a reboot (#158 step 2). UNCONDITIONAL, not gated on
-        # the flag: leftovers can predate a disarm, and a sweep that only ran
-        # while armed would strand exactly the debris a backout leaves behind.
+        # run -- a SIGKILL, a reboot (#158 step 2). Runs every sync, before
+        # anything else touches the tree, so a dead run's debris never outlives
+        # the next one.
         # `worktree prune` only drops admin files for worktrees whose directory
         # is already gone, and the branch delete is scoped to `tmp/integrate-*`,
         # so it cannot touch an operator's own worktree or branch.
@@ -917,90 +910,35 @@ def sync(
                     "pull skipped: this branch has no upstream to rebase onto"
                 )
             else:
-                # Bare `pull --rebase` rebases onto THIS branch's own upstream.
-                # Naming `origin HEAD` resolved HEAD *on the remote*, where it
-                # is a symbolic ref to the default branch — so on any
-                # non-default branch it rebased onto origin/main and queued the
-                # entire divergence rather than the handful of unpushed
-                # commits it reads as meaning (#147).
-                if _worktree_armed():
-                    # #158 phase 1: integrate OFF the live tree. The in-place
-                    # path below is left BYTE-IDENTICAL (only re-indented under
-                    # this `else`), so unsetting the flag is a real backout
-                    # rather than a revert — which is what the rollout asks for.
-                    _ok, _detail_txt, _unmerged = _integrate_in_worktree(root, t)
-                    if not _ok:
-                        result.detail = _detail(_detail_txt)
-                        # Quarantine now names notes that COULD NOT BE
-                        # INTEGRATED, rather than notes carrying markers in the
-                        # tree — the tree has none. Same field, different
-                        # meaning, and the detail says so.
-                        result.quarantined = list(_unmerged)
-                        return _done(result)
-                    if _detail_txt:
-                        result.detail = _detail(_detail_txt)
-                        return _done(result)
-                    pulled = None
-                else:
-                    try:
-                        pulled = run_git(root, "pull", "--rebase", timeout=t)
-                    except SyncTimeout as exc:
-                        # The third case the returncode branch below cannot cover:
-                        # git was killed mid-replay, so there is no returncode and
-                        # no conflict markers. Saying so is the entire fix for the
-                        # silence that let this run six weeks unnoticed.
-                        # A KILLED replay is cleaned up; a CONFLICT is not. See
-                        # `_killed_rebase` for why both of its facts must agree
-                        # before anything is aborted -- a conflict's markers are a
-                        # human's work in progress, and erasing them is worse than
-                        # the wedge this fixes.
-                        if _killed_rebase(root, git_dir, t):
-                            abort = run_git(root, "rebase", "--abort", timeout=t)
-                            left = _interrupted_state(root, git_dir, t)
-                            if abort.returncode == 0 and left is None:
-                                head = run_git(root, "symbolic-ref", "--quiet",
-                                               "--short", "HEAD", timeout=t)
-                                sha = run_git(root, "rev-parse", "--short", "HEAD",
-                                              timeout=t)
-                                where = (f"{head.stdout.strip()}@{sha.stdout.strip()}"
-                                         if head.returncode == 0 and sha.returncode == 0
-                                         else "its previous branch")
-                                result.detail = (
-                                    f"{exc} — rebase aborted, repository restored "
-                                    f"to {where}"
-                                )
-                                return _done(result)
-                            # The abort itself failed, or left something behind.
-                            # Fall through to the human-facing text rather than
-                            # claiming a repair that did not happen.
-                        left = _interrupted_state(root, git_dir, t)
-                        result.detail = _detail(
-                            f"{exc} — {left}; left for the human"
-                            if left
-                            else f"{exc} — repository left consistent"
-                        )
-                        return _done(result)
-                # `None` is the worktree path's success sentinel: it integrated
-                # off-tree and has nothing to report here, so the in-place
-                # conflict handling below (which reads markers in the LIVE tree —
-                # markers that path never creates) must be skipped rather than
-                # asked about a process that was never run.
-                if pulled is not None and pulled.returncode != 0:
-                    # Conflict (or no remote). The rebase stays stopped with
-                    # markers in the working tree — the standard
-                    # resolve/--continue flow; sync never aborts it (aborting
-                    # would erase the markers the human is supposed to see).
-                    # Scan only the unmerged files.
-                    result.quarantined = scan_quarantine(
-                        vault, paths=_changed_md(root, ["--diff-filter=U"])
-                    )
+                # Integrate onto THIS branch's own upstream, never `origin HEAD`
+                # (which resolves the remote's default branch and queued the
+                # entire divergence on any non-default branch, #147).
+                # Integration ALWAYS happens off the live tree (#158; the only
+                # path since #193 retired the in-place `pull --rebase` and the
+                # opt-in switch that guarded the change). A conflict or a kill
+                # leaves the live tree byte-identical: no markers, no
+                # half-rewritten files.
+                try:
+                    ok, detail_txt, unmerged = _integrate_in_worktree(root, t)
+                except SyncTimeout as exc:
+                    # A timeout OUTSIDE the worktree rebase (fetch, the plain
+                    # fast-forward, the final reset) is still a reported result,
+                    # never a raise past the failure handler (#147 defect 3).
+                    left = _interrupted_state(root, git_dir, t)
                     result.detail = _detail(
-                        "pull hit conflicts — markers left for the human; "
-                        "conflicted notes are quarantined from search until "
-                        "resolved"
-                        if result.quarantined
-                        else f"pull failed: {pulled.stderr.strip()[:200]}"
+                        f"{exc} — {left}; left for the human"
+                        if left
+                        else f"{exc} — repository left consistent"
                     )
+                    return _done(result)
+                if not ok:
+                    result.detail = _detail(detail_txt)
+                    # Quarantine names notes that COULD NOT BE INTEGRATED; the
+                    # live tree carries no markers, so there is nothing to scan.
+                    result.quarantined = list(unmerged)
+                    return _done(result)
+                if detail_txt:
+                    result.detail = _detail(detail_txt)
                     return _done(result)
                 result.pulled = True
                 # A clean pull can still land markers committed elsewhere —
@@ -1094,8 +1032,8 @@ def pull_ff_only(vault: Vault, *, timeout: float | None = None) -> SyncResult:
     """Fetch the upstream and FAST-FORWARD onto it. Never commits, never rebases.
 
     THE NON-REWRITING PULL, for callers on a latency budget -- the hooks above
-    all else. `sync(pull=True)` commits whatever is on disk and then runs
-    `git pull --rebase` in the live tree, and a budget that is right for
+    all else. `sync(pull=True)` commits whatever is on disk and then integrates a
+    diverged clone by a rebase (off the live tree since #193), and a budget that is right for
     latency is wrong for a history rewrite: the only two outcomes of a 2 s
     rebase on a busy host are "nothing to do" and "killed part-way". A killed
     replay detaches HEAD and leaves commits reachable from no branch. On the
