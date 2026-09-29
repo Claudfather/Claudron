@@ -6,7 +6,7 @@ seam — what belongs where inside the package, and what must never land here.
 **Engine vs CLI vs hooks:**
 
 - **Engine modules** (`engine`, `knowledge`, `schema`, `structure`, `vault`, `graph`, `session`,
-  `sync`, `locking`, `promote`) never print — stdout/stderr belong to `cli.py` per
+  `sync`, `locking`, `promote`, `doctor`) never print — stdout/stderr belong to `cli.py` per
   `docs/CLI_CONTRACT.md` (§Channels is load-bearing: hooks inject stdout verbatim).
 - **Every note write goes through `engine.py`** — `new`, `capture`, and any future door share one
   validate/dedup/index path. A second write path is a boundary bug.

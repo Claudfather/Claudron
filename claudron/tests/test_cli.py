@@ -307,6 +307,8 @@ class TestChannelDiscipline:
             ["--vault", str(vault_dir), "lookup", "--json", "auth"],
             ["--vault", str(vault_dir), "index", "--json"],
             ["--vault", str(vault_dir), "validate", "--json"],
+            ["--vault", str(vault_dir), "doctor", "--json"],
+            ["--vault", str(vault_dir), "doctor", "--fix", "--json"],
             ["version", "--json"],
             # The write door too: provenance fields are carried inside `data`,
             # so adding them must not have grown the envelope a fleet parses.

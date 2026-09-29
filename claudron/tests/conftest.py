@@ -12,7 +12,16 @@ from textwrap import dedent
 
 import pytest
 
+from claudron.vault import IDENTITY_FILE, identity_text
+
 from .doc_parity import REPO_ROOT
+
+
+def _identify(root: Path, hub: str = "_shared") -> Path:
+    """Stamp a fixture vault with its identity file (#183): these fixtures
+    stand for CURRENT vaults, which walk-up binds only by that file."""
+    (root / IDENTITY_FILE).write_text(identity_text(root.name, hub))
+    return root
 
 
 @pytest.fixture
@@ -73,7 +82,7 @@ def vault_dir(tmp_path: Path) -> Path:
     """)
     )
 
-    return root
+    return _identify(root)
 
 
 @pytest.fixture
@@ -156,7 +165,7 @@ def nested_system_vault(tmp_path: Path) -> Path:
     fleet = sys1 / "fleetA"
     (fleet / "shared" / "knowledge").mkdir(parents=True)
     (fleet / "fleet.yaml").write_text("fleet: {name: fleetA}")
-    return root
+    return _identify(root)
 
 
 @pytest.fixture
@@ -207,7 +216,7 @@ def nested_fleet_shadow_vault(tmp_path: Path) -> Path:
     nested = sys1 / "experiments"
     (nested / "shared" / "knowledge").mkdir(parents=True)
     (nested / "fleet.yaml").write_text("fleet: {name: experiments}")
-    return root
+    return _identify(root)
 
 
 @pytest.fixture
@@ -217,7 +226,7 @@ def empty_vault(tmp_path: Path) -> Path:
     (root / "_shared" / "knowledge").mkdir(parents=True)
     (root / "_shared" / "decisions").mkdir(parents=True)
     (root / "_shared" / "runbooks").mkdir(parents=True)
-    return root
+    return _identify(root)
 
 
 @pytest.fixture
@@ -246,7 +255,7 @@ def shared_vault(tmp_path: Path) -> Path:
         Always run pytest before pushing.
     """)
     )
-    return root
+    return _identify(root, "shared")
 
 
 @pytest.fixture

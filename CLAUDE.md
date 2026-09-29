@@ -45,6 +45,7 @@ claudron/
   hooks.py        # Claude Code lifecycle adapters (fail-open)
   locking.py      # flock + atomic writes (the write-safety floor)
   promote.py      # Maturity promotion (E5)
+  doctor.py       # Vault diagnosis + versioned migrations (`doctor [--fix]`)
   tests/
     conftest.py   # Shared fixtures (vault_dir, vault_with_projects, etc.)
     test_*.py     # Per-module tests
@@ -52,7 +53,7 @@ claudron/
 
 ## Key concepts
 
-- **Vault** -- directory with `_shared/` (or `shared/`) marker at root. Detection walks up from CWD like git walks up for `.git/`.
+- **Vault** -- directory carrying the `.claudron-vault` identity file, with a `_shared/` (or `shared/`) hub. Detection walks up from CWD like git walks up for `.git/`, binding only on the identity file; an explicit `--vault` also opens an older vault without one, so `claudron doctor --fix` can migrate it.
 - **Tier A** -- `.claudron/index.json` frontmatter cache. Cheap title/tag matching.
 - **Tier B** -- full-text body scan. Fallback when index misses.
 - **Fleet overlay** -- `<fleet-name>/shared/` inside the vault for fleet-scoped knowledge.

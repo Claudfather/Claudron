@@ -21,11 +21,13 @@ from .schema import (
 )
 from .structure import StructureError, check_structure, fix_structure, is_fixable
 from .vault import (
+    IDENTITY_FILE,
     SCAFFOLD_TREE,
     SKIP_DIRS,
     Vault,
     VaultError,
     detect,
+    find_legacy_root,
     init,
     is_within_root,
     scaffold_shared_tree,
@@ -106,6 +108,18 @@ def _resolve_vault(args) -> Vault:
     """Resolve vault or exit 3 (environment error, CLI contract)."""
     vault = _detect_vault(args)
     if vault is None:
+        legacy = find_legacy_root()
+        if legacy is not None:
+            # A vault from before the identity file (#183): walk-up no longer
+            # binds it. Name the one command that brings it current, instead of
+            # a bare "no vault" that reads as if the vault were gone.
+            print(
+                f"no vault found — {legacy} looks like a vault without its "
+                f"identity file ({IDENTITY_FILE}), which walk-up now requires\n"
+                f"  migrate it:  claudron doctor --vault {legacy} --fix",
+                file=sys.stderr,
+            )
+            sys.exit(3)
         print(
             "no vault found\n"
             "  create one:  claudron init <path>\n"
@@ -906,6 +920,10 @@ def cmd_validate(args) -> int:
     if vault is not None:
         structure = check_structure(vault, strict=strict)
         if fix:
+            # One repair door (#190): `doctor --fix` owns repairs now. This
+            # alias keeps working so nothing that calls it breaks, and says so.
+            print("note: `validate --fix` is an alias for `claudron doctor --fix`, "
+                  "which also applies vault migrations", file=sys.stderr)
             try:
                 actions = fix_structure(vault, structure)
             except StructureError as e:
@@ -946,9 +964,51 @@ def cmd_validate(args) -> int:
         fixable = [f for f in findings if is_fixable(f)]
         if fixable:
             print(
-                f"→ {len(fixable)} fixable — run: claudron validate --fix",
+                f"→ {len(fixable)} fixable — run: claudron doctor --fix",
                 file=sys.stderr,
             )
+    return 1 if errors else 0
+
+
+def cmd_doctor(args) -> int:
+    """Diagnose the vault against this engine's rules (read-only), or with
+    --fix apply structure repairs + pending migrations as one commit (#190)."""
+    from .doctor import diagnose, fix as doctor_fix
+
+    vault = _resolve_vault(args)
+    if args.fix:
+        try:
+            report = doctor_fix(vault)
+        except StructureError as e:
+            print(f"--fix aborted: {e}", file=sys.stderr)
+            return 1
+    else:
+        report = diagnose(vault)
+
+    findings = report.findings
+    errors = [f for f in findings if f.severity == "error"]
+    if args.json:
+        _emit_json("doctor", report.to_dict(), findings)
+        return 1 if errors else 0
+
+    current = ("current" if not report.pending else
+               f"{len(report.pending)} migration(s) pending")
+    print(f"vault format: {report.vault_format} (engine: {report.engine_format}) — {current}")
+    print(f"git: {report.git['state'] if report.git else 'not a git repository'}")
+    for f in findings:
+        loc = f.path + (f":{f.line}" if f.line else "")
+        print(f"[{f.code}] {f.severity} {loc} — {f.message}")
+    for line in report.repairs:
+        print(line, file=sys.stderr)
+    if report.commit:
+        c = report.commit
+        print(f"committed: {c['message']}" if c["committed"] else
+              f"not committed ({c['error'] or 'not a git repository'})", file=sys.stderr)
+    warnings = len(findings) - len(errors)
+    print(f"{len(errors)} error(s), {warnings} warning(s)", file=sys.stderr)
+    if not report.fixed and report.fixable:
+        print(f"→ fixable: {', '.join(report.fixable)} — run: claudron doctor --fix",
+              file=sys.stderr)
     return 1 if errors else 0
 
 
@@ -1259,8 +1319,20 @@ def main(argv=None) -> int:
     p_validate.add_argument(
         "--fix",
         action="store_true",
-        help="Create missing structure (fleet shared/ dirs); "
-        "creation-only, never moves or deletes",
+        help="Alias for `claudron doctor --fix` (structure repairs only)",
+    )
+
+    # doctor
+    p_doctor = sub.add_parser(
+        "doctor",
+        help="Diagnose the vault against this engine's rules; --fix migrates it",
+        parents=[vault_parent, json_parent],
+    )
+    p_doctor.add_argument(
+        "--fix",
+        action="store_true",
+        help="Apply structure repairs + pending migrations as one commit; "
+        "creation/edit-only, never deletes",
     )
 
     # new
@@ -1569,6 +1641,7 @@ def main(argv=None) -> int:
         "sync": cmd_sync,
         "hook": cmd_hook,
         "validate": cmd_validate,
+        "doctor": cmd_doctor,
         "lookup": cmd_lookup,
         "related": cmd_related,
         "links": cmd_links,
