@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.5.3 — 2026-09-29
+
 ### Fixed
 - **A refused or failed `sync` no longer reads as a success ([#142](https://github.com/Claudfather/Claudron/issues/142), Claudfather/Claudlobby#1970).** `sync --json` and `sync --ff-only --json` emitted `"ok": true` even when the run exited 1 with a reason in `data.detail`. The envelope never received a finding, so its `ok` could not be false. Claudlobby's `vault-sync` reads `ok`, so a clone refusing every sync (the side-branch guard, a live `index.lock`) was logged as a success every 15 minutes.
 
