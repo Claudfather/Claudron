@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from claudron import cli as cli_mod
 from claudron import sync as sync_mod
 from claudron.cli import VAULT_ENV_VARS, main
 from claudron.hooks import (
@@ -494,28 +495,48 @@ class TestInstallRecordsTheVault:
             assert argv[1:3] == ["--vault", str(vault_dir.resolve())], command
             assert argv[3:] == ["hook", EVENT_CMD[event]], command
 
-    def test_a_session_started_outside_the_vault_resolves_it(self, vault_dir: Path, tmp_path: Path):
+    def test_a_session_started_outside_the_vault_resolves_it(
+            self, vault_dir: Path, tmp_path: Path, monkeypatch):
         """#183's own test, end to end. The fixture vault carries no identity
-        file, so walk-up could never bind it: only the recorded address can."""
+        file, so walk-up could never bind it: only the recorded address can.
+
+        Every step runs the code this test imported. The console script beside
+        the interpreter imports whatever its install points at, which for an
+        editable install can be another checkout: a mismatch there failed this
+        test against a correct head, and the reverse would pass a broken one.
+        So the install runs in-process, the recorded executable is
+        ``python -m claudron.cli``, and the hook subprocesses get this code on
+        PYTHONPATH, which the first check asserts."""
         home, outside, tmp = tmp_path / "home", tmp_path / "elsewhere", tmp_path / "tmp"
         for d in (home, outside, tmp):
             d.mkdir()
-        env = self._scrubbed(HOME=str(home), TMPDIR=str(tmp))
-        exe = str(Path(sys.executable).parent / "claudron")
+        head = Path(cli_mod.__file__).resolve().parents[1]
+        exe = f"{sys.executable} -m claudron.cli"
+        pythonpath = os.pathsep.join(p for p in (str(head), os.environ.get("PYTHONPATH")) if p)
+        env = self._scrubbed(HOME=str(home), TMPDIR=str(tmp), PYTHONPATH=pythonpath)
+
+        def sh(command: str) -> str:
+            return subprocess.run(["sh", "-c", command], cwd=outside, env=env, input="{}",
+                                  capture_output=True, text=True, check=True, timeout=60).stdout
+
+        imported = sh(f'{sys.executable} -c "import claudron.cli; print(claudron.cli.__file__)"')
+        assert head in Path(imported.strip()).resolve().parents, imported
         # The control: the command as installed before #183, run from outside,
         # finds nothing and says so where a vault-less hook logs.
-        subprocess.run(["sh", "-c", f"{exe} hook session-start"], cwd=outside, env=env,
-                       input="{}", capture_output=True, text=True, check=True)
+        sh(f"{exe} hook session-start")
         assert "no vault resolvable" in (tmp / "claudron-hooks.log").read_text()
         (tmp / "claudron-hooks.log").unlink()
 
-        r = subprocess.run([exe, "--vault", str(vault_dir), "hooks", "install", "--write"],
-                           cwd=outside, env=env, capture_output=True, text=True)
-        assert r.returncode == 0, r.stderr
+        for var in VAULT_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.chdir(outside)
+        monkeypatch.setattr(cli_mod, "resolve_executable", lambda: exe)
+        assert main(["--vault", str(vault_dir), "hooks", "install", "--write"]) == 0
         settings = json.loads((home / ".claude" / "settings.json").read_text())
         command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-        subprocess.run(["sh", "-c", command], cwd=outside, env=env,
-                       input="{}", capture_output=True, text=True, check=True)
+        assert command.startswith(f"{exe} --vault "), command
+        sh(command)
         assert not (tmp / "claudron-hooks.log").exists(), "the hook found no vault"
         assert "[session-start]" in (vault_dir / ".claudron" / "hooks.log").read_text()
 
