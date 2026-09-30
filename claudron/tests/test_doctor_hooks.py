@@ -606,3 +606,29 @@ class TestTheUnparseableRemedyIsTrue:
         assert report.hooks[0]["state"] == "unreadable"
         (d009,) = _codes(report, "D009")
         assert "not a regular file" in d009.message
+
+
+class TestSettingsCapability:
+    """`doctor --settings` is a new flag on an existing verb, the case a probe cannot
+    see: an engine without it exits 2 on the flag, and exits 0 when `--help` follows.
+    A consumer gates on the declared name, never on the version (§Capability probe)."""
+
+    def test_doctor_settings_is_a_declared_capability(self):
+        from claudron import CAPABILITIES
+        assert "doctor-settings" in CAPABILITIES
+
+    def test_status_json_carries_it(self, vault_dir: Path, capsys):
+        assert main(["--vault", str(vault_dir), "status", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert "doctor-settings" in data["capabilities"], data.get("capabilities")
+
+    def test_the_contract_names_the_gate(self):
+        contract = (Path(__file__).resolve().parents[2] / "docs" / "CLI_CONTRACT.md").read_text()
+        assert '"doctor-settings" in status --json' in contract
+
+    def test_every_declared_capability_is_gated_by_name_in_the_contract(self):
+        """A name nobody documents is a gate nobody can find."""
+        from claudron import CAPABILITIES
+        contract = (Path(__file__).resolve().parents[2] / "docs" / "CLI_CONTRACT.md").read_text()
+        missing = [name for name in CAPABILITIES if f'"{name}" in ' not in contract]
+        assert missing == []

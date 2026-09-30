@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- **The `doctor-settings` capability** ([#204](https://github.com/Claudfather/Claudron/issues/204)). `doctor --settings` shipped in 0.6.0, but `CAPABILITIES` did not name it. It is a new flag on an existing verb, the case the contract says a probe cannot see: an engine without the flag exits 2 on it, and exits 0 when `--help` follows. A consumer that wants to pass `--settings` now gates on `"doctor-settings" in status --json → data.capabilities`, as `navigation` does for `index --navigation`. `docs/CLI_CONTRACT.md` names the gate in the `doctor` section.
+  - **Tests** (`claudron/tests/test_doctor_hooks.py`, `TestSettingsCapability`): the name is declared, `status --json` carries it, and the contract names its gate. A general test pins that every declared capability is gated by name in the contract, so a future name cannot ship undocumented. The first three fail before the change.
+
 ## 0.6.0 — 2026-09-30
 
 ### Added
