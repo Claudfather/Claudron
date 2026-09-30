@@ -20,6 +20,7 @@ from claudron import doctor as doctor_mod
 from claudron import hooks as hooks_mod
 from claudron.hooks import merge_settings, settings_snippet
 from claudron.vault import IDENTITY_FILE, detect, identity_text
+from claudron.tests import test_hooks
 
 EVENT_CMD = {
     "SessionStart": "session-start",
@@ -169,7 +170,7 @@ class TestShape:
         assert report.hooks[0]["state"] == "unreadable"
         # `hooks install --write` refuses an unparseable file too, so the
         # remedy is the file itself, not the install.
-        assert "repair its JSON" in d009.message
+        assert "repair the file" in d009.message
         assert "hooks install --write" not in d009.message
 
     def test_the_default_file_absent_is_not_a_finding(self, vault_dir):
@@ -553,7 +554,7 @@ KINDS = [
 
 #: What a remedy looks like: the install command, or, for a file the install
 #: will not touch either, repairing it.
-REMEDIES = ("hooks install --write", "repair its JSON")
+REMEDIES = ("hooks install --write", "repair the file")
 
 
 class TestRemedies:
@@ -571,3 +572,37 @@ class TestRemedies:
         found = [f.message for f in report.findings if f.code in ("D009", "D010")]
         assert any(kind in m for m in found), found
         assert [m for m in found if not any(r in m for r in REMEDIES)] == []
+
+
+class TestTheUnparseableRemedyIsTrue:
+    """D009's unparseable finding says `hooks install` refuses the file too.
+    vera found that true for 1 of 7 shapes on #205. Doctor and the installer
+    now read a settings file through one reader, so for every shape doctor
+    calls unparseable the installer refuses it, and this pins both halves."""
+
+    @pytest.mark.parametrize(
+        "content",
+        [c for c, _ in test_hooks.UNMERGEABLE],
+        ids=[i for _, i in test_hooks.UNMERGEABLE],
+    )
+    def test_doctor_calls_unparseable_exactly_what_the_install_refuses(
+        self, vault_dir, tmp_path, capsys, content
+    ):
+        s = tmp_path / "settings.json"
+        s.write_bytes(content)
+        report = doctor_mod.diagnose(detect(vault_dir), settings=[s])
+        assert report.hooks[0]["state"] == "unreadable"
+        (d009,) = _codes(report, "D009")
+        assert "cannot parse" in d009.message and "refuses the file too" in d009.message
+        rc = main(["--vault", str(vault_dir), "hooks", "install",
+                   "--write", "--settings", str(s)])
+        assert rc == 3 and s.read_bytes() == content
+
+    def test_a_declared_directory_is_unparseable_not_missing(self, vault_dir, tmp_path):
+        # "install them there" cannot be the remedy for a path the install refuses.
+        d = tmp_path / "settings.json"
+        d.mkdir()
+        report = doctor_mod.diagnose(detect(vault_dir), settings=[d])
+        assert report.hooks[0]["state"] == "unreadable"
+        (d009,) = _codes(report, "D009")
+        assert "not a regular file" in d009.message

@@ -630,3 +630,78 @@ class TestParseHookCommand:
         # the same file by default. One definition for both.
         monkeypatch.setenv("HOME", str(tmp_path))
         assert hooks_mod.default_settings_path() == tmp_path / ".claude" / "settings.json"
+
+
+#: Every shape `merge_settings` cannot merge into, with why. vera measured the
+#: first seven on #205: one was refused, three were silently rewritten, three
+#: crashed the install. The rest are the same class one level down, where a
+#: claudron event is not a list of objects.
+UNMERGEABLE = [
+    (b"{not json", "not-json"),
+    (b"[]", "a-list"),
+    (b"null", "null"),
+    (b'"x"', "a-string"),
+    (b'{"hooks": null}', "hooks-null"),
+    (b'{"hooks": []}', "hooks-a-list"),
+    (b'{"hooks": "x"}', "hooks-a-string"),
+    (b'{"hooks": {"SessionStart": "x"}}', "event-not-a-list"),
+    (b'{"hooks": {"PreCompact": ["x"]}}', "event-entry-not-an-object"),
+    (b'{"hooks": {"SessionEnd": [{"hooks": "x"}]}}', "entry-hooks-not-a-list"),
+    (b'{"hooks": {"SessionStart": [{"hooks": ["x"]}]}}', "hook-not-an-object"),
+    (b"\xff\xfe{}", "not-utf-8"),
+]
+
+
+class TestInstallRefusesWhatItCannotMerge:
+    """`hooks install --write` refuses a settings file it cannot merge into:
+    exit 3, the file unchanged, the reason on stderr. Before #205's review it
+    refused only unparseable JSON."""
+
+    @pytest.mark.parametrize(
+        "content", [c for c, _ in UNMERGEABLE], ids=[i for _, i in UNMERGEABLE]
+    )
+    def test_it_exits_3_and_leaves_the_file_alone(
+        self, vault_dir: Path, tmp_path: Path, capsys, content: bytes
+    ):
+        s = tmp_path / "settings.json"
+        s.write_bytes(content)
+        rc = main(["--vault", str(vault_dir), "hooks", "install",
+                   "--write", "--settings", str(s)])
+        assert rc == 3
+        assert s.read_bytes() == content
+        err = capsys.readouterr().err
+        assert str(s) in err and "not touching it" in err
+
+    def test_a_directory_is_refused(self, vault_dir: Path, tmp_path: Path, capsys):
+        d = tmp_path / "settings.json"
+        d.mkdir()
+        rc = main(["--vault", str(vault_dir), "hooks", "install",
+                   "--write", "--settings", str(d)])
+        assert rc == 3 and d.is_dir() and not any(d.iterdir())
+        assert "not a regular file" in capsys.readouterr().err
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 file")
+    def test_a_file_it_cannot_read_is_refused(self, vault_dir: Path, tmp_path: Path):
+        s = tmp_path / "settings.json"
+        s.write_text("{}")
+        s.chmod(0)
+        try:
+            rc = main(["--vault", str(vault_dir), "hooks", "install",
+                       "--write", "--settings", str(s)])
+        finally:
+            s.chmod(0o600)
+        assert rc == 3 and s.read_text() == "{}"
+
+    def test_an_event_it_does_not_install_is_not_its_to_check(
+        self, vault_dir: Path, tmp_path: Path
+    ):
+        # merge_settings never touches the other events, so their shape is not
+        # a reason to refuse the three it does install.
+        s = tmp_path / "settings.json"
+        s.write_text(json.dumps({"hooks": {"PreToolUse": "whatever"}}))
+        rc = main(["--vault", str(vault_dir), "hooks", "install",
+                   "--write", "--settings", str(s)])
+        assert rc == 0
+        merged = json.loads(s.read_text())
+        assert merged["hooks"]["PreToolUse"] == "whatever"
+        assert {"SessionStart", "PreCompact", "SessionEnd"} <= set(merged["hooks"])

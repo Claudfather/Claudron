@@ -344,6 +344,14 @@ gate against this block** (register rule R3).
     `claudron-hooks.log`. The exception is an old path inside another vault's
     tree: walk-up from the address binds that vault instead.
   - **A composer** renders each consumer's own vault root.
+  - **A settings file `--write` cannot merge into is refused, never rewritten**
+    (#205): exit 3, the file unchanged, the reason on stderr. It must be a
+    regular, readable UTF-8 file holding a JSON object; its `hooks`, when
+    present, an object; and each of the three events, when present, a list of
+    objects whose own `hooks` is a list of objects. Other events are not
+    checked, since the install never touches them. `doctor` reads a settings
+    file through the same reader, so every file it calls unparseable (`D009`)
+    is one this refuses.
 - **Why `--vault` and not `env` in the settings file.** An `env` block applies
   to every process in every session that loads that file: tool calls, MCP
   servers, the model's own shell, not only these hooks. Where several sessions
@@ -471,8 +479,8 @@ stdout, and never to stderr where a host might surface them as a session error.
     `--settings` (or re-rendering the file, when a composer manages it); for a
     declared file that is missing, the same command with its path; for hooks
     that sync another vault, the same command with another settings file; and
-    for a file that cannot be parsed, repairing its JSON, since `hooks install
-    --write` will not touch it either. Re-installing replaces the whole hook
+    for a file that cannot be parsed (including a path that is not a regular
+    file), repairing the file, since `hooks install --write` refuses it too. Re-installing replaces the whole hook
     group that holds a claudron entry, so a finding whose group also holds
     other commands says that re-installing drops them.
 
