@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 — 2026-09-30
+
 ### Added
 - **`doctor` checks the hooks a host has installed ([#204](https://github.com/Claudfather/Claudron/issues/204)): #190's two per-host rows.** `D009` compares each checked settings file's claudron entries with the current snippet shape: an event with no entry or with two, an entry with no `--vault` (installed before #183), or any other difference. `D010` asks whether each entry reaches a vault from where it runs. Errors: an executable that does not exist, an address that is not a vault, or one that walk-up binds to another vault. Warnings: a bare executable, a relative address, an address inside the diagnosed vault but not its root (walk-up binds this vault, so the hook works), or hooks for a vault other than the one diagnosed.
   - **Which file:** `doctor --settings PATH` (repeatable), or by default the file `hooks install --write` writes, `~/.claude/settings.json`. Doctor never looks for other files. A default file that does not exist, or that holds no claudron entry on any of the three events, is not a finding (`state` `not-installed`): that host never ran `hooks install`, and re-installing would put the loop into the operator's own sessions. A partial install is a finding, and so is a declared file either way. `data.hooks` names every file checked.
