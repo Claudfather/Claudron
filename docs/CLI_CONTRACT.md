@@ -522,6 +522,9 @@ stdout, and never to stderr where a host might surface them as a session error.
   - `validate --fix` remains as an **alias** for the structure half of `doctor
     --fix`, and says so on stderr; `doctor` is the one repair door.
   - Gate on `"doctor" in status --json → data.capabilities` (§Capability probe).
+  - Gate `--settings` on `"doctor-settings" in status --json → data.capabilities`.
+    An engine without the flag exits 2 on it, and exits 0 when `--help` follows,
+    so only the declared name can tell a consumer it is there (§Capability probe).
 - `index [--full] [--navigation]` — rebuilds the derived index. **`--navigation`
   (engine 0.5.0)** additionally regenerates every directory's `INDEX.md` from
   that index, making it a *derived* file rather than a hand-appended one

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+- **The `doctor-settings` capability** ([#204](https://github.com/Claudfather/Claudron/issues/204)). `doctor --settings` shipped in 0.6.0, but `CAPABILITIES` did not name it. It is a new flag on an existing verb, the case the contract says a probe cannot see: an engine without the flag exits 2 on it, and exits 0 when `--help` follows. A consumer that wants to pass `--settings` now gates on `"doctor-settings" in status --json → data.capabilities`, as `navigation` does for `index --navigation`. `docs/CLI_CONTRACT.md` names the gate in the `doctor` section.
+  - **Tests** (`claudron/tests/test_doctor_hooks.py`, `TestSettingsCapability`): the name is declared, `status --json` carries it, and the contract names its gate. A general test pins that every declared capability is gated by name in the contract, so a future name cannot ship undocumented. The first three fail before the change.
+
 ### Fixed
 - **`doctor`'s D002 and a whole-vault `validate` read the notes, not every file under the vault root ([#201](https://github.com/Claudfather/Claudron/issues/201)).** Both ran a bare `rglob` over the vault root. On a vault whose root also holds a fleet's gitignored `runtime/` (bot project checkouts with `node_modules/` and virtualenvs), that is a walk through every file of every checkout: on a Raspberry Pi, `doctor` took about 26 minutes and D002 counted 152,248 schema errors against 896 notes.
   - **The scope.** Both now read the scope the index, `status` and the quarantine scan already shared: the note tiers, the root `CONVENTIONS.md` and root-level notes. That list is `vault_markdown_files()`, the quarantine scan's candidate list under a public name, so the scans cannot drift apart. `validate_path` takes it as the files to validate.
