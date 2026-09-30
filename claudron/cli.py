@@ -37,6 +37,7 @@ from .hooks import (
     HOOK_EVENTS,
     default_settings_path,
     merge_settings,
+    read_settings,
     resolve_executable,
     run_hook,
     settings_snippet,
@@ -901,13 +902,12 @@ def cmd_hooks_install(args) -> int:
         return 0
 
     settings_path = Path(args.settings or default_settings_path()).expanduser()
-    current: dict = {}
-    if settings_path.is_file():
-        try:
-            current = json.loads(settings_path.read_text())
-        except json.JSONDecodeError:
-            print(f"cannot parse {settings_path} — not touching it", file=sys.stderr)
-            return 3
+    current, why = read_settings(settings_path)
+    if current is None:
+        # A file the merge cannot use is refused whole, never rewritten or
+        # crashed on, and it is exactly the file doctor calls unparseable (#205).
+        print(f"cannot parse {settings_path} ({why}) — not touching it", file=sys.stderr)
+        return 3
     merged = merge_settings(current, snippet)
     if merged == current:
         print("hooks already installed — no changes", file=sys.stderr)

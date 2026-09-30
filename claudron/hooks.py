@@ -243,6 +243,54 @@ def default_settings_path() -> Path:
     return Path.home() / ".claude" / "settings.json"
 
 
+def settings_shape_error(data: object) -> str | None:
+    """Why `merge_settings` cannot merge into *data*, or None when it can.
+
+    It checks only what the merge reads: a JSON object, its `hooks` (when
+    present) an object, and each of the three events the install writes (when
+    present) a list of objects whose own `hooks` is a list of objects. Other
+    events are never touched, so their shape is not the install's to refuse."""
+    if not isinstance(data, dict):
+        return "not a JSON object"
+    if "hooks" not in data:
+        return None
+    hooks = data["hooks"]
+    if not isinstance(hooks, dict):
+        return "its `hooks` is not an object"
+    for event in SNIPPET_EVENTS:
+        if event not in hooks:
+            continue
+        groups = hooks[event]
+        if not isinstance(groups, list):
+            return f"its `hooks.{event}` is not a list"
+        for group in groups:
+            if not isinstance(group, dict):
+                return f"`hooks.{event}` holds an entry that is not an object"
+            inner = group.get("hooks", [])
+            if not isinstance(inner, list) or not all(isinstance(h, dict) for h in inner):
+                return f"`hooks.{event}` holds an entry whose `hooks` is not a list of objects"
+    return None
+
+
+def read_settings(path: Path) -> tuple[dict | None, str | None]:
+    """A settings file as `merge_settings` can use it: (settings, None), or
+    (None, why) when it cannot, and ({}, None) when there is no file yet.
+
+    `hooks install --write` refuses every file this cannot use, and `doctor`
+    calls exactly those files unparseable (D009), through this one reader, so
+    the remedy either one names is true of the other (#205)."""
+    if not path.exists():
+        return {}, None
+    if not path.is_file():
+        return None, "not a regular file"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, str(exc)
+    why = settings_shape_error(data)
+    return (None, why) if why else (data, None)
+
+
 @dataclass(frozen=True)
 class HookCommand:
     """A claudron hook command read back into its parts (#204)."""

@@ -38,7 +38,6 @@ runner records :data:`VAULT_FORMAT` there — the bump is part of the same commi
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shlex
@@ -49,7 +48,8 @@ from typing import Callable
 
 import yaml
 
-from .hooks import SNIPPET_EVENTS, default_settings_path, parse_hook_command, settings_snippet
+from .hooks import (SNIPPET_EVENTS, default_settings_path, parse_hook_command, read_settings,
+                    settings_snippet)
 from .knowledge import index_divergence
 from .locking import vault_write_lock
 from .schema import Finding, validate_path
@@ -344,7 +344,7 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
         record = {"path": str(path), "declared": declared, "state": "ok", "entries": []}
         checked.append(record)
         where = str(path)
-        if not path.is_file():
+        if not path.exists():
             record["state"] = "absent"
             if declared:
                 found.append(_finding(
@@ -354,19 +354,15 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
                     f"{shlex.quote(root)} hooks install --write --settings {shlex.quote(where)}",
                     where))
             continue
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, ValueError) as exc:
-            data, why = None, str(exc)
-        else:
-            why = ("its `hooks` is not an object" if isinstance(data, dict)
-                   else "not a JSON object")
-        if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
+        # The installer's own reader (#205): what doctor calls unparseable is
+        # exactly what `hooks install --write` refuses, so the remedy is true.
+        data, why = read_settings(path)
+        if data is None:
             record["state"] = "unreadable"
             found.append(_finding(
                 "D009", "warning",
                 f"cannot parse {path} ({why}) — its hooks were not checked, and "
-                "`hooks install` refuses the file too: repair its JSON (or re-render it, "
+                "`hooks install` refuses the file too: repair the file (or re-render it, "
                 "if a composer manages it)", where))
             continue
         hint = ("re-install: claudron --vault " + shlex.quote(root) + " hooks install --write"
