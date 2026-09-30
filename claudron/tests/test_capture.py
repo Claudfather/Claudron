@@ -620,3 +620,50 @@ class TestAFailedCommitNeverLosesTheNote:
         assert env["errors"] == [], env["errors"]
         assert any(w["code"] == "W108" for w in env["warnings"]), env["warnings"]
         assert env["data"]["written"] is True
+
+
+class TestTheDoorCommitsOnlyWhatItWrote:
+    """#211. The door staged only its note, then committed the whole index: a
+    file somebody else had already STAGED went into the capture's commit, under
+    the capture's message. Untracked and unstaged changes were never at risk,
+    because the add named its paths; a staged one was."""
+
+    @staticmethod
+    def _stage_a_stranger(vault: Path) -> None:
+        (vault / "stranger.txt").write_text("someone else's work in progress\n")
+        _cgit(vault, "add", "stranger.txt")
+
+    @staticmethod
+    def _head_files(vault: Path) -> set[str]:
+        return set(_cgit(vault, "show", "--name-only", "--format=", "HEAD").stdout.split())
+
+    @staticmethod
+    def _staged(vault: Path) -> list[str]:
+        return _cgit(vault, "diff", "--cached", "--name-only").stdout.split()
+
+    def test_capture_leaves_a_staged_stranger_staged_and_out_of_its_commit(
+            self, git_vault: Path, capsys):
+        self._stage_a_stranger(git_vault)
+
+        assert _capture(git_vault) == 0
+        out, err = capsys.readouterr()
+
+        assert "W108" not in err, err
+        rel = str(Path(out.split(": ", 1)[1].strip()).relative_to(git_vault))
+        assert self._head_files(git_vault) == {rel}
+        assert self._staged(git_vault) == ["stranger.txt"]
+
+    def test_update_leaves_a_staged_stranger_staged_and_out_of_its_commit(
+            self, git_vault: Path, capsys):
+        rel = str(_existing(git_vault).relative_to(git_vault))
+        _cgit(git_vault, "add", rel)
+        _cgit(git_vault, "commit", "-qm", "the note to update")
+        self._stage_a_stranger(git_vault)
+
+        assert main(["--vault", str(git_vault), "capture", "--update", rel,
+                     "--body", "Jitter matters too."]) == 0
+        err = capsys.readouterr().err
+
+        assert "W108" not in err, err
+        assert self._head_files(git_vault) == {rel}
+        assert self._staged(git_vault) == ["stranger.txt"]

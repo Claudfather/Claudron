@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Fixed
+- **The write door commits only the paths it wrote ([#211](https://github.com/Claudfather/Claudron/issues/211)).** `commit_paths` staged the named paths (`git add -- <paths>`) and then committed with a bare `git commit`, which takes the whole index. A change somebody else had already staged in the vault went into the door's commit, under the door's message.
+  - **Which doors:** `capture`, `capture --update` and `doctor --fix`. All three commit through `commit_paths`.
+  - **The fix:** the commit takes the same pathspec as the add, `git commit -m <message> -- <paths>`. That commits only those paths and leaves the rest of the index as it was.
+  - **When none of the named paths changed,** the commit exits non-zero and commits nothing. No door reaches that case today, because each passes only what it changed.
+  - **Unchanged:**
+    - Untracked and unstaged changes were never at risk, because the add already named its paths.
+    - `sync`'s safety net passes no paths and keeps its `add -A` and bare commit. Staged work still lying around at the next sync is committed as a straggler, as before.
+  - **Tests:**
+    - `claudron/tests/test_sync.py`, `TestCommitPathsCommitsOnlyItsPaths`: with an unrelated file staged, `commit_paths` commits only the named path, and the file stays staged. An unchanged named path commits nothing. A control pins that the net's empty-paths call still commits everything.
+    - `claudron/tests/test_capture.py`, `TestTheDoorCommitsOnlyWhatItWrote`: the same for `capture` and `capture --update`.
+    - `claudron/tests/test_doctor.py`, `TestFirstMigrations`: the same for `doctor --fix`.
+    - 5 of the 6 fail before the change; the control passes.
+
 ## 0.6.1 — 2026-09-30
 
 ### Added
