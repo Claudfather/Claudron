@@ -419,7 +419,12 @@ stdout, and never to stderr where a host might surface them as a session error.
 ## Command-specific contracts
 
 - `validate [PATH]` — no arg: detected vault; directory: that subtree; file:
-  that single note. Lints note frontmatter (SCHEMA.md) and, when the target is
+  that single note. A whole vault (no arg, or PATH is its root) is linted over
+  its notes: the note tiers, the root `CONVENTIONS.md` and root-level notes, the
+  scope the index, `status` and the quarantine scan read. A fleet's `library/`,
+  `voices/` and `runtime/` are not notes, so a gitignored bot checkout under
+  `runtime/` is never walked. An inner directory is walked as given.
+  Lints note frontmatter (SCHEMA.md) and, when the target is
   a whole vault, its directory structure (VAULT-STRUCTURE.md — codes `S1`–`S4`,
   same `error`/`warning` model, so `--strict` gates structure warnings too).
   `--strict` applies the authoring tier. The default path never mutates; the
@@ -451,7 +456,7 @@ stdout, and never to stderr where a host might surface them as a session error.
     | Code | Severity | Meaning | `--fix` acts? |
     |---|---|---|---|
     | `D001` | error | A migration is pending: the vault's format is older than the engine's | yes |
-    | `D002` | error / warning | Notes carry schema findings (a count; `validate` has the detail) | no |
+    | `D002` | error / warning | Notes carry schema findings (a count over the whole-vault note scope; `validate` has the detail) | no |
     | `D003` | warning | The index has drifted from the notes — `claudron index` | no |
     | `D004` | warning | Git health is not `clean`/`ahead`/`behind` (the `sync --check` verdict) | no |
     | `D005` | error | *(`--fix` only)* A migration needs a human decision; the chain stopped | — |

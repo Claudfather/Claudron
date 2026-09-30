@@ -588,12 +588,18 @@ def check_collisions(notes: list[tuple[str, dict]]) -> list[Finding]:
     ]
 
 
-def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None) -> list[Finding]:
+def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None,
+                  files: list[Path] | None = None) -> list[Finding]:
     """Validate a file or directory tree (docs/CLI_CONTRACT.md trichotomy).
 
     Cross-note checks (W104) and the CONVENTIONS budget run for directory
     scope; a single file gets per-note checks only (plus W105 when the file
     itself is a shared-root CONVENTIONS.md).
+
+    *files*, for a directory, is the exact set to validate in place of a walk
+    of *target*: a whole vault passes ``vault.vault_markdown_files(vault)``,
+    the note scope, so the walk never enters a fleet's gitignored
+    ``runtime/`` (#201). An explicit directory with no *files* is walked.
     """
     base = vault_root or (target if target.is_dir() else target.parent)
 
@@ -643,7 +649,7 @@ def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None)
 
     findings: list[Finding] = []
     parsed: list[tuple[str, dict]] = []
-    for md in sorted(target.rglob("*.md")):
+    for md in sorted(files) if files is not None else sorted(target.rglob("*.md")):
         if md.name in NON_NOTE_FILES:
             continue
         file_findings, fm = one(md)

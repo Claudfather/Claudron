@@ -55,7 +55,8 @@ from .locking import vault_write_lock
 from .schema import Finding, validate_path
 from .structure import StructureError, check_structure, fix_structure, is_fixable
 from .vault import (IDENTITY_FILE, VAULT_FORMAT, Vault, _ensure_gitignore, detect,
-                    identity_text, is_within_root, missing_gitignore_rules)
+                    identity_text, is_within_root, missing_gitignore_rules,
+                    vault_markdown_files)
 
 __all__ = ["CODES", "VAULT_FORMAT", "Migration", "MigrationRefused", "MIGRATIONS",
            "diagnose", "fix", "pending_migrations", "vault_format"]
@@ -281,7 +282,8 @@ def diagnose(vault: Vault, *,
 
     report.findings += check_structure(vault)
 
-    notes = validate_path(vault.root, strict=False, vault_root=vault.root)
+    notes = validate_path(vault.root, strict=False, vault_root=vault.root,
+                          files=vault_markdown_files(vault))
     errors = sum(f.severity == "error" for f in notes)
     warnings = sum(f.severity == "warning" for f in notes)
     report.schema = {"errors": errors, "warnings": warnings}
