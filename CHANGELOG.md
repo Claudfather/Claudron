@@ -20,6 +20,18 @@
   - **Why `--vault` and not an `env` block:** `env` would set the address for every process in every session that loads the settings file, not only for these hooks.
   - **`settings_snippet()` takes the vault root:** `settings_snippet(executable, vault_root)`. A consumer that renders the block itself (register rule R3) renders its own vault root.
   - **Setup guidance updated.** `init --personal`'s next steps and the README's second-machine line now pass `--vault`.
+### Changed
+- **Claudron is licensed under Apache-2.0.** The repository had no license
+  file, while `pyproject.toml` and the README said MIT. It now carries the
+  Apache License 2.0 (`LICENSE`, the unmodified text) and a `NOTICE` naming the
+  copyright holder, which section 4(d) of the license carries into every
+  redistribution. `pyproject.toml` declares `license = "Apache-2.0"`, an SPDX
+  expression (PEP 639), and ships `LICENSE` and `NOTICE` as license files; the
+  expression form needs setuptools 77, so the build requirement moved from
+  `setuptools>=68` to `setuptools>=77`. The README's License section, the
+  `pack.yaml` example in `SCHEMA.md` and the license facts in the boundary
+  brief (`documentation/plans/2026-07-20-claudfather-boundary-separation.md`)
+  say Apache-2.0.
 
 ## 0.5.3 — 2026-09-29
 
