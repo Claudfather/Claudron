@@ -158,4 +158,4 @@ surface it points at is [`docs/CLI_CONTRACT.md`](docs/CLI_CONTRACT.md).
 
 ## License
 
-MIT
+Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for the copyright notice that travels with it.

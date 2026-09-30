@@ -276,7 +276,7 @@ approval gate for `pack.yaml`):
 name: claudfather-patterns
 version: 0.1.0
 description: Curated patterns from the Claudfather fleet
-license: MIT
+license: Apache-2.0
 ```
 
 ## Versioning
