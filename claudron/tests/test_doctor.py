@@ -414,3 +414,131 @@ class TestDetectionCutover:
         assert detect(root / "_shared").root == root
         report = diagnose(detect(root))
         assert report.vault_format == VAULT_FORMAT and report.pending == []
+
+
+# ── #201: doctor and validate walk the note scope, not the vault root ─────
+
+
+_NOT_A_NOTE = "no frontmatter\n"
+
+
+def _ignored_checkout(vault_root: Path) -> Path:
+    """A fleet whose gitignored ``runtime/`` holds a bot's project checkout,
+    the shape that made a Claudlobby-root vault's doctor walk for 26 minutes.
+    Every .md in it would be a schema error if a walk read it."""
+    from claudron.vault import _ensure_gitignore
+
+    fleet = _make_fleet(vault_root, "fleetx")
+    (fleet / "shared" / "knowledge").mkdir(parents=True)
+    repo = fleet / "runtime" / "bots" / "b" / "projects" / "repo"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "guide.md").write_text(_NOT_A_NOTE)
+    (repo / "node_modules" / "pkg").mkdir(parents=True)
+    (repo / "node_modules" / "pkg" / "CHANGELOG.md").write_text(_NOT_A_NOTE)
+    _ensure_gitignore(vault_root)
+    _repo(vault_root)
+    return fleet / "runtime"
+
+
+def _scanned(monkeypatch) -> list[Path]:
+    """Every directory a Python-level walk lists: pathlib's glob goes through
+    ``os.scandir``."""
+    import os
+
+    seen: list[Path] = []
+    real = os.scandir
+
+    def spy(path="."):
+        if not isinstance(path, int):
+            seen.append(Path(os.fspath(path)).resolve())
+        return real(path)
+
+    monkeypatch.setattr(os, "scandir", spy)
+    return seen
+
+
+def _inside(paths: list[Path], root: Path) -> list[Path]:
+    root = root.resolve()
+    return [p for p in paths if p == root or root in p.parents]
+
+
+class TestWalkScope:
+    """#201: the note walk behind D002 is the note scope the index, status and
+    the quarantine scan already share, never a bare walk of the vault root."""
+
+    def test_the_fixture_subtree_is_gitignored(self, vault_dir: Path):
+        """Positive control: the subtree the other tests keep out is ignored."""
+        runtime = _ignored_checkout(vault_dir)
+        rel = (runtime / "bots" / "b" / "projects" / "repo" / "docs" / "guide.md")
+        subprocess.run(["git", "check-ignore", "-q", str(rel.relative_to(vault_dir))],
+                       cwd=vault_dir, check=True)
+
+    def test_doctor_does_not_visit_a_gitignored_subtree(self, vault_dir: Path, monkeypatch):
+        runtime = _ignored_checkout(vault_dir)
+        vault = detect(vault_dir)
+        seen = _scanned(monkeypatch)
+        report = diagnose(vault)
+        assert seen, "the spy saw no walk at all"
+        assert _inside(seen, runtime) == []
+
+    def test_d002_counts_notes_only(self, vault_dir: Path):
+        _ignored_checkout(vault_dir)
+        report = diagnose(detect(vault_dir))
+        assert report.schema == {"errors": 0, "warnings": 0}
+        assert "D002" not in {f.code for f in report.findings}
+
+    def test_d002_still_counts_a_bad_note(self, vault_dir: Path):
+        """The narrowed walk still reads the notes: a broken one is D002."""
+        _ignored_checkout(vault_dir)
+        (vault_dir / "fleetx" / "shared" / "knowledge" / "broken.md").write_text(_NOT_A_NOTE)
+        report = diagnose(detect(vault_dir))
+        assert report.schema["errors"] >= 1
+        assert "D002" in {f.code for f in report.findings}
+
+    def test_overlay_content_is_not_a_note(self, vault_dir: Path):
+        """A fleet's library/ and voices/ are tracked but are not notes: the
+        index never reads them, so D002 does not count them either."""
+        _ignored_checkout(vault_dir)
+        for rel in ("fleetx/library/skills/s/SKILL.md", "fleetx/voices/v.md"):
+            (vault_dir / rel).parent.mkdir(parents=True, exist_ok=True)
+            (vault_dir / rel).write_text(_NOT_A_NOTE)
+        report = diagnose(detect(vault_dir))
+        assert report.schema == {"errors": 0, "warnings": 0}
+
+    def test_fix_walks_the_note_scope_once(self, vault_dir: Path, monkeypatch):
+        """`--fix` re-diagnoses once, over the note scope, and never visits
+        the ignored subtree."""
+        runtime = _ignored_checkout(vault_dir)
+        monkeypatch.setattr(doctor_mod, "MIGRATIONS",
+                            (_file_migration("m901", V1, "marker"),))
+        walks = []
+        real = doctor_mod.vault_markdown_files
+
+        def counting(vault):
+            walks.append(vault.root)
+            return real(vault)
+
+        monkeypatch.setattr(doctor_mod, "vault_markdown_files", counting)
+        seen = _scanned(monkeypatch)
+        report = fix(detect(vault_dir))
+        assert report.applied == ["m901"]
+        assert len(walks) == 1
+        assert _inside(seen, runtime) == []
+        assert report.schema == {"errors": 0, "warnings": 0}
+
+    def test_validate_on_the_vault_root_uses_the_same_scope(self, vault_dir: Path,
+                                                            monkeypatch, capsys):
+        """D002 points at `claudron validate` for the detail, so the two count
+        the same files."""
+        runtime = _ignored_checkout(vault_dir)
+        seen = _scanned(monkeypatch)
+        assert main(["--vault", str(vault_dir), "validate"]) == 0
+        assert main(["validate", str(vault_dir)]) == 0
+        assert _inside(seen, runtime) == []
+
+    def test_validate_on_an_explicit_subtree_still_walks_it(self, vault_dir: Path, capsys):
+        """Control: a PATH the caller names is validated as asked, ignored or
+        not. Only the whole-vault walk is scoped."""
+        runtime = _ignored_checkout(vault_dir)
+        assert main(["validate", str(runtime)]) == 1
+        assert "guide.md" in capsys.readouterr().out

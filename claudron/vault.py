@@ -630,13 +630,15 @@ def status(vault: Vault, *, stale_days: int = 90) -> dict:
     }
 
 
-def _quarantine_candidates(vault: Vault) -> list[Path]:
-    """Every markdown file a full-vault quarantine scan must read.
+def vault_markdown_files(vault: Vault) -> list[Path]:
+    """Every markdown file a full-vault read must consider: the one scope
+    shared by the quarantine scan (``status``) and the whole-vault note
+    validation behind ``validate`` and ``doctor``'s D002 (#201).
 
     Scoped to the indexer's note tiers, never a bare ``root.rglob``: the vault
     root can also hold a fleet's ``runtime/`` (Claudlobby overlay content),
-    which is hundreds of thousands of files on a real box and turns this scan
-    into a hang. Same scope fix #41 applied to adopt-backfill.
+    which is hundreds of thousands of files on a real box and turns a
+    full-vault read into a hang. Same scope fix #41 applied to adopt-backfill.
 
     The tiers are walked with ``skip_non_notes=False``, which is the whole
     point -- the note walk drops ``CONVENTIONS.md`` via ``_SKIP_NAMES``, and a
@@ -655,7 +657,8 @@ def _quarantine_candidates(vault: Vault) -> list[Path]:
             for md in iter_markdown_files(base, skip_non_notes=False)
             if ".git" not in md.parts
         )
-    found.add(vault.shared / "CONVENTIONS.md")
+    if (vault.shared / "CONVENTIONS.md").is_file():
+        found.add(vault.shared / "CONVENTIONS.md")
     found.update(vault.root.glob("*.md"))
     return sorted(found)
 
@@ -672,7 +675,7 @@ def scan_quarantine(vault: Vault, paths: list[str] | None = None) -> list[str]:
     if paths is not None:
         candidates = [vault.root / p for p in paths if p.endswith(".md")]
     else:
-        candidates = _quarantine_candidates(vault)
+        candidates = vault_markdown_files(vault)
     hits: list[str] = []
     for md in candidates:
         try:

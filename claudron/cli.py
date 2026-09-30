@@ -32,6 +32,7 @@ from .vault import (
     is_within_root,
     scaffold_shared_tree,
     status,
+    vault_markdown_files,
 )
 from .hooks import (
     HOOK_EVENTS,
@@ -933,16 +934,21 @@ def cmd_validate(args) -> int:
         # deliberately not consulted here.
         probe = target if target.is_dir() else target.parent
         anchor = detect(probe)
+        # A whole vault is validated over its note scope, the files doctor's
+        # D002 counts; an inner subtree or a plain directory is walked (#201).
+        whole = anchor is not None and target == anchor.root
         findings = validate_path(
-            target, strict=strict, vault_root=anchor.root if anchor else probe
+            target, strict=strict, vault_root=anchor.root if anchor else probe,
+            files=vault_markdown_files(anchor) if whole else None,
         )
         # The structure lens is whole-vault, so only when the target IS a
         # vault root — never for a single note or an inner subtree.
-        if anchor and target == anchor.root:
+        if whole:
             vault = anchor
     else:
         vault = _resolve_vault(args)
-        findings = validate_path(vault.root, strict=strict, vault_root=vault.root)
+        findings = validate_path(vault.root, strict=strict, vault_root=vault.root,
+                                 files=vault_markdown_files(vault))
 
     findings = list(findings)
     if vault is not None:
