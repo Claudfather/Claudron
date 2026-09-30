@@ -347,8 +347,12 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
         if not path.is_file():
             record["state"] = "absent"
             if declared:
-                found.append(_finding("D009", "warning",
-                                      f"settings file {path} not found — nothing to check", where))
+                found.append(_finding(
+                    "D009", "warning",
+                    f"settings file {path} not found — nothing to check: pass the file the "
+                    "hooks live in, or install them there with claudron --vault "
+                    f"{shlex.quote(root)} hooks install --write --settings {shlex.quote(where)}",
+                    where))
             continue
         try:
             data = json.loads(path.read_text())
@@ -359,20 +363,33 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
                    else "not a JSON object")
         if not isinstance(data, dict) or not isinstance(data.get("hooks", {}), dict):
             record["state"] = "unreadable"
-            found.append(_finding("D009", "warning",
-                                  f"cannot parse {path} ({why}) — its hooks were not checked",
-                                  where))
+            found.append(_finding(
+                "D009", "warning",
+                f"cannot parse {path} ({why}) — its hooks were not checked, and "
+                "`hooks install` refuses the file too: repair its JSON (or re-render it, "
+                "if a composer manages it)", where))
             continue
         hint = ("re-install: claudron --vault " + shlex.quote(root) + " hooks install --write"
                 + (f" --settings {shlex.quote(where)}, or re-render the file if a composer "
                    "manages it" if declared else ""))
         hooks = data.get("hooks") or {}
+        per_event = {}
         for event, cmd in SNIPPET_EVENTS.items():
             groups = hooks.get(event) if isinstance(hooks.get(event), list) else []
-            ours = [(g, h) for g in groups if isinstance(g, dict)
-                    for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])
-                    if isinstance(h, dict)
-                    and parse_hook_command(str(h.get("command", "")), cmd) is not None]
+            per_event[event] = [
+                (g, h) for g in groups if isinstance(g, dict)
+                for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])
+                if isinstance(h, dict)
+                and parse_hook_command(str(h.get("command", "")), cmd) is not None]
+        if not any(per_event.values()):
+            record["state"] = "not-installed"
+            if not declared:
+                # No claudron entry on any event: this host never ran `hooks
+                # install`, like a host with no file, and the re-install remedy
+                # would put the loop into the operator's own sessions (#205).
+                continue
+        for event, cmd in SNIPPET_EVENTS.items():
+            ours = per_event[event]
             if not ours:
                 found.append(_finding("D009", "warning",
                                       f"{event} has no claudron hook entry, so the loop "
@@ -423,7 +440,11 @@ def _drift(group: dict, hook: dict, expected: dict) -> str:
         parts.append("the command is not in the snippet's form")
     others = len(group.get("hooks") or []) - 1
     if others > 0:
-        parts.append(f"the group also holds {others} other command(s)")
+        # merge_settings replaces every group that holds a claudron entry, so
+        # the re-install this finding names deletes them (vera, #205).
+        parts.append(f"the group also holds {others} other command(s): re-installing "
+                     "replaces the whole group and drops them, so move them to a group of "
+                     "their own first")
     return "; ".join(parts) or "the entries are in another order"
 
 
@@ -466,7 +487,13 @@ def _resolution(event: str, command: str, address: str | None, root: str, hint: 
         return out
     bound_root = str(bound.root.resolve())
     entry["resolves_to"] = bound_root
-    if bound_root != str(Path(address).resolve()):
+    if bound_root != str(Path(address).resolve()) and bound_root == root:
+        out.append(_finding(
+            "D010", "warning",
+            f"{event}'s claudron hook addresses {address}, inside this vault, not its root: "
+            "walk-up from it binds this vault, so the hook works while that path stays "
+            f"inside it — {hint}", where))
+    elif bound_root != str(Path(address).resolve()):
         out.append(_finding(
             "D010", "error",
             f"{event}'s claudron hook addresses {address}, but walk-up from it binds "
@@ -475,8 +502,9 @@ def _resolution(event: str, command: str, address: str | None, root: str, hint: 
         out.append(_finding(
             "D010", "warning",
             f"{event}'s claudron hook syncs {bound_root}, not this vault ({root}); to give "
-            "this vault hooks of its own, install them into another settings file "
-            "(--settings)", where))
+            "this vault hooks of its own, install them into another settings file: "
+            f"claudron --vault {shlex.quote(root)} hooks install --write --settings <file>",
+            where))
     return out
 
 
