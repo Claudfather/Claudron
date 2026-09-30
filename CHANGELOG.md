@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed (breaking)
+- **`hooks install` records the vault address in each hook command ([#183](https://github.com/Claudfather/Claudron/issues/183)).** Walk-up ascends from the working directory, so it finds a vault only from inside one (and, since 0.5.2, only one carrying `.claudron-vault`). A session started anywhere else, such as a repo checkout or a GUI launch that skips the shell profile, found no vault unless `CLAUDRON_VAULT_PATH` was set, and every hook silently did nothing. `hooks install` now resolves the vault the usual way and writes it into each command as the global `--vault`: `<exe> --vault <root> hook <event>`.
+  - **The identity suffix is unchanged.** A reinstall replaces the old unaddressed entries, and anything that detects the engine's hooks by their `hook <event>` suffix still sees them.
+  - **With no resolvable vault it exits 3 and writes nothing,** with or without `--write`: the dry run, which used to print the snippet regardless, refuses too. Run it with `--vault`, or from inside the vault.
+  - **The recorded address outranks the session's environment and its working directory.** `--vault` comes first in the resolution chain, so the hooks sync the vault they were installed for, even in a session started inside another vault's tree or with `CLAUDRON_VAULT_PATH` naming another. Before, they followed the environment, then the directory. With one vault nothing changes. With two vaults and one user-level settings file, the hooks now sync the vault they were installed for rather than the one the session is in; to give a project its own vault, install into that project's settings file (`--settings`) instead.
+  - **A moved vault leaves a stale address.** The hooks then fail open like any hook with no vault (exit 0, one `no vault resolvable` line per event in the temp directory's `claudron-hooks.log`), unless the old path lies inside another vault, which walk-up from it binds instead. Re-run `hooks install` to re-point them.
+  - **The vault root is shell-quoted when it needs it.** Claude Code runs a hook command through a shell. The executable is unchanged: a command prefix, which may be `<python> -m claudron.cli`.
+  - **Why `--vault` and not an `env` block:** `env` would set the address for every process in every session that loads the settings file, not only for these hooks.
+  - **`settings_snippet()` takes the vault root:** `settings_snippet(executable, vault_root)`. A consumer that renders the block itself (register rule R3) renders its own vault root.
+  - **Setup guidance updated.** `init --personal`'s next steps and the README's second-machine line now pass `--vault`.
 ### Changed
 - **Claudron is licensed under Apache-2.0.** The repository had no license
   file, while `pyproject.toml` and the README said MIT. It now carries the

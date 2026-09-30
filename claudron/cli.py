@@ -300,8 +300,8 @@ def _init_personal(args, root: Path) -> int:
     print("next steps:")
     print(f"  1. install the session hooks:   claudron --vault {root} hooks install --write")
     print(f"  2. add your private remote:     git -C {root} remote add origin <url> && git -C {root} push -u origin main")
-    print(f"  3. on your other machine:       git clone <url> && claudron hooks install --write")
-    print(f"  4. point sessions at the vault: export {VAULT_ENV_VARS[0]}={root}")
+    print("  3. on your other machine:       git clone <url> <path> && claudron --vault <path> hooks install --write")
+    print(f"  4. for commands run by hand outside the vault (the hooks carry their own address): export {VAULT_ENV_VARS[0]}={root}")
     return 0
 
 
@@ -884,7 +884,13 @@ def cmd_hook(args) -> int:
 
 
 def cmd_hooks_install(args) -> int:
-    snippet = settings_snippet(resolve_executable())
+    # The address every hook will use (#183), resolved the way every command
+    # resolves it and written into each hook command. With no vault there is
+    # nothing to record, so this exits 3 (through _resolve_vault) rather than
+    # write hooks that find no vault from outside it.
+    vault = _resolve_vault(args)
+    root = str(vault.root.resolve())
+    snippet = settings_snippet(resolve_executable(), root)
     if not args.write:
         print(json.dumps(snippet, indent=2))
         print(
@@ -907,7 +913,7 @@ def cmd_hooks_install(args) -> int:
     if merged == current:
         print("hooks already installed — no changes", file=sys.stderr)
         return 0
-    print(f"writing {settings_path}", file=sys.stderr)
+    print(f"writing {settings_path} (hooks address the vault at {root})", file=sys.stderr)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(merged, indent=2) + "\n")
     return 0

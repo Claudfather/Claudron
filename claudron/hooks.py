@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import sys
 import tempfile
 from datetime import datetime
@@ -200,15 +201,25 @@ _HOOK_HANDLERS = {
 HOOK_EVENTS = tuple(sorted(_HOOK_HANDLERS))
 
 
-def settings_snippet(executable: str) -> dict:
-    """The Claude Code settings.json hooks block, absolute-path commands
-    (venv/pipx installs survive hook context, where PATH may not)."""
+def settings_snippet(executable: str, vault_root: str) -> dict:
+    """The Claude Code settings.json hooks block.
+
+    Absolute-path commands (venv/pipx installs survive hook context, where
+    PATH may not), each naming its vault with the global ``--vault`` (#183):
+    walk-up binds only a directory carrying ``.claudron-vault``, so a session
+    started outside the vault finds it only by an address. ``--vault`` goes
+    before ``hook <event>``, the identity suffix ``merge_settings`` keys on.
+    The vault root is shell-quoted when it needs it, because Claude Code runs
+    the command through a shell. The executable is NOT quoted: it is a command
+    prefix, and :func:`resolve_executable` falls back to the multi-word
+    ``<python> -m claudron.cli``, which quoting would turn into one word."""
+    prefix = f"{executable} --vault {shlex.quote(vault_root)}"
 
     def entry(event_cmd: str) -> list[dict]:
         return [
             {
                 "matcher": "",
-                "hooks": [{"type": "command", "command": f"{executable} hook {event_cmd}"}],
+                "hooks": [{"type": "command", "command": f"{prefix} hook {event_cmd}"}],
             }
         ]
 

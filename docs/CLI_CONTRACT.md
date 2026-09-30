@@ -308,24 +308,60 @@ gate against this block** (register rule R3).
 ```json
 {
   "hooks": {
-    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> hook session-start"}]}],
-    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> hook pre-compact"}]}],
-    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> hook session-end"}]}]
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --vault <absolute-vault-root> hook session-start"}]}],
+    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --vault <absolute-vault-root> hook pre-compact"}]}],
+    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --vault <absolute-vault-root> hook session-end"}]}]
   }
 }
 ```
 
-- **Three events, one command form:** `<executable> hook <event>`. `hook` is
-  the runtime dispatch verb Claude Code invokes; `hooks install` is the
-  installer verb a human or composer runs. Both spellings are contract.
+- **Three events, one command form:** `<executable> --vault <vault-root> hook
+  <event>`. `hook` is the runtime dispatch verb Claude Code invokes; `hooks
+  install` is the installer verb a human or composer runs. Both spellings are
+  contract.
+- **The command names its vault (#183).** Walk-up ascends from the working
+  directory, so it finds a vault only from inside one (and, since 0.5.2, only
+  one carrying `.claudron-vault`). Without an address, a session started
+  anywhere else (a repo checkout, or a GUI launch that skips the shell profile)
+  finds no vault unless `CLAUDRON_VAULT_PATH` is set, and every hook silently
+  does nothing.
+  - **What `hooks install` records:** the vault it resolved, by the §Environment
+    chain (`--vault`, then the env ladder, then walk-up), written as the global
+    `--vault`, placed before `hook` so the identity suffix below survives.
+  - **When nothing resolves,** it exits 3 and writes nothing, with or without
+    `--write`: the dry run refuses too, rather than print a snippet with no
+    address. An unaddressed hook is the failure this rule closes.
+  - **The recorded address outranks the session's environment and working
+    directory,** because `--vault` is first in the chain. A session started
+    inside another vault's tree, or with `CLAUDRON_VAULT_PATH` naming another,
+    still syncs the vault the hooks were installed for. So with two vaults and
+    one user-level settings file, the hooks follow the install, not the
+    directory; a project that should sync its own vault installs into its own
+    settings file (`--settings`).
+  - **To re-point,** re-run it. The identity rule replaces the old entries.
+    Until then, hooks that name a vault which has moved fail open: exit 0, and
+    one `no vault resolvable` line per event in the temp directory's
+    `claudron-hooks.log`. The exception is an old path inside another vault's
+    tree: walk-up from the address binds that vault instead.
+  - **A composer** renders each consumer's own vault root.
+- **Why `--vault` and not `env` in the settings file.** An `env` block applies
+  to every process in every session that loads that file: tool calls, MCP
+  servers, the model's own shell, not only these hooks. Where several sessions
+  share one settings file, it would re-point every Claudron call they make.
+  `--vault` reaches exactly the three commands `hooks install` writes.
+- **The vault root is shell-quoted when it needs it** (`shlex.quote`). Claude
+  Code runs a hook command through a shell, and an unquoted path with a space
+  would split. The executable is written as `hooks install` resolved it: a
+  command prefix, which may be `<python> -m claudron.cli`.
 - **The identity rule:** a Claudron hook entry is identified by its
   `hook <event>` command *suffix*, not by the full command string. That is what
   `merge_settings` keys on to replace a stale entry instead of appending beside
   it. A consumer that rewrites the command and drops the suffix gets a duplicate
   hook running every session, not a replacement.
-- **The executable path must be absolute.** Hook context is not login shell
-  context: `PATH` frequently does not carry a venv or pipx install.
-  `hooks install` resolves it; a composer must resolve it per host too.
+- **The executable path must be absolute,** and so is the vault root. Hook
+  context is not login shell context: `PATH` frequently does not carry a venv or
+  pipx install. `hooks install` resolves both; a composer must resolve both per
+  host too.
 
 ### Fail-open, and the per-event budgets
 

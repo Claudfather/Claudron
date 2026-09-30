@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import shlex
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
 import pytest
 
+from claudron import cli as cli_mod
 from claudron import sync as sync_mod
-from claudron.cli import main
+from claudron.cli import VAULT_ENV_VARS, main
 from claudron.hooks import (
     HOOK_EVENTS,
     SESSION_END_PUSH_TIMEOUT,
@@ -244,7 +248,12 @@ class TestSessionProtocolDocParity:
         text it renders against."""
         raw = fenced_block(CONTRACT, PROTOCOL)
         body = raw.split("\n", 1)[1] if raw.lstrip().startswith("json") else raw
-        assert json.loads(body) == settings_snippet("<absolute-executable>")
+        # Rendered with shell-safe stand-ins, then spelled as the doc's
+        # placeholders: the installer quotes a path that needs it (#183).
+        rendered = json.dumps(settings_snippet("/EXE", "/VAULT"))
+        rendered = rendered.replace("/EXE", "<absolute-executable>").replace(
+            "/VAULT", "<absolute-vault-root>")
+        assert json.loads(body) == json.loads(rendered)
 
     def test_timeout_budgets_match_the_constants(self):
         rows = doc_table(CONTRACT, "HOOK_TIMEOUTS")
@@ -277,6 +286,9 @@ class TestSessionProtocolDocParity:
             return {"hooks": [{"type": "command", "command": command}]}
 
         assert _is_claudron_hook(entry("/anywhere/claudron hook pre-compact"),
+                                 "pre-compact")
+        # The addressed form (#183) keeps the suffix, so it is still ours.
+        assert _is_claudron_hook(entry("/anywhere/claudron --vault /v hook pre-compact"),
                                  "pre-compact")
         assert not _is_claudron_hook(entry("/x hook pre-compact --extra"),
                                      "pre-compact")
@@ -448,3 +460,128 @@ class TestSessionStartNeverRewritesTheTree:
         assert any(argv and argv[0] == "fetch" for argv in seen), (
             f"no fetch in the cycle — the pull path did not run, so the "
             f"--rebase assertion is vacuous. argv: {seen}")
+
+
+
+EVENT_CMD = {"SessionStart": "session-start", "PreCompact": "pre-compact",
+             "SessionEnd": "session-end"}
+
+
+class TestInstallRecordsTheVault:
+    """#183: walk-up binds only a directory carrying `.claudron-vault`, so a
+    session started outside the vault (a repo checkout, a GUI launch without
+    the shell profile) finds no vault unless CLAUDRON_VAULT_PATH is set.
+    `hooks install` records the address it resolved, as the global `--vault`
+    in each hook command, ahead of the `hook <event>` identity suffix."""
+
+    @staticmethod
+    def _commands(snippet: dict) -> dict:
+        return {ev: entries[0]["hooks"][0]["command"]
+                for ev, entries in snippet["hooks"].items()}
+
+    @staticmethod
+    def _scrubbed(**extra) -> dict:
+        env = {k: v for k, v in os.environ.items() if k not in VAULT_ENV_VARS}
+        env.update(extra)
+        return env
+
+    def test_every_hook_command_names_the_vault(self, vault_dir: Path, capsys):
+        rc = main(["--vault", str(vault_dir), "hooks", "install"])
+        assert rc == 0
+        commands = self._commands(json.loads(capsys.readouterr().out))
+        assert set(commands) == set(EVENT_CMD)
+        for event, command in commands.items():
+            argv = shlex.split(command)
+            assert argv[1:3] == ["--vault", str(vault_dir.resolve())], command
+            assert argv[3:] == ["hook", EVENT_CMD[event]], command
+
+    def test_a_session_started_outside_the_vault_resolves_it(
+            self, vault_dir: Path, tmp_path: Path, monkeypatch):
+        """#183's own test, end to end. The fixture vault carries no identity
+        file, so walk-up could never bind it: only the recorded address can.
+
+        Every step runs the code this test imported. The console script beside
+        the interpreter imports whatever its install points at, which for an
+        editable install can be another checkout: a mismatch there failed this
+        test against a correct head, and the reverse would pass a broken one.
+        So the install runs in-process, the recorded executable is
+        ``python -m claudron.cli``, and the hook subprocesses get this code on
+        PYTHONPATH, which the first check asserts."""
+        home, outside, tmp = tmp_path / "home", tmp_path / "elsewhere", tmp_path / "tmp"
+        for d in (home, outside, tmp):
+            d.mkdir()
+        head = Path(cli_mod.__file__).resolve().parents[1]
+        exe = f"{sys.executable} -m claudron.cli"
+        pythonpath = os.pathsep.join(p for p in (str(head), os.environ.get("PYTHONPATH")) if p)
+        env = self._scrubbed(HOME=str(home), TMPDIR=str(tmp), PYTHONPATH=pythonpath)
+
+        def sh(command: str) -> str:
+            return subprocess.run(["sh", "-c", command], cwd=outside, env=env, input="{}",
+                                  capture_output=True, text=True, check=True, timeout=60).stdout
+
+        imported = sh(f'{sys.executable} -c "import claudron.cli; print(claudron.cli.__file__)"')
+        assert head in Path(imported.strip()).resolve().parents, imported
+        # The control: the command as installed before #183, run from outside,
+        # finds nothing and says so where a vault-less hook logs.
+        sh(f"{exe} hook session-start")
+        assert "no vault resolvable" in (tmp / "claudron-hooks.log").read_text()
+        (tmp / "claudron-hooks.log").unlink()
+
+        for var in VAULT_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.chdir(outside)
+        monkeypatch.setattr(cli_mod, "resolve_executable", lambda: exe)
+        assert main(["--vault", str(vault_dir), "hooks", "install", "--write"]) == 0
+        settings = json.loads((home / ".claude" / "settings.json").read_text())
+        command = settings["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert command.startswith(f"{exe} --vault "), command
+        sh(command)
+        assert not (tmp / "claudron-hooks.log").exists(), "the hook found no vault"
+        assert "[session-start]" in (vault_dir / ".claudron" / "hooks.log").read_text()
+
+    def test_install_refuses_when_no_vault_resolves(self, tmp_path: Path, monkeypatch):
+        # An unaddressed hook is the failure this closes, so there is nothing
+        # to write: the ordinary no-vault exit (3), and the settings untouched.
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        settings = tmp_path / "settings.json"
+        for var in VAULT_ENV_VARS:
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.chdir(outside)
+        with pytest.raises(SystemExit) as exc:
+            main(["hooks", "install", "--write", "--settings", str(settings)])
+        assert exc.value.code == 3
+        assert not settings.exists()
+
+    def test_reinstalling_for_another_vault_replaces_the_entries(
+            self, vault_dir: Path, tmp_path: Path, capsys):
+        other = tmp_path / "other-vault"
+        (other / "_shared").mkdir(parents=True)
+        settings = tmp_path / "settings.json"
+        for vault in (vault_dir, other):
+            assert main(["--vault", str(vault), "hooks", "install",
+                         "--write", "--settings", str(settings)]) == 0
+        hooks = json.loads(settings.read_text())["hooks"]
+        for event in EVENT_CMD:
+            assert len(hooks[event]) == 1, hooks[event]
+            assert shlex.split(hooks[event][0]["hooks"][0]["command"])[2] == str(other.resolve())
+
+    def test_the_executable_is_a_prefix_and_is_not_quoted(self):
+        # resolve_executable() falls back to `<python> -m claudron.cli` when no
+        # console script sits beside the interpreter. Quoting that as one word
+        # would make the shell look for a file of that name, so every hook
+        # would fail open, silently.
+        snippet = settings_snippet("/usr/bin/python3 -m claudron.cli", "/v")
+        command = self._commands(snippet)["SessionStart"]
+        assert shlex.split(command) == [
+            "/usr/bin/python3", "-m", "claudron.cli", "--vault", "/v",
+            "hook", "session-start"]
+
+    def test_a_vault_path_with_a_space_survives_the_shell(self):
+        # Claude Code runs a hook command through a shell.
+        snippet = settings_snippet("/opt/claudron/bin/claudron", "/home/u/My Vault")
+        for event, command in self._commands(snippet).items():
+            assert shlex.split(command) == [
+                "/opt/claudron/bin/claudron", "--vault", "/home/u/My Vault",
+                "hook", EVENT_CMD[event]]

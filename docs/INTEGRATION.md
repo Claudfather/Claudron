@@ -341,6 +341,10 @@ parse the stderr bound; branch on the JSON.
 If your host has session lifecycle events, the engine ships adapters that pull
 before recalling and push at session end. `claudron hooks install --write` is
 the supported wiring; `claudron hook <event>` is what the host then invokes.
+The install writes the vault it resolved into each hook command (`--vault`,
+#183), so run it with `--vault` or from inside the vault. A session started
+anywhere then finds that vault, even inside another vault's tree: the recorded
+address outranks the environment and the working directory.
 They fail open by design: a broken vault, a missing git binary, or a network
 stall must never break a session start.
 

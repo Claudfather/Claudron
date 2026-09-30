@@ -25,7 +25,7 @@ claudron --vault ~/vault hooks install --write
 # capture durable findings before compaction. To span machines:
 git -C ~/vault remote add origin <private-repo-url> && git -C ~/vault push -u origin main
 # ...and on the other machine:
-git clone <private-repo-url> ~/vault && claudron hooks install --write
+git clone <private-repo-url> ~/vault && claudron --vault ~/vault hooks install --write
 ```
 
 The loop, end to end: `SessionStart → sync --pull → recall brief injected →
