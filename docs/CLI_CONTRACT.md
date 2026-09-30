@@ -451,7 +451,7 @@ stdout, and never to stderr where a host might surface them as a session error.
     | `D007` | error / warning | The identity file is unreadable (error), or records a format newer than the engine (warning) | no |
     | `D008` | warning | Tracked files match the ignore rules, so they keep being committed — a human decides (`git rm --cached`) | no |
     | `D009` | warning | *(per host)* A checked settings file's hook entries do not match the current snippet shape: an event with no claudron entry or with two, an entry with no `--vault`, or any other difference; or a declared settings file is missing or unreadable | no |
-    | `D010` | error / warning | *(per host)* A hook entry will not reach a vault from where it runs. Error: its executable does not exist, its address resolves to nothing, or walk-up from the address binds another vault. Warning: its executable is a bare name, its address is not absolute, or it resolves to a vault other than the one diagnosed | no |
+    | `D010` | error / warning | *(per host)* A hook entry will not reach a vault from where it runs. Error: its executable does not exist, its address resolves to nothing, or walk-up from the address binds another vault. Warning: its executable is a bare name, its address is not absolute, it resolves to a vault other than the one diagnosed, or it lies inside the diagnosed vault but is not its root | no |
 
   - **The per-host checks** (`D009`, `D010`, #204). A vault's hooks live in a
     Claude Code settings file on each host, outside the vault, so doctor checks
@@ -462,10 +462,19 @@ stdout, and never to stderr where a host might surface them as a session error.
     protocol), compared with `settings_snippet` as this engine renders it, and
     each recorded address is resolved as the hook resolves it (§Environment).
     Nothing from a settings file is executed: the executable check is existence
-    and the execute bit. A default file that does not exist is not a finding (a
-    host that never ran `hooks install` has no loop to check); a declared one
-    is. Each finding names the remedy, `claudron --vault <vault> hooks install
-    --write` with that file's `--settings`.
+    and the execute bit. A default file that does not exist, or that holds no
+    claudron entry on any of the three events, is not a finding: that host never
+    ran `hooks install`, so it has no loop to check. A partial install is a
+    finding, and so is a declared file either way, since a consumer said the
+    hooks live there. Each finding names its remedy: for an entry,
+    `claudron --vault <vault> hooks install --write` with that file's
+    `--settings` (or re-rendering the file, when a composer manages it); for a
+    declared file that is missing, the same command with its path; for hooks
+    that sync another vault, the same command with another settings file; and
+    for a file that cannot be parsed, repairing its JSON, since `hooks install
+    --write` will not touch it either. Re-installing replaces the whole hook
+    group that holds a claudron entry, so a finding whose group also holds
+    other commands says that re-installing drops them.
 
   - **Migrations shipped:** `m001` creates `.claudron-vault` (format 1);
     `m002` appends the missing F9 `.gitignore` rules (format 2). After the chain
@@ -480,7 +489,8 @@ stdout, and never to stderr where a host might surface them as a session error.
     `sync --check` `data`, or `null` for a vault that is not a git repository —
     a legal vault, so not a finding), `hooks` (one object per settings file
     checked, in order: `path` (absolute), `declared` (false for the default
-    install target), `state` (`ok` / `absent` / `unreadable`), and `entries`,
+    install target), `state` (`ok` / `absent` / `unreadable` / `not-installed`,
+    the last for a file with no claudron entry on any event), and `entries`,
     each `{event, command, vault, resolves_to}`, where `vault` is the recorded
     address or `null` and `resolves_to` is the root that address binds or
     `null`), `fixed` (bool). With `--fix` also:
