@@ -521,11 +521,18 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
     definition of "stage and commit" — the identity fallback, the bounded
     invoker, and the add-failure-is-reported-not-swallowed rule (#157).
 
-    **It stages only what it is given.** `sync` passes nothing and gets `add -A`
-    (the net sweeps whatever is lying around); the write door passes the note it
-    just wrote, so a capture cannot commit a half-finished file somebody else
-    was editing in the same tree. An empty ``paths`` therefore means "everything"
-    and is the net's call, never the door's.
+    **It stages and commits only what it is given.** `sync` passes nothing and
+    gets `add -A` and a bare commit (the net sweeps whatever is lying around);
+    the write door passes the note it just wrote, so a capture cannot commit a
+    half-finished file somebody else was editing in the same tree. An empty
+    ``paths`` therefore means "everything" and is the net's call, never the
+    door's.
+
+    THE COMMIT TAKES THE SAME PATHSPEC AS THE ADD (#211): a bare `git commit`
+    takes the whole index, so a change somebody else had already staged would
+    ride into the door's commit, under the door's message. With the pathspec,
+    the rest of the index stays as it was; if none of the named paths changed,
+    the commit exits non-zero and commits nothing.
 
     THE CALLER DECIDES WHAT A FAILURE MEANS, which is why this returns the
     process rather than raising or returning a bool: for `sync` a failed commit
@@ -533,15 +540,13 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
     already on disk. Collapsing those would force one of them to lie.
     """
     t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
-    if paths:
-        added = run_git(root, "add", "--", *[str(p) for p in paths], timeout=t)
-    else:
-        added = run_git(root, "add", "-A", timeout=t)
+    pathspec = ["--", *[str(p) for p in paths]] if paths else []
+    added = run_git(root, "add", *(pathspec or ["-A"]), timeout=t)
     if added.returncode != 0:
         # Hand the ADD's failure back, not a commit that was never attempted:
         # naming the cause rather than the symptom is why sync stopped here too.
         return CommitOutcome("add", added)
-    return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
+    return CommitOutcome("commit", run_git(root, "commit", "-m", message, *pathspec, timeout=t))
 
 
 def _reap_integration(root: Path, wt: Path | None, branch: str | None,

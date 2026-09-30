@@ -2121,3 +2121,60 @@ class TestTheLiveTreeOnlyFastForwards:
             "a killed run's temporary branch survived the next sync")
         assert "ghost-worktree" not in _git(b, "worktree", "list").stdout, (
             "a killed run's worktree registration survived the next sync")
+
+
+class TestCommitPathsCommitsOnlyItsPaths:
+    """#211. `commit_paths` staged only the paths it was given, then committed
+    with a bare `git commit`, which takes the WHOLE index. A change somebody
+    else had already staged went into the write door's commit, under the
+    door's message, and the next sync pushed it."""
+
+    @staticmethod
+    def _repo_with_a_staged_stranger(tmp_path: Path) -> Path:
+        root = tmp_path / "repo"
+        root.mkdir()
+        _git(root, "init", "--initial-branch=main")
+        (root / "seed.md").write_text("seed\n")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "seed")
+        (root / "stranger.txt").write_text("someone else's work in progress\n")
+        _git(root, "add", "stranger.txt")
+        return root
+
+    def test_named_paths_commit_only_those_paths(self, tmp_path):
+        root = self._repo_with_a_staged_stranger(tmp_path)
+        (root / "note.md").write_text("the door's note\n")
+
+        outcome = sync_mod.commit_paths(root, [root / "note.md"], "door commit")
+
+        assert outcome.ok, outcome.error
+        committed = _git(root, "show", "--name-only", "--format=", "HEAD").stdout.split()
+        assert committed == ["note.md"], committed
+        staged = _git(root, "diff", "--cached", "--name-only").stdout.split()
+        assert staged == ["stranger.txt"], (
+            "the stranger must stay STAGED for its owner: neither committed nor unstaged")
+
+    def test_an_unchanged_named_path_commits_nothing_rather_than_the_stranger(self, tmp_path):
+        """With nothing of its own to commit, the door's commit must fail, not
+        fall back to committing whatever else is staged."""
+        root = self._repo_with_a_staged_stranger(tmp_path)
+        head = _git(root, "rev-parse", "HEAD").stdout
+
+        outcome = sync_mod.commit_paths(root, [root / "seed.md"], "door commit")
+
+        assert not outcome.ok
+        assert _git(root, "rev-parse", "HEAD").stdout == head
+        assert _git(root, "diff", "--cached", "--name-only").stdout.split() == ["stranger.txt"]
+
+    def test_no_paths_is_still_the_nets_whole_tree_commit(self, tmp_path):
+        """Control: `sync`'s safety net passes no paths, and its commit must
+        keep taking everything, staged or not."""
+        root = self._repo_with_a_staged_stranger(tmp_path)
+        (root / "straggler.md").write_text("written around the door\n")
+
+        outcome = sync_mod.commit_paths(root, [], "net commit")
+
+        assert outcome.ok, outcome.error
+        committed = set(_git(root, "show", "--name-only", "--format=", "HEAD").stdout.split())
+        assert committed == {"straggler.md", "stranger.txt"}, committed
+        assert _git(root, "diff", "--cached", "--name-only").stdout == ""

@@ -311,6 +311,20 @@ class TestFirstMigrations:
         assert main(["--vault", str(v), "doctor"]) == 0
         assert detect(v / "_shared" / "knowledge").root == v
 
+    def test_fix_leaves_a_staged_stranger_staged_and_out_of_its_commit(self, tmp_path, capsys):
+        """#211: `--fix` commits through the same door as capture, so a file
+        somebody else had already staged must stay staged, not ride along."""
+        v = _repo(_legacy_vault(tmp_path / "legacy"))
+        (v / "stranger.txt").write_text("someone else's work in progress\n")
+        _git(v, "add", "stranger.txt")
+
+        assert main(["--vault", str(v), "doctor", "--fix", "--json"]) == 0
+        capsys.readouterr()
+
+        changed = set(_git(v, "show", "--name-only", "--format=", "HEAD").split())
+        assert changed == {".claudron-vault", ".gitignore"}, changed
+        assert _git(v, "diff", "--cached", "--name-only").split() == ["stranger.txt"]
+
     def test_nested_fleet_runtime_is_ignored_after_m002(self, tmp_path):
         v = _repo(_legacy_vault(tmp_path / "legacy"))
         fix(detect(v))
