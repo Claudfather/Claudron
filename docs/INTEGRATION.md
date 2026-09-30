@@ -345,6 +345,9 @@ The install writes the vault it resolved into each hook command (`--vault`,
 #183), so run it with `--vault` or from inside the vault. A session started
 anywhere then finds that vault, even inside another vault's tree: the recorded
 address outranks the environment and the working directory.
+`claudron doctor --settings <file>` checks a settings file's entries against
+that shape and resolves each address (`D009`, `D010`); a consumer that composes
+the hooks into its own files passes those.
 They fail open by design: a broken vault, a missing git binary, or a network
 stall must never break a session start.
 

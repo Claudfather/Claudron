@@ -38,7 +38,9 @@ runner records :data:`VAULT_FORMAT` there — the bump is part of the same commi
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,15 +48,33 @@ from typing import Callable
 
 import yaml
 
+from .hooks import (SNIPPET_EVENTS, default_settings_path, parse_hook_command, read_settings,
+                    settings_snippet)
 from .knowledge import index_divergence
 from .locking import vault_write_lock
 from .schema import Finding, validate_path
 from .structure import StructureError, check_structure, fix_structure, is_fixable
-from .vault import (IDENTITY_FILE, VAULT_FORMAT, Vault, _ensure_gitignore,
+from .vault import (IDENTITY_FILE, VAULT_FORMAT, Vault, _ensure_gitignore, detect,
                     identity_text, is_within_root, missing_gitignore_rules)
 
-__all__ = ["VAULT_FORMAT", "Migration", "MigrationRefused", "MIGRATIONS",
+__all__ = ["CODES", "VAULT_FORMAT", "Migration", "MigrationRefused", "MIGRATIONS",
            "diagnose", "fix", "pending_migrations", "vault_format"]
+
+#: Every D code doctor emits, with the severities each may carry. The contract's
+#: doctor table (docs/CLI_CONTRACT.md, doc-parity DOCTOR_CODES) is pinned to it,
+#: and `_finding` refuses anything it does not list (#204).
+CODES: dict[str, frozenset[str]] = {
+    "D001": frozenset({"error"}),
+    "D002": frozenset({"error", "warning"}),
+    "D003": frozenset({"warning"}),
+    "D004": frozenset({"warning"}),
+    "D005": frozenset({"error"}),
+    "D006": frozenset({"error"}),
+    "D007": frozenset({"error", "warning"}),
+    "D008": frozenset({"warning"}),
+    "D009": frozenset({"warning"}),
+    "D010": frozenset({"error", "warning"}),
+}
 
 #: Git verdicts (docs/CLI_CONTRACT.md, `sync --check`) that need no attention:
 #: a clone that is merely ahead or behind is the ordinary between-syncs state.
@@ -176,6 +196,7 @@ class DoctorReport:
     schema: dict = field(default_factory=dict)
     index: dict = field(default_factory=dict)
     git: dict | None = None
+    hooks: list[dict] = field(default_factory=list)
     # --fix only
     fixed: bool = False
     applied: list[str] = field(default_factory=list)
@@ -199,6 +220,7 @@ class DoctorReport:
             "schema": self.schema,
             "index": self.index,
             "git": self.git,
+            "hooks": self.hooks,
             "fixed": self.fixed,
         }
         if self.fixed:
@@ -207,6 +229,9 @@ class DoctorReport:
 
 
 def _finding(code: str, severity: str, message: str, path: str = ".") -> Finding:
+    if severity not in CODES.get(code, ()):
+        raise ValueError(f"doctor code {code} with severity {severity!r} is not "
+                         "registered in CODES (and the contract's doctor table)")
     return Finding(code=code, severity=severity, path=path, field=None,
                    line=None, message=message)
 
@@ -223,8 +248,12 @@ def _git_health(vault: Vault) -> dict | None:
 
 
 def diagnose(vault: Vault, *,
-             migrations: tuple[Migration, ...] | None = None) -> DoctorReport:
-    """Read-only diagnosis against this engine's rules. Never writes."""
+             migrations: tuple[Migration, ...] | None = None,
+             settings: list[Path] | None = None) -> DoctorReport:
+    """Read-only diagnosis against this engine's rules. Never writes.
+
+    *settings* names the Claude Code settings files whose hooks to check
+    (D009, D010); None means the file `hooks install --write` writes."""
     report = DoctorReport(vault_format=vault_format(vault))
     ident = _read_identity(vault)
     if ident == {} or (ident and "claudron" in ident and report.vault_format == 0):
@@ -291,7 +320,188 @@ def diagnose(vault: Vault, *,
             "D004", "warning",
             f"git health: {state}" + (f" — {detail}" if detail else "")
             + " (see: claudron sync --check)"))
+
+    report.hooks, found = _check_hooks(vault, settings)
+    report.findings += found
     return report
+
+
+def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict], list[Finding]]:
+    """The per-host checks (#204, #190's last two rows), read-only.
+
+    D009: each settings file's claudron entries against the current snippet
+    shape. D010: whether each entry reaches a vault from where it runs, its
+    address resolved by `detect()`, as the hook resolves it. The files are the
+    ones declared (`--settings`), or by default the one `hooks install --write`
+    writes; doctor never goes looking for others, and never executes anything
+    it reads in them."""
+    files = ([(Path(p), True) for p in settings] if settings
+             else [(default_settings_path(), False)])
+    root = str(vault.root.resolve())
+    checked: list[dict] = []
+    found: list[Finding] = []
+    for path, declared in files:
+        record = {"path": str(path), "declared": declared, "state": "ok", "entries": []}
+        checked.append(record)
+        where = str(path)
+        if not path.exists():
+            record["state"] = "absent"
+            if declared:
+                found.append(_finding(
+                    "D009", "warning",
+                    f"settings file {path} not found — nothing to check: pass the file the "
+                    "hooks live in, or install them there with claudron --vault "
+                    f"{shlex.quote(root)} hooks install --write --settings {shlex.quote(where)}",
+                    where))
+            continue
+        # The installer's own reader (#205): what doctor calls unparseable is
+        # exactly what `hooks install --write` refuses, so the remedy is true.
+        data, why = read_settings(path)
+        if data is None:
+            record["state"] = "unreadable"
+            found.append(_finding(
+                "D009", "warning",
+                f"cannot parse {path} ({why}) — its hooks were not checked, and "
+                "`hooks install` refuses the file too: repair the file (or re-render it, "
+                "if a composer manages it)", where))
+            continue
+        hint = ("re-install: claudron --vault " + shlex.quote(root) + " hooks install --write"
+                + (f" --settings {shlex.quote(where)}, or re-render the file if a composer "
+                   "manages it" if declared else ""))
+        hooks = data.get("hooks") or {}
+        per_event = {}
+        for event, cmd in SNIPPET_EVENTS.items():
+            groups = hooks.get(event) if isinstance(hooks.get(event), list) else []
+            per_event[event] = [
+                (g, h) for g in groups if isinstance(g, dict)
+                for h in (g.get("hooks") if isinstance(g.get("hooks"), list) else [])
+                if isinstance(h, dict)
+                and parse_hook_command(str(h.get("command", "")), cmd) is not None]
+        if not any(per_event.values()):
+            record["state"] = "not-installed"
+            if not declared:
+                # No claudron entry on any event: this host never ran `hooks
+                # install`, like a host with no file, and the re-install remedy
+                # would put the loop into the operator's own sessions (#205).
+                continue
+        for event, cmd in SNIPPET_EVENTS.items():
+            ours = per_event[event]
+            if not ours:
+                found.append(_finding("D009", "warning",
+                                      f"{event} has no claudron hook entry, so the loop "
+                                      f"skips that step — {hint}", where))
+                continue
+            if len(ours) > 1:
+                found.append(_finding("D009", "warning",
+                                      f"{event} has {len(ours)} claudron hook entries, so the "
+                                      f"step runs {len(ours)} times — {hint}", where))
+            for group, hook in ours:
+                command = str(hook["command"])
+                parsed = parse_hook_command(command, cmd)
+                entry = {"event": event, "command": command, "vault": parsed.vault,
+                         "resolves_to": None}
+                record["entries"].append(entry)
+                if parsed.vault is None:
+                    found.append(_finding(
+                        "D009", "warning",
+                        f"{event}'s claudron hook names no vault (no --vault: installed before "
+                        "#183), so it finds one only through CLAUDRON_VAULT_PATH or walk-up "
+                        f"from where the session starts — {hint}", where))
+                else:
+                    expected = settings_snippet(parsed.prefix, parsed.vault)["hooks"][event][0]
+                    if group != expected:
+                        found.append(_finding(
+                            "D009", "warning",
+                            f"{event}'s claudron hook differs from the current snippet "
+                            f"({_drift(group, hook, expected)}) — {hint}", where))
+                found += _resolution(event, command, parsed.vault, root, hint, where, entry)
+    return checked, found
+
+
+def _drift(group: dict, hook: dict, expected: dict) -> str:
+    """What differs between an installed hook group and the snippet's."""
+    parts: list[str] = []
+    want_hook = expected["hooks"][0]
+    for have, want, what in ((group, expected, "the group"), (hook, want_hook, "the entry")):
+        for key in sorted(set(have) | set(want)):
+            if key == "hooks" or (key == "command" and have is hook):
+                continue
+            if key not in have:
+                parts.append(f"{what} has no {key}")
+            elif key not in want:
+                parts.append(f"{what} has an extra key, {key}")
+            elif have[key] != want[key]:
+                parts.append(f"{key} is {have[key]!r} where the snippet has {want[key]!r}")
+    if hook.get("command") != want_hook["command"]:
+        parts.append("the command is not in the snippet's form")
+    others = len(group.get("hooks") or []) - 1
+    if others > 0:
+        # merge_settings replaces every group that holds a claudron entry, so
+        # the re-install this finding names deletes them (vera, #205).
+        parts.append(f"the group also holds {others} other command(s): re-installing "
+                     "replaces the whole group and drops them, so move them to a group of "
+                     "their own first")
+    return "; ".join(parts) or "the entries are in another order"
+
+
+def _resolution(event: str, command: str, address: str | None, root: str, hint: str,
+                where: str, entry: dict) -> list[Finding]:
+    """D010 for one entry: does it reach a vault from where it runs?"""
+    out: list[Finding] = []
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    exe = words[0] if words else ""
+    if os.path.isabs(exe):
+        if not (os.path.isfile(exe) and os.access(exe, os.X_OK)):
+            out.append(_finding(
+                "D010", "error",
+                f"{event}'s claudron hook runs {exe}, which does not exist or is not "
+                f"executable, so the hook fails before claudron starts — {hint}", where))
+    else:
+        out.append(_finding(
+            "D010", "warning",
+            f"{event}'s claudron hook runs a bare `{exe}`, which resolves only if the PATH "
+            f"hooks run with carries it (the snippet records an absolute path) — {hint}",
+            where))
+    if address is None:
+        return out
+    if not os.path.isabs(address):
+        out.append(_finding(
+            "D010", "warning",
+            f"{event}'s claudron hook records the address {address!r}, which is not "
+            "absolute: the engine never expands `~`, and a relative path resolves against "
+            f"wherever the session starts — {hint}", where))
+        return out
+    bound = detect(Path(address))
+    if bound is None:
+        out.append(_finding(
+            "D010", "error",
+            f"{event}'s claudron hook addresses {address}, which is not a vault (moved, or "
+            f"deleted), so the hook fails open, silently — {hint}", where))
+        return out
+    bound_root = str(bound.root.resolve())
+    entry["resolves_to"] = bound_root
+    if bound_root != str(Path(address).resolve()) and bound_root == root:
+        out.append(_finding(
+            "D010", "warning",
+            f"{event}'s claudron hook addresses {address}, inside this vault, not its root: "
+            "walk-up from it binds this vault, so the hook works while that path stays "
+            f"inside it — {hint}", where))
+    elif bound_root != str(Path(address).resolve()):
+        out.append(_finding(
+            "D010", "error",
+            f"{event}'s claudron hook addresses {address}, but walk-up from it binds "
+            f"{bound_root}, so the hook syncs that vault instead — {hint}", where))
+    elif bound_root != root:
+        out.append(_finding(
+            "D010", "warning",
+            f"{event}'s claudron hook syncs {bound_root}, not this vault ({root}); to give "
+            "this vault hooks of its own, install them into another settings file: "
+            f"claudron --vault {shlex.quote(root)} hooks install --write --settings <file>",
+            where))
+    return out
 
 
 def _tracked_but_ignored(vault: Vault) -> list[str]:
@@ -316,7 +526,8 @@ def _rel(vault: Vault, p: Path) -> Path:
 
 
 def fix(vault: Vault, *,
-        migrations: tuple[Migration, ...] | None = None) -> DoctorReport:
+        migrations: tuple[Migration, ...] | None = None,
+        settings: list[Path] | None = None) -> DoctorReport:
     """Apply structure repairs and pending migrations; commit what was written
     as one ``migrate(<ids>): …`` commit; return a FRESH diagnosis of the result.
 
@@ -374,7 +585,7 @@ def fix(vault: Vault, *,
 
         commit = _commit(vault, written, ids, repairs) if written else None
 
-    report = diagnose(vault, migrations=migrations)
+    report = diagnose(vault, migrations=migrations, settings=settings)
     report.findings = refusals + report.findings
     report.fixed = True
     report.applied = applied

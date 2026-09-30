@@ -22,6 +22,7 @@ from claudron.hooks import (
     SESSION_START_PULL_TIMEOUT,
     settings_snippet,
 )
+from claudron import hooks as hooks_mod
 from claudron.tests.doc_parity import code_values, doc_table, fenced_block, section
 
 CONTRACT = "docs/CLI_CONTRACT.md"
@@ -585,3 +586,122 @@ class TestInstallRecordsTheVault:
             assert shlex.split(command) == [
                 "/opt/claudron/bin/claudron", "--vault", "/home/u/My Vault",
                 "hook", EVENT_CMD[event]]
+
+
+class TestParseHookCommand:
+    """The inverse of `settings_snippet`, for doctor's hook checks (#204): a
+    claudron entry is found by its `hook <event>` suffix (the identity rule),
+    and its executable prefix and `--vault` address are read back out."""
+
+    @pytest.mark.parametrize("exe", ["/opt/claudron/bin/claudron",
+                                     "/usr/bin/python3 -m claudron.cli"])
+    @pytest.mark.parametrize("root", ["/srv/vault", "/home/user/My Vault",
+                                      "/srv/it's a vault"])
+    def test_it_reads_back_what_the_snippet_wrote(self, exe, root):
+        for event, groups in settings_snippet(exe, root)["hooks"].items():
+            parsed = hooks_mod.parse_hook_command(groups[0]["hooks"][0]["command"],
+                                        EVENT_CMD[event])
+            assert parsed is not None
+            assert (parsed.prefix, parsed.vault, parsed.canonical) == (exe, root, True)
+
+    def test_an_entry_from_before_183_has_no_address(self):
+        parsed = hooks_mod.parse_hook_command("/opt/claudron/bin/claudron hook session-start",
+                                    "session-start")
+        assert (parsed.prefix, parsed.vault, parsed.canonical) == (
+            "/opt/claudron/bin/claudron", None, False)
+
+    @pytest.mark.parametrize("command,event_cmd", [
+        ("/opt/fleet/vitals.sh", "session-start"),
+        ("/opt/claudron/bin/claudron hook session-end", "session-start"),
+    ])
+    def test_a_command_that_is_not_ours_is_none(self, command, event_cmd):
+        assert hooks_mod.parse_hook_command(command, event_cmd) is None
+
+    @pytest.mark.parametrize("command", [
+        "/opt/claudron/bin/claudron  --vault /v hook session-start",
+        "/opt/claudron/bin/claudron --vault=/v hook session-start",
+    ])
+    def test_an_address_in_another_form_is_read_but_not_canonical(self, command):
+        parsed = hooks_mod.parse_hook_command(command, "session-start")
+        assert (parsed.vault, parsed.canonical) == ("/v", False)
+
+    def test_the_default_settings_file_is_the_install_target(self, tmp_path, monkeypatch):
+        # `hooks install --write` without --settings writes here; doctor reads
+        # the same file by default. One definition for both.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert hooks_mod.default_settings_path() == tmp_path / ".claude" / "settings.json"
+
+
+#: Every shape `merge_settings` cannot merge into, with why. vera measured the
+#: first seven on #205: one was refused, three were silently rewritten, three
+#: crashed the install. The rest are the same class one level down, where a
+#: claudron event is not a list of objects.
+UNMERGEABLE = [
+    (b"{not json", "not-json"),
+    (b"[]", "a-list"),
+    (b"null", "null"),
+    (b'"x"', "a-string"),
+    (b'{"hooks": null}', "hooks-null"),
+    (b'{"hooks": []}', "hooks-a-list"),
+    (b'{"hooks": "x"}', "hooks-a-string"),
+    (b'{"hooks": {"SessionStart": "x"}}', "event-not-a-list"),
+    (b'{"hooks": {"PreCompact": ["x"]}}', "event-entry-not-an-object"),
+    (b'{"hooks": {"SessionEnd": [{"hooks": "x"}]}}', "entry-hooks-not-a-list"),
+    (b'{"hooks": {"SessionStart": [{"hooks": ["x"]}]}}', "hook-not-an-object"),
+    (b"\xff\xfe{}", "not-utf-8"),
+]
+
+
+class TestInstallRefusesWhatItCannotMerge:
+    """`hooks install --write` refuses a settings file it cannot merge into:
+    exit 3, the file unchanged, the reason on stderr. Before #205's review it
+    refused only unparseable JSON."""
+
+    @pytest.mark.parametrize(
+        "content", [c for c, _ in UNMERGEABLE], ids=[i for _, i in UNMERGEABLE]
+    )
+    def test_it_exits_3_and_leaves_the_file_alone(
+        self, vault_dir: Path, tmp_path: Path, capsys, content: bytes
+    ):
+        s = tmp_path / "settings.json"
+        s.write_bytes(content)
+        rc = main(["--vault", str(vault_dir), "hooks", "install",
+                   "--write", "--settings", str(s)])
+        assert rc == 3
+        assert s.read_bytes() == content
+        err = capsys.readouterr().err
+        assert str(s) in err and "not touching it" in err
+
+    def test_a_directory_is_refused(self, vault_dir: Path, tmp_path: Path, capsys):
+        d = tmp_path / "settings.json"
+        d.mkdir()
+        rc = main(["--vault", str(vault_dir), "hooks", "install",
+                   "--write", "--settings", str(d)])
+        assert rc == 3 and d.is_dir() and not any(d.iterdir())
+        assert "not a regular file" in capsys.readouterr().err
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root reads a 0000 file")
+    def test_a_file_it_cannot_read_is_refused(self, vault_dir: Path, tmp_path: Path):
+        s = tmp_path / "settings.json"
+        s.write_text("{}")
+        s.chmod(0)
+        try:
+            rc = main(["--vault", str(vault_dir), "hooks", "install",
+                       "--write", "--settings", str(s)])
+        finally:
+            s.chmod(0o600)
+        assert rc == 3 and s.read_text() == "{}"
+
+    def test_an_event_it_does_not_install_is_not_its_to_check(
+        self, vault_dir: Path, tmp_path: Path
+    ):
+        # merge_settings never touches the other events, so their shape is not
+        # a reason to refuse the three it does install.
+        s = tmp_path / "settings.json"
+        s.write_text(json.dumps({"hooks": {"PreToolUse": "whatever"}}))
+        rc = main(["--vault", str(vault_dir), "hooks", "install",
+                   "--write", "--settings", str(s)])
+        assert rc == 0
+        merged = json.loads(s.read_text())
+        assert merged["hooks"]["PreToolUse"] == "whatever"
+        assert {"SessionStart", "PreCompact", "SessionEnd"} <= set(merged["hooks"])

@@ -29,6 +29,7 @@ import os
 import shlex
 import sys
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -201,6 +202,16 @@ _HOOK_HANDLERS = {
 HOOK_EVENTS = tuple(sorted(_HOOK_HANDLERS))
 
 
+#: Claude Code event -> the engine's `hook <event>` dispatch verb, in the
+#: snippet's order. `settings_snippet` renders from it and doctor's hook checks
+#: (#204) walk it, so the two agree on which events the loop needs.
+SNIPPET_EVENTS = {
+    "SessionStart": "session-start",
+    "PreCompact": "pre-compact",
+    "SessionEnd": "session-end",
+}
+
+
 def settings_snippet(executable: str, vault_root: str) -> dict:
     """The Claude Code settings.json hooks block.
 
@@ -223,13 +234,110 @@ def settings_snippet(executable: str, vault_root: str) -> dict:
             }
         ]
 
-    return {
-        "hooks": {
-            "SessionStart": entry("session-start"),
-            "PreCompact": entry("pre-compact"),
-            "SessionEnd": entry("session-end"),
-        }
-    }
+    return {"hooks": {event: entry(cmd) for event, cmd in SNIPPET_EVENTS.items()}}
+
+
+def default_settings_path() -> Path:
+    """The settings file `hooks install --write` writes when not given
+    `--settings`, and so the one `doctor` checks by default (#204)."""
+    return Path.home() / ".claude" / "settings.json"
+
+
+def settings_shape_error(data: object) -> str | None:
+    """Why `merge_settings` cannot merge into *data*, or None when it can.
+
+    It checks only what the merge reads: a JSON object, its `hooks` (when
+    present) an object, and each of the three events the install writes (when
+    present) a list of objects whose own `hooks` is a list of objects. Other
+    events are never touched, so their shape is not the install's to refuse."""
+    if not isinstance(data, dict):
+        return "not a JSON object"
+    if "hooks" not in data:
+        return None
+    hooks = data["hooks"]
+    if not isinstance(hooks, dict):
+        return "its `hooks` is not an object"
+    for event in SNIPPET_EVENTS:
+        if event not in hooks:
+            continue
+        groups = hooks[event]
+        if not isinstance(groups, list):
+            return f"its `hooks.{event}` is not a list"
+        for group in groups:
+            if not isinstance(group, dict):
+                return f"`hooks.{event}` holds an entry that is not an object"
+            inner = group.get("hooks", [])
+            if not isinstance(inner, list) or not all(isinstance(h, dict) for h in inner):
+                return f"`hooks.{event}` holds an entry whose `hooks` is not a list of objects"
+    return None
+
+
+def read_settings(path: Path) -> tuple[dict | None, str | None]:
+    """A settings file as `merge_settings` can use it: (settings, None), or
+    (None, why) when it cannot, and ({}, None) when there is no file yet.
+
+    `hooks install --write` refuses every file this cannot use, and `doctor`
+    calls exactly those files unparseable (D009), through this one reader, so
+    the remedy either one names is true of the other (#205)."""
+    if not path.exists():
+        return {}, None
+    if not path.is_file():
+        return None, "not a regular file"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return None, str(exc)
+    why = settings_shape_error(data)
+    return (None, why) if why else (data, None)
+
+
+@dataclass(frozen=True)
+class HookCommand:
+    """A claudron hook command read back into its parts (#204)."""
+
+    prefix: str  # the executable, as written: a command prefix
+    vault: str | None  # the recorded `--vault` address, or None if it names none
+    canonical: bool  # `settings_snippet` renders exactly this command from them
+
+
+def parse_hook_command(command: str, event_cmd: str) -> HookCommand | None:
+    """Read a hook command back into its executable prefix and `--vault`
+    address, or return None when it is not a claudron hook for *event_cmd*.
+
+    It is one when it ends in ``hook <event_cmd>``, the identity rule
+    `merge_settings` keys on. It is *canonical* when `settings_snippet` would
+    render exactly this string from the parts read. Anything else (an entry
+    from before #183, `--vault=PATH`, stray spacing) is read best-effort from
+    its shell words, so doctor can say what it found."""
+    suffix = f"hook {event_cmd}"
+    if not command.endswith(suffix):
+        return None
+    marker, start = " --vault ", 0
+    while (i := command.find(marker, start)) != -1:
+        start = i + 1
+        prefix, rest = command[:i], command[i + len(marker):]
+        if not prefix or prefix != prefix.strip() or not rest.endswith(" " + suffix):
+            continue
+        try:
+            words = shlex.split(rest[: -len(suffix) - 1])
+        except ValueError:
+            continue
+        if (len(words) == 1
+                and f"{prefix} --vault {shlex.quote(words[0])} {suffix}" == command):
+            return HookCommand(prefix, words[0], True)
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        words = command.split()
+    vault, at = None, len(words) - 2
+    for k, word in enumerate(words):
+        if word == "--vault" and k + 1 < len(words):
+            vault, at = words[k + 1], k
+            break
+        if word.startswith("--vault="):
+            vault, at = word[len("--vault="):], k
+            break
+    return HookCommand(" ".join(words[:at]), vault, False)
 
 
 def _is_claudron_hook(entry: dict, event_cmd: str) -> bool:

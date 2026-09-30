@@ -344,6 +344,14 @@ gate against this block** (register rule R3).
     `claudron-hooks.log`. The exception is an old path inside another vault's
     tree: walk-up from the address binds that vault instead.
   - **A composer** renders each consumer's own vault root.
+  - **A settings file `--write` cannot merge into is refused, never rewritten**
+    (#205): exit 3, the file unchanged, the reason on stderr. It must be a
+    regular, readable UTF-8 file holding a JSON object; its `hooks`, when
+    present, an object; and each of the three events, when present, a list of
+    objects whose own `hooks` is a list of objects. Other events are not
+    checked, since the install never touches them. `doctor` reads a settings
+    file through the same reader, so every file it calls unparseable (`D009`)
+    is one this refuses.
 - **Why `--vault` and not `env` in the settings file.** An `env` block applies
   to every process in every session that loads that file: tool calls, MCP
   servers, the model's own shell, not only these hooks. Where several sessions
@@ -362,6 +370,9 @@ gate against this block** (register rule R3).
   context is not login shell context: `PATH` frequently does not carry a venv or
   pipx install. `hooks install` resolves both; a composer must resolve both per
   host too.
+- **Checking an install:** `claudron doctor --settings <file>` compares a
+  settings file's entries with this block (`D009`) and resolves each recorded
+  address (`D010`); see `doctor` below.
 
 ### Fail-open, and the per-event budgets
 
@@ -427,7 +438,7 @@ stdout, and never to stderr where a host might surface them as a session error.
   `already up to date`. A clean run exits 0 with `ok: true` and no errors.
   Branch on `ok` or the exit code; `detail` is prose. `sync --check` is
   unaffected: every verdict exits 0 (§Exit codes).
-- `doctor [--fix]` — **the vault's health-and-migration door** (#190). Diagnoses
+- `doctor [--fix] [--settings PATH]…` — **the vault's health-and-migration door** (#190). Diagnoses
   the vault against *this* engine's rules and names what `--fix` would change.
   - **Read-only unless `--fix` is passed** — no file, index or journal is
     written, which a test pins by fingerprinting the tree around a diagnosis.
@@ -436,6 +447,7 @@ stdout, and never to stderr where a host might surface them as a session error.
     as `validate` reports them, plus the `D` codes below. Exit **1** when any
     finding is an error, else **0** — the §Exit codes rule, no special case.
 
+    <!-- doc-parity: DOCTOR_CODES -->
     | Code | Severity | Meaning | `--fix` acts? |
     |---|---|---|---|
     | `D001` | error | A migration is pending: the vault's format is older than the engine's | yes |
@@ -446,6 +458,31 @@ stdout, and never to stderr where a host might surface them as a session error.
     | `D006` | error | *(`--fix` only)* A migration ran but is still needed; the chain stopped | — |
     | `D007` | error / warning | The identity file is unreadable (error), or records a format newer than the engine (warning) | no |
     | `D008` | warning | Tracked files match the ignore rules, so they keep being committed — a human decides (`git rm --cached`) | no |
+    | `D009` | warning | *(per host)* A checked settings file's hook entries do not match the current snippet shape: an event with no claudron entry or with two, an entry with no `--vault`, or any other difference; or a declared settings file is missing or unreadable | no |
+    | `D010` | error / warning | *(per host)* A hook entry will not reach a vault from where it runs. Error: its executable does not exist, its address resolves to nothing, or walk-up from the address binds another vault. Warning: its executable is a bare name, its address is not absolute, it resolves to a vault other than the one diagnosed, or it lies inside the diagnosed vault but is not its root | no |
+
+  - **The per-host checks** (`D009`, `D010`, #204). A vault's hooks live in a
+    Claude Code settings file on each host, outside the vault, so doctor checks
+    the files it is given and never goes looking: `--settings PATH`
+    (repeatable), or by default the file `hooks install --write` writes,
+    `~/.claude/settings.json`. A consumer that composes the hooks into its own
+    files passes those. Entries are found by the identity rule (§Session-loop
+    protocol), compared with `settings_snippet` as this engine renders it, and
+    each recorded address is resolved as the hook resolves it (§Environment).
+    Nothing from a settings file is executed: the executable check is existence
+    and the execute bit. A default file that does not exist, or that holds no
+    claudron entry on any of the three events, is not a finding: that host never
+    ran `hooks install`, so it has no loop to check. A partial install is a
+    finding, and so is a declared file either way, since a consumer said the
+    hooks live there. Each finding names its remedy: for an entry,
+    `claudron --vault <vault> hooks install --write` with that file's
+    `--settings` (or re-rendering the file, when a composer manages it); for a
+    declared file that is missing, the same command with its path; for hooks
+    that sync another vault, the same command with another settings file; and
+    for a file that cannot be parsed (including a path that is not a regular
+    file), repairing the file, since `hooks install --write` refuses it too. Re-installing replaces the whole hook
+    group that holds a claudron entry, so a finding whose group also holds
+    other commands says that re-installing drops them.
 
   - **Migrations shipped:** `m001` creates `.claudron-vault` (format 1);
     `m002` appends the missing F9 `.gitignore` rules (format 2). After the chain
@@ -458,7 +495,13 @@ stdout, and never to stderr where a host might surface them as a session error.
     `fixable` (migration ids and finding codes `--fix` acts on), `schema`
     (`{errors, warnings}`), `index` (the `status` divergence dict), `git` (the
     `sync --check` `data`, or `null` for a vault that is not a git repository —
-    a legal vault, so not a finding), `fixed` (bool). With `--fix` also:
+    a legal vault, so not a finding), `hooks` (one object per settings file
+    checked, in order: `path` (absolute), `declared` (false for the default
+    install target), `state` (`ok` / `absent` / `unreadable` / `not-installed`,
+    the last for a file with no claudron entry on any event), and `entries`,
+    each `{event, command, vault, resolves_to}`, where `vault` is the recorded
+    address or `null` and `resolves_to` is the root that address binds or
+    `null`), `fixed` (bool). With `--fix` also:
     `applied` (migration ids, in order), `repairs` (one line per action), and
     `commit` (`{committed, message, error}`, or `null` when nothing was written).
   - **`--fix`** applies fixable structure repairs, then pending migrations **in
