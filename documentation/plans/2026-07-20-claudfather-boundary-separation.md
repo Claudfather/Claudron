@@ -71,7 +71,7 @@ case for revising it.
   database is the source of truth. **One vault = one tenant**; scope is chosen by *location*, not by a
   `scope:` field. Writes are **creation-only and vault-contained** (symlink-escape guarded),
   serialized by a re-entrant `flock` + atomic `os.replace`. Single dependency: **PyYAML**. License:
-  **MIT**.
+  **Apache-2.0**.
 - **Dependency posture:** a **standalone leaf** — works with no sibling installed; depends only on
   PyYAML. Distribution: `pip install` from a git clone/tag (**PyPI deferred**).
 
@@ -310,7 +310,7 @@ projects and bots.
 
 - **Substrate is plain markdown + git, forever** (Claudron D-decision) — no database is the source of
   truth; the index is derived and disposable.
-- **Minimal-dependency posture is load-bearing:** Claudron is **PyYAML-only, MIT**; clauDNA is
+- **Minimal-dependency posture is load-bearing:** Claudron is **PyYAML-only, Apache-2.0**; clauDNA is
   **marketplace-only**; Claudlobby is **local-first with zero required hosted dependencies**. A
   boundary that forces a heavy shared runtime violates all three identities.
 - **MCP is an optional stdio door, never a daemon**, and is **demand-gated** (decision C). The CLI is
@@ -404,7 +404,7 @@ schema, structure, tenancy, search/ranking, graph, curation/promotion, write saf
 atomic + dedup), transport (`sync`) — **and every contract by which anything consumes it**: the CLI
 ABI, the vault-address contract, the write protocol, the session-loop protocol for knowledge events
 (§10.5.1), and any future door over the same engine (MCP, demand-gated).
-*Consumes:* nothing from its siblings. A standalone leaf; PyYAML-only; MIT.
+*Consumes:* nothing from its siblings. A standalone leaf; PyYAML-only; Apache-2.0.
 *Never:* parses `fleet.yaml`; defines agent behavior; **knows a consumer by name** — today it sniffs
 both siblings (`hooks.py:62` globs the plugin cache for `claudna`; `cli.py:104–113` walks for a
 `library/`+`lib/` tree shape). Consumers declare themselves to the engine (config/env per contract);
