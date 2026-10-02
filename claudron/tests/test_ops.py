@@ -182,3 +182,39 @@ def test_recall_served_logs_only_what_the_brief_kept(vault_dir, monkeypatch, cap
     (ev,) = _events(vault_dir, "sessions", "sess-2")
     assert all(f"`{p}`" in brief for p in ev["trusted"])
     assert 0 < len(ev["trusted"]) < 6
+
+
+def test_a_path_quoted_in_a_summary_is_not_counted_as_shown(vault_dir, monkeypatch):
+    knowledge = vault_dir / "projects" / "webapp"
+    knowledge.mkdir(parents=True, exist_ok=True)
+    (knowledge / "a.md").write_text("---\ntitle: A\ntype: knowledge\nstatus: current\nowner: t\ncreated: 2026-09-01\n"
+                                    "updated: 2026-09-09\n---\n\nSee `projects/webapp/b.md` for more.\n")
+    (knowledge / "b.md").write_text("---\ntitle: B" + " wordy" * 200 + "\ntype: knowledge\nstatus: current\nowner: t\ncreated: 2026-09-01\n"
+                                    "updated: 2026-09-01\n---\n\n" + "Long words. " * 400 + "\n")
+    monkeypatch.setattr("claudron.hooks.derive_project", lambda: "webapp")
+    monkeypatch.setattr("claudron.session.BRIEF_TOKEN_BUDGET", 60)
+    hooks_mod.session_start_brief(detect(vault_dir), "sess-3")
+    (ev,) = _events(vault_dir, "sessions", "sess-3")
+    assert ev["trusted"] == ["projects/webapp/a.md"]
+
+
+def test_a_revert_of_a_pruned_run_is_not_the_newest_run(vault_dir):
+    vault = detect(vault_dir)
+    ops.record(vault, "write", run_id="current", verb="capture", path="a.md")
+    ops.record(vault, "run.reverted", run_id="long-gone", commits=1)
+    assert ops.runs_summary(vault)["last_run"]["run_id"] == "current"
+
+
+def test_a_vault_nested_in_a_repo_without_the_rule_gets_no_logs(tmp_path):
+    from .test_capture import _cgit
+
+    repo = tmp_path / "repo"
+    (repo / "vault" / "_shared" / "knowledge").mkdir(parents=True)
+    (repo / "vault" / "projects").mkdir()
+    _cgit(repo, "init", "-q")
+    from .conftest import _identify
+
+    _identify(repo / "vault")
+    vault = detect(repo / "vault")
+    ops.record(vault, "write", run_id="r1")
+    assert not (repo / "vault" / ".claudron" / "runs").exists()

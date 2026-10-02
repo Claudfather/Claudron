@@ -42,8 +42,14 @@ def _dir(vault: Vault, *, run_id: object, session_id: object) -> Path | None:
 
 def _ignored(vault: Vault) -> bool:
     """Is ``.claudron/`` kept out of git? In a git vault without the rule (an unmigrated one), `sync`'s
-    straggler net would commit and push the logs — session ids, note paths, refusal reasons — so none is written."""
-    return not (vault.root / ".git").exists() or ".claudron/" not in missing_gitignore_rules(vault.root)
+    straggler net would commit and push the logs — session ids, note paths, refusal reasons — so none is written.
+
+    "A git vault" includes one nested in a repo: sync finds the repository from any subdirectory, so
+    the walk goes up for ``.git`` as ``session.derive_project`` does. The rule is read at the vault root.
+    """
+    root = vault.root.resolve()
+    in_git = any((d / ".git").exists() for d in (root, *root.parents))
+    return not in_git or ".claudron/" not in missing_gitignore_rules(vault.root)
 
 
 def _prune(parent: Path) -> None:
@@ -126,7 +132,8 @@ def runs_summary(vault: Vault) -> dict:
     ``{"last_run": {run_id, at, writes, failures, reverted} | None, "last_ok_at": ts | None,
     "last_failure": {run_id, at, kind, reason} | None}``. Runs are ordered by when they started (a
     later ``revert-run`` doesn't make an old run the newest), and a run's ``at`` is its last write.
-    A run applied cleanly when it wrote and nothing in it failed. Never raises.
+    A run applied cleanly when it wrote and nothing in it failed (a later revert doesn't change
+    that: it applied). A log holding only a revert (its run's log pruned) is not a run here. Never raises.
     """
     summary: dict = {"last_run": None, "last_ok_at": None, "last_failure": None}
     try:
@@ -136,8 +143,8 @@ def runs_summary(vault: Vault) -> dict:
     # Ordered by each log's first line (when the run started); a whole log is read only when reached.
     for _, log in sorted(((_first_ts(log), log) for log in logs), reverse=True):
         run_id, events = log.parent.name, _events(log)
-        if not events:
-            continue
+        if not any(e.get("kind", "").startswith("write") for e in events):
+            continue  # a revert of a run whose log was pruned: no run to report
         writes = [e for e in events if e.get("kind") in ("write", *FAILURES, "write.routed")]
         failed = [e for e in events if e.get("kind") in FAILURES]
         at = str((writes or events)[-1].get("ts") or "")

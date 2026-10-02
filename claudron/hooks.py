@@ -25,6 +25,7 @@ user's temp dir when no vault resolves), and exits 0.
 from __future__ import annotations
 
 import json
+import re
 import os
 import shlex
 import sys
@@ -58,6 +59,10 @@ def _log(vault: Vault | None, event: str, message: str) -> None:
             fh.write(f"{stamp} [{event}] {message}\n")
     except OSError:
         pass
+
+
+#: The path a brief line ends with (an Unverified line adds `` · from <source>`` after it).
+_RENDERED_PATH = re.compile(r"`([^`]+)`(?: · from .*)?$")
 
 
 def _session_id(payload: dict) -> str | None:
@@ -121,8 +126,11 @@ def session_start_brief(vault: Vault, session_id: str | None = None) -> str:
     brief = render_brief(data)
     # The session's ops log (#200 §5): what this session was shown, trusted apart from unreviewed. Only
     # what the brief kept: the budget drops notes, and each rendered line ends with its `path`.
+    # Each rendered note line ENDS with its backticked path; a path quoted in a summary doesn't count.
+    rendered = {m.group(1) for line in brief.splitlines() if (m := _RENDERED_PATH.search(line))}
+
     def shown(entries: list[dict], trust: str | None = None) -> list[str]:
-        return [e["path"] for e in entries if (trust is None or e.get("trust") == trust) and f"`{e['path']}`" in brief]
+        return [e["path"] for e in entries if (trust is None or e.get("trust") == trust) and e["path"] in rendered]
 
     notes = data.get("notes") or []
     ops.record(vault, "recall.served", session_id=session_id, project=data.get("project"),
