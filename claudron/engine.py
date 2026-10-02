@@ -31,6 +31,7 @@ import yaml
 from .knowledge import ensure_index, index_entry, write_index
 from . import ops
 from .runs import check_run_id, trailer
+from .tags import canonicalize
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     DEDUP_EXEMPT,
@@ -282,6 +283,8 @@ def capture(
         )
 
     target_dir = resolve_target_dir(vault, note_type, project=project, fleet=fleet)
+    if tags:  # the registry's canonical forms (#200 §3): an alias or a merged tag never lands as written
+        tags = canonicalize(vault, tags)
 
     text = compose_note(
         note_type=note_type, title=title, owner=owner, body=body,
