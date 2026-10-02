@@ -27,7 +27,7 @@ from pathlib import Path
 
 from .engine import WriteResult, edit_note, yaml_scalar
 from .knowledge import ensure_index, fenced_lines, section_headings
-from .schema import _as_str_list, claimed_names, set_frontmatter_field
+from .schema import TRUST_CLASSES, _as_str_list, claimed_names, set_frontmatter_field, trust_class
 from .vault import Vault
 
 OPS = ("append_fact", "add_evidence", "add_alias", "supersede_fact")
@@ -249,7 +249,22 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
         raise AmendError(f"unknown op {op!r} (choose from {', '.join(OPS)})")
     if not note_path.is_file():
         raise AmendError(f"no such note: {note_path}")
+    expect = request.get("expect_trust")
+    if expect is not None and expect not in TRUST_CLASSES:
+        raise AmendError(f"expect_trust must be one of {', '.join(TRUST_CLASSES)}")
     done: dict[str, str] = {}
+
+    def guarded(text: str, fm: dict) -> str | None:
+        """The op's transform, run only while the note still reads as ``expect_trust``.
+
+        Checked under the write lock, on the note as it is now: a person who
+        promotes the note between a writer's ``resolve`` and its ``amend`` turns
+        the amend into a refusal, never into unreviewed text in a reviewed note.
+        """
+        if expect is not None and (now := trust_class(str(fm.get("maturity") or ""),
+                                                      str(fm.get("source_type") or ""))) != expect:
+            raise AmendError(f"the note reads as {now!r} now, not {expect!r}; nothing written")
+        return transform(text, fm)
 
     if op == "add_alias":
         alias = _one_line(request.get("alias"), "alias")
@@ -267,7 +282,7 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
             done["outcome"], done["fact_id"] = _BODY_OPS[op](lines, request)
             return None if done["outcome"] == "unchanged" else head + "\n".join(lines)
 
-    result = edit_note(vault, note_path, transform, verb="amend", run_id=run_id, no_commit=no_commit)
+    result = edit_note(vault, note_path, guarded, verb="amend", run_id=run_id, no_commit=no_commit)
     return AmendResult(action=result.action, path=result.path, reason=result.reason, errors=result.errors,
                        warnings=result.warnings, op=op, outcome=done.get("outcome", "") if result.written else "",
                        fact_id=done.get("fact_id", ""))

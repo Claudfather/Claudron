@@ -474,7 +474,7 @@ def cmd_promote(args) -> int:
     actor = args.by or _derive_owner(args)
     result = promote(vault, vault.root / path, to_maturity=args.to, actor=actor)
     if args.json:
-        _emit_json("promote", result.to_dict(), result.errors or None)
+        _emit_json("promote", result.to_dict(), result.errors or result.warnings or None)
         return 1 if result.action == "rejected" else 0
     if result.action == "rejected":
         for f in result.errors:
@@ -491,7 +491,7 @@ def cmd_promote(args) -> int:
 
 def cmd_subjects(args) -> int:
     vault = _resolve_vault(args)
-    found = subjects(vault, note_type=args.type)
+    found = subjects(vault, note_type=args.type, project=args.project)
     if args.json:
         _emit_json("subjects", {"type": args.type, "subjects": [s.as_dict() for s in found]})
         return 0
@@ -503,9 +503,9 @@ def cmd_subjects(args) -> int:
 
 def cmd_resolve(args) -> int:
     vault = _resolve_vault(args)
-    aliases = _tags_arg(args.aliases) if args.aliases else []
+    aliases = [*(_tags_arg(args.aliases) if args.aliases else []), *args.alias]
     found = resolve(vault, args.name, note_type=args.type, aliases=aliases, context=args.context,
-                    limit=args.limit)
+                    limit=args.limit, project=args.project)
     if args.json:
         _emit_json("resolve", {"name": args.name, "candidates": [s.as_dict() for s in found]})
         return 0
@@ -535,6 +535,11 @@ def cmd_amend(args) -> int:
                        no_commit=args.no_commit)
     except (AmendError, ScopeError, RunError) as exc:
         print(str(exc), file=sys.stderr)
+        if args.json:  # a caller reads why, not just the exit code (a refused alias isn't a broken engine)
+            print(json.dumps({"ok": False, "command": "amend", "warnings": [], "errors": [],
+                              "data": {"action": "rejected", "op": request.get("op"), "path": str(path),
+                                       "outcome": "", "fact_id": "", "reason": str(exc), "written": False}},
+                             indent=2))
         return 2
     if args.json:
         _emit_json("amend", result.to_dict(), result.errors or result.warnings or None)
@@ -1677,13 +1682,17 @@ def main(argv=None) -> int:
         parents=[vault_parent, json_parent],
     )
     p_subjects.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_subjects.add_argument("--project", help="Only subjects in this project's tier")
     p_resolve = sub.add_parser(
         "resolve", help="Rank candidate subjects for a name (exact, alias, slug, then text)",
         parents=[vault_parent, json_parent],
     )
     p_resolve.add_argument("--name", required=True, help="The subject's name")
     p_resolve.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_resolve.add_argument("--project", help="Only subjects in this project's tier (same name, other repo: other subject)")
     p_resolve.add_argument("--aliases", help="Other names for it, comma-separated")
+    p_resolve.add_argument("--alias", action="append", default=[], metavar="NAME",
+                           help="Another name for it, repeatable (for a name with a comma in it)")
     p_resolve.add_argument("--context", help="A sentence about it; only breaks ties")
     p_resolve.add_argument("--limit", type=int, default=5, help="Max candidates (default: 5)")
 

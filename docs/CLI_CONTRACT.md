@@ -583,15 +583,20 @@ stdout, and never to stderr where a host might surface them as a session error.
   note (not archived or superseded) that facts can be filed under, by title.
   There is no stored registry; a subject exists because its note does. `--json`
   `data` is `{type, subjects}`, each `{title, path, type, aliases, sections,
-  tags, maturity, trust, updated, score, match_type}` (`score`/`match_type`
-  `null` here). `sections` are the note's `##` headings. Drafts are included and
+  tags, maturity, trust, source_type, tier, updated, score, match_type, exact}`
+  (`score`/`match_type`/`exact` `null` here). `sections` are the note's `##` headings. Drafts are included and
   labelled by `trust`: a writer must find the draft an earlier run wrote, or it
   files a twin. Gate on `"subjects" in status --json → data.capabilities`.
 - `resolve --name N [--type T] [--aliases a,b] [--context TEXT] [--limit K]` —
   the top-K **candidate subjects** for a name, best first, same entry shape with
   `score` and `match_type` set. A candidate scores its best match over the name
   and aliases: exact title (100), exact alias (90), slug (85, `match_type:
-  "slug"`), then title, tag and filename scoring. `--context` only breaks ties
+  "slug"`), then title, tag and filename scoring. `exact` is true for the
+  first three. Read it, not `match_type`, to tell the subject itself from a
+  note that shares a word: a fuzzy title hit is labelled `title` too.
+  `--alias NAME` (repeatable) adds one name each, for a name with a comma in
+  it. `--project P` (on `subjects` too) keeps only notes in that project's
+  tier: "staging DB" in one repo is not "staging DB" in another. `--context` only breaks ties
   among notes that already matched; it never adds one. **Choosing among the
   candidates is the caller's job**; `resolve` never picks, writes or runs a
   model. Same capability as `subjects`.
@@ -614,7 +619,15 @@ stdout, and never to stderr where a host might surface them as a session error.
   `outcome` ∈ `{fact_added, evidence_added, alias_added, fact_superseded}`, and
   `written` is true only for `updated`. A malformed request (unknown op, a
   missing field, a `fact_id` that isn't live, a comment marker in the text, a
-  taken alias) exits 2 and writes nothing; `rejected` (validation) exits 1. Gate on
+  taken alias) exits 2 and writes nothing; with `--json` it still prints an
+  envelope (`ok: false`, `data.action: "rejected"`, the refusal in
+  `data.reason`), so a caller can tell a refused request from a broken engine.
+  `rejected` from validation exits 1. An optional `expect_trust`
+  (`trusted` | `draft` | `external`) is checked under the write lock against
+  the note as it is then: if the note no longer reads as that class (a person
+  promoted it after the caller resolved it), the amend is refused and nothing
+  is written. `exact`, `--alias`, `expect_trust` and the refusal envelope are
+  gated on `"subject-filing" in status --json → data.capabilities` (0.7.1). Gate on
   `"amend" in status --json → data.capabilities`.
 - **Runs** (#200 §4): `capture`, `capture --update` and `amend` take
   `--run-id ID` (or a `run_id` key on stdin). The write is committed at once,

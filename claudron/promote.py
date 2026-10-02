@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 
-from .engine import ScopeError
+from .engine import ScopeError, _commit_after
 from .knowledge import ensure_index, write_index
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
@@ -46,6 +46,7 @@ class PromoteResult:
     promoted_by: str = ""
     promoted_at: str = ""
     errors: list[Finding] = field(default_factory=list)
+    warnings: list[Finding] = field(default_factory=list)  #: W108 when the write could not be committed
 
     @property
     def written(self) -> bool:
@@ -65,6 +66,7 @@ class PromoteResult:
             "promoted_at": self.promoted_at,
             "written": self.written,
             "errors": [f.to_dict() for f in self.errors],
+            "warnings": [f.to_dict() for f in self.warnings],
         }
 
 
@@ -129,11 +131,15 @@ def promote(
                 entry["maturity"] = to_maturity
                 break
         write_index(vault, index)
+        # Committed like every door's write (#157: durable on return). Uncommitted, a promotion sat in the
+        # tree until the next sync, and a `revert-run` touching the note refused to run over it.
+        warnings = _commit_after(vault, note_path, None, False, "promote", str(fm.get("title") or rel),
+                                 str(fm.get("type") or "unknown"), "existing")
 
     action = (
         "promoted" if ladder_index(to_maturity) > ladder_index(current) else "demoted"
     )
     return PromoteResult(
         action=action, path=rel, from_maturity=current, to_maturity=to_maturity,
-        promoted_by=actor, promoted_at=today,
+        promoted_by=actor, promoted_at=today, warnings=warnings,
     )

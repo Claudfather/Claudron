@@ -85,6 +85,17 @@ def test_resolve_ranks_exact_alias_and_slug_matches(vault, name, kind):
     assert best.title == "Deploy Pipeline" and best.match_type == kind
 
 
+def test_resolve_marks_exact_matches_and_a_fuzzy_title_hit_is_not_one(vault):
+    """``match_type`` is ``title`` for both; ``exact`` is what tells the subject itself apart."""
+    (vault.root / "_shared" / "knowledge" / "pipeline-notes.md").write_text(
+        NOTE.replace("Deploy Pipeline", "(unverified) Pipeline notes").replace("aliases: [ci deploys]", "aliases: []"))
+    by_title = {s.title: s for s in resolve(vault, "(unverified) Deploy Pipeline")}
+    fuzzy = by_title["(unverified) Pipeline notes"]
+    assert fuzzy.match_type == "title" and fuzzy.exact is False
+    assert all(s.exact for s in resolve(vault, "deploy-pipeline")[:1])
+    assert all(s.exact is None for s in subjects(vault))  # a listing ranks nothing
+
+
 def test_resolve_tries_the_aliases_too(vault):
     [best, *_] = resolve(vault, "the release flow", aliases=["ci deploys"])
     assert best.title == "Deploy Pipeline" and best.match_type == "alias"
@@ -98,7 +109,8 @@ def test_resolve_cli_json(vault, capsys):
     assert main(["--vault", str(vault.root), "resolve", "--name", "Deploy Pipeline", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)["data"]
     assert data["candidates"][0]["path"] == "_shared/knowledge/deploy-pipeline.md"
-    assert {"score", "match_type", "sections", "trust"} <= set(data["candidates"][0])
+    assert {"score", "match_type", "sections", "trust", "source_type", "exact"} <= set(data["candidates"][0])
+    assert data["candidates"][0]["exact"] is True
 
 
 # --- amend ----------------------------------------------------------------------------------------
@@ -201,6 +213,44 @@ def test_amend_cli(vault, capsys, monkeypatch):
 def test_amend_cli_bad_request_exits_2(vault, capsys, monkeypatch):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"note": "Deploy Pipeline", "op": "nope"})))
     assert main(["--vault", str(vault.root), "amend", "--stdin", "--json"]) == 2
+    envelope = json.loads(capsys.readouterr().out)  # a refusal still answers, so a caller can tell it from a crash
+    assert envelope["ok"] is False and envelope["data"]["action"] == "rejected"
+    assert "unknown op" in envelope["data"]["reason"] and envelope["data"]["written"] is False
+
+
+def test_project_scoping_keeps_one_repos_subject_out_of_anothers(vault):
+    for repo in ("webapp", "billing"):
+        (vault.root / "projects" / repo).mkdir(parents=True, exist_ok=True)
+        (vault.root / "projects" / repo / "staging-db.md").write_text(NOTE.replace("Deploy Pipeline", "Staging DB"))
+    vault = detect(vault.root)
+    [only] = [s for s in resolve(vault, "Staging DB", project="billing") if s.exact]
+    assert (only.path, only.tier) == ("projects/billing/staging-db.md", "project:billing")
+    assert {s.tier for s in subjects(vault, project="webapp")} == {"project:webapp"}
+
+
+def test_resolve_alias_flag_carries_a_name_with_a_comma(vault, capsys):
+    (vault.root / "_shared" / "knowledge" / "foo-bar.md").write_text(NOTE.replace("Deploy Pipeline", "Foo, bar"))
+    assert main(["--vault", str(vault.root), "resolve", "--name", "nothing here", "--alias", "Foo, bar", "--json"]) == 0
+    [best, *_] = json.loads(capsys.readouterr().out)["data"]["candidates"]
+    assert (best["title"], best["exact"]) == ("Foo, bar", True)
+
+
+def test_expect_trust_refuses_a_note_that_no_longer_reads_as_expected(vault):
+    """A writer that resolved an external draft must not land in it once a person has promoted it."""
+    req = {"op": "append_fact", "section": "Facts", "fact": "C.", "evidence": _ev(), "expect_trust": "external"}
+    with pytest.raises(AmendError, match="reads as 'trusted'"):
+        amend(vault, _path(vault), req, no_commit=True)
+    assert "C." not in _note(vault)
+    assert amend(vault, _path(vault), {**req, "expect_trust": "trusted"}, no_commit=True).action == "updated"
+    with pytest.raises(AmendError, match="expect_trust must be"):
+        amend(vault, _path(vault), {**req, "expect_trust": "nope"}, no_commit=True)
+
+
+def test_a_taken_alias_is_a_readable_refusal(vault, capsys, monkeypatch):
+    (vault.root / "_shared" / "knowledge" / "other.md").write_text(NOTE.replace("Deploy Pipeline", "Other"))
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"note": "Other", "op": "add_alias", "alias": "Deploy Pipeline"})))
+    assert main(["--vault", str(vault.root), "amend", "--stdin", "--no-commit", "--json"]) == 2
+    assert "already a name of" in json.loads(capsys.readouterr().out)["data"]["reason"]
 
 
 # --- runs -----------------------------------------------------------------------------------------
@@ -289,7 +339,7 @@ def test_revert_run_cli(gvault, capsys):
 def test_the_engine_declares_the_pipe_capabilities(vault, capsys):
     main(["--vault", str(vault.root), "status", "--json"])
     caps = json.loads(capsys.readouterr().out)["data"]["capabilities"]
-    assert {"subjects", "amend", "runs"} <= set(caps)
+    assert {"subjects", "amend", "runs", "subject-filing"} <= set(caps)
 
 
 # --- review fixes ---------------------------------------------------------------------------------
