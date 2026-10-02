@@ -563,12 +563,17 @@ stdout, and never to stderr where a host might surface them as a session error.
   `--kind K` (and `kind` / `relations` on `--stdin`: `relations` is an object
   over the closed set `part_of, instance_of, depends_on, owned_by, supersedes,
   related`, each a list of wikilinks); a home files under `<home>/<kind>/`
-  in a shared tier and `new` scaffolds its sections. A `person` note lives only
-  in `_personal/person/`: `--project`/`--fleet` with one exits 2. `amend`
-  refuses a fact about a person whose `evidence.asserted_by` isn't `user`.
-  `subjects` and `resolve` take `--home H` and `--kind K`, and each subject
-  carries `kind` and `relations`. `recall --json` gains `me` (the body of
-  `_personal/person/me.md`, or `null`), rendered as `## About me`. Gate on
+  in a shared tier and `new` scaffolds its sections. `kind` on a type that
+  isn't a home, or one that isn't a string, exits 2. A `person` note lives only
+  in `_personal/person/`: `--project`/`--fleet` with one exits 2, and `capture`
+  writes one only with `asserted_by: user` (`--asserted-by` or the `--stdin`
+  key), else exit 2. `amend` refuses a fact or an alias about a person unless
+  the user asserted it (`evidence.asserted_by` / `asserted_by`).
+  `subjects` and `resolve` take `--home H` (the same filter as `--type`, and
+  exclusive with it) and `--kind K`, and each subject carries `kind` and
+  `relations`. `recall --json` gains `me`: the body of a trusted
+  `_personal/person/me.md`, or `null` (absent, a draft, conflicted, or
+  `BOT_NAME` set), rendered as `## About me`. Gate on
   `"memory-homes" in status --json → data.capabilities`.
 - `new <type> "<title>"` — output always passes `validate --strict`. `owner`
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision

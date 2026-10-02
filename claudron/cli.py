@@ -493,8 +493,6 @@ def cmd_promote(args) -> int:
     return 0
 
 
-HOME_NAMES = tuple(HOMES)  #: entity, concept, person, project, decision, practice
-
 
 def cmd_tags(args) -> int:
     vault = _resolve_vault(args)
@@ -532,9 +530,10 @@ def cmd_tags(args) -> int:
 
 def cmd_subjects(args) -> int:
     vault = _resolve_vault(args)
-    found = subjects(vault, note_type=args.home or args.type, project=args.project, kind=args.kind)
+    note_type = args.home or args.type
+    found = subjects(vault, note_type=note_type, project=args.project, kind=args.kind)
     if args.json:
-        _emit_json("subjects", {"type": args.type, "subjects": [s.as_dict() for s in found]})
+        _emit_json("subjects", {"type": note_type, "subjects": [s.as_dict() for s in found]})
         return 0
     for s in found:
         label = _TRUST_LABEL.get(s.trust, "")
@@ -838,6 +837,7 @@ def cmd_capture(args) -> int:
             run_id=run_id,
             kind=finding.get("kind") or args.kind,
             relations=_relations(finding.get("relations")),
+            asserted_by=finding.get("asserted_by") or args.asserted_by,
         )
     except (ScopeError, RunError) as exc:
         print(str(exc), file=sys.stderr)
@@ -846,6 +846,9 @@ def cmd_capture(args) -> int:
 
     _log_unwritten(vault, run_id, "capture", result.action, result.reason)
     return _emit_write_result(args, result)
+
+
+HOME_NAMES = tuple(HOMES)  #: the memory homes, as `--home` choices
 
 
 def _relations(raw: object) -> dict[str, list[str]] | None:
@@ -1587,6 +1590,8 @@ def main(argv=None) -> int:
     p_capture.add_argument("--body", help="Note body (markdown)")
     p_capture.add_argument("--tags", help="Comma-separated tags")
     p_capture.add_argument("--kind", help="A memory home's kind (api, pattern, ...): files it one level down")
+    p_capture.add_argument("--asserted-by", choices=("user", "agent", "tool"),
+                           help="Who asserted the content; a person note needs `user` (#200 §2)")
     p_capture.add_argument("--owner", help="Owner (default: git user.name, then $USER)")
     cap_scope = p_capture.add_mutually_exclusive_group()
     cap_scope.add_argument("--project", help="File under projects/<name>/")
@@ -1772,18 +1777,20 @@ def main(argv=None) -> int:
         "subjects", help="List the notes facts can be filed under (derived from the index)",
         parents=[vault_parent, json_parent],
     )
-    p_subjects.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_subjects_scope = p_subjects.add_mutually_exclusive_group()
+    p_subjects_scope.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
     p_subjects.add_argument("--project", help="Only subjects in this project's tier")
-    p_subjects.add_argument("--home", choices=HOME_NAMES, help="Only subjects in this memory home (#200 §2)")
+    p_subjects_scope.add_argument("--home", choices=HOME_NAMES, help="Only subjects in this memory home (#200 §2)")
     p_subjects.add_argument("--kind", help="Only subjects of this kind")
     p_resolve = sub.add_parser(
         "resolve", help="Rank candidate subjects for a name (exact, alias, slug, then text)",
         parents=[vault_parent, json_parent],
     )
     p_resolve.add_argument("--name", required=True, help="The subject's name")
-    p_resolve.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_resolve_scope = p_resolve.add_mutually_exclusive_group()
+    p_resolve_scope.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
     p_resolve.add_argument("--project", help="Only subjects in this project's tier (same name, other repo: other subject)")
-    p_resolve.add_argument("--home", choices=HOME_NAMES, help="Only subjects in this memory home (#200 §2)")
+    p_resolve_scope.add_argument("--home", choices=HOME_NAMES, help="Only subjects in this memory home (#200 §2)")
     p_resolve.add_argument("--kind", help="Only subjects of this kind")
     p_resolve.add_argument("--aliases", help="Other names for it, comma-separated")
     p_resolve.add_argument("--alias", action="append", default=[], metavar="NAME",

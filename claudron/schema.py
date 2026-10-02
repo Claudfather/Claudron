@@ -42,10 +42,8 @@ _SchemaLoader.add_constructor("tag:yaml.org,2002:timestamp", _lenient_timestamp)
 # The memory homes (#200 §2) are types too: what a note is ABOUT, each with its own time semantics and
 # sections (HOMES). `decision` was already one. `knowledge`/`runbook` stay valid (no migration):
 # `entity`/`concept` and `practice` are where new writers file what they used to hold.
-HOME_TYPES = ("entity", "concept", "person", "project", "practice")
-TYPES = ("knowledge", "decision", "runbook", "plan", "audit", "review", *HOME_TYPES)
-
 #: Each memory home's sections, in order (#200 §2): what `new` scaffolds and harvest files facts under.
+#: The one source of the home set: every home files one folder level per `kind` (`decision` included).
 HOMES: dict[str, tuple[str, ...]] = {
     "entity": ("Summary", "Facts", "Behavior & gotchas", "Operating it", "History", "Open questions"),
     "concept": ("Definition", "Why it matters", "Examples", "Related"),
@@ -54,6 +52,11 @@ HOMES: dict[str, tuple[str, ...]] = {
     "decision": ("Context", "Decision", "Rationale", "Alternatives", "Supersedes"),
     "practice": ("When", "What", "Why", "Exceptions"),
 }
+#: The homes that are new types (`decision` already was one).
+HOME_TYPES = tuple(h for h in HOMES if h != "decision")
+TYPES = ("knowledge", "decision", "runbook", "plan", "audit", "review", *HOME_TYPES)
+#: Where a person note must live (#200 §2): the personal tier's `person/` (vault.PERSONAL_HUB).
+PERSON_DIR = "_personal/person/"
 
 #: The closed relation set (#200 §2): sub-concepts are relations, never directories. Each is a
 #: frontmatter list of wikilinks; `supersedes` was already a field.
@@ -378,6 +381,9 @@ CATALOG: dict[str, dict[str, str | None]] = {
     # only catalog member that describes the note's SURROUNDINGS rather than its
     # content -- which is why both tiers read the same.
     "W108": {"lenient": "warning", "strict": "warning"},
+    # #200 §2: a person note outside `_personal/person/`, or a non-person note inside it. A WARNING:
+    # the write doors never produce one (they file by type), so it flags a hand-placed file.
+    "W109": {"lenient": "warning", "strict": "warning"},
 }
 
 
@@ -583,6 +589,10 @@ def validate_note(
 
     if strict and not fm.get("owner"):
         emit("E007", "missing 'owner' (required on the authoring/engine tier)", field="owner")
+
+    if path and (note_type == "person") != path.replace("\\", "/").startswith(PERSON_DIR):
+        emit("W109", "a person note lives only in the personal tier (_personal/person/), and only a person note "
+                     "lives there (SCHEMA.md §Memory homes)", field="type")
 
     if note_type in ("knowledge", "runbook"):
         marker = _SKILL_MARKER_KEYS.intersection(fm)

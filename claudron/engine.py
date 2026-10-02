@@ -35,10 +35,8 @@ from .tags import canonicalize
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     DEDUP_EXEMPT,
-    HOME_TYPES,
     HOMES,
     MATURITY_VALUES,
-    RELATIONS,
     STATUS_VOCAB,
     TYPE_DIRS,
     TYPES,
@@ -161,8 +159,8 @@ def compose_note(
     if kind:
         lines.append(f"kind: {yaml_scalar(kind)}")
     for rel, targets in (relations or {}).items():
-        if rel in RELATIONS and targets:
-            lines.append(f"{rel}: [" + ", ".join(yaml_scalar(t) for t in targets) + "]")
+        if targets:  # JSON lists, like tags: a target with a comma or a bracket stays one target
+            lines.append(f"{rel}: {json.dumps([str(t).strip() for t in targets])}")
     lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
     body = body.strip()
     return "\n".join(lines) + f"\n\n# {title}\n" + (f"\n{body}\n" if body else "")
@@ -173,9 +171,9 @@ def home_skeleton(note_type: str) -> str:
     return "\n\n".join(f"## {section}" for section in HOMES.get(note_type, ()))
 
 
-def kind_dir(kind: str | None) -> str:
+def kind_dir(kind: object) -> str:
     """A kind's folder name: one slug, one level (``entity/apis/``), or ``""`` for none."""
-    return slugify(kind) if kind and kind.strip() else ""
+    return slugify(kind) if isinstance(kind, str) and kind.strip() else ""
 
 
 def resolve_target_dir(
@@ -194,12 +192,15 @@ def resolve_target_dir(
     ``kind`` (``entity/apis/``). A ``person`` note lives only in the personal
     tier (#200 §2): a project or fleet scope for one is refused.
     """
+    if kind is not None and not isinstance(kind, str):
+        raise ScopeError(f"kind must be a string, not {type(kind).__name__}")
+    if kind and kind.strip() and note_type not in HOMES:
+        raise ScopeError(f"kind applies to a memory home ({', '.join(HOMES)}), not {note_type!r}")
     if note_type == "person":
         if project or fleet:
             raise ScopeError("person notes live in the personal tier (_personal/person/), never a project or fleet")
-        base = vault.root / PERSONAL_HUB / TYPE_DIRS["person"] / kind_dir(kind)
-        return base.resolve()
-    if project:
+        base = vault.root / PERSONAL_HUB / TYPE_DIRS["person"]
+    elif project:
         base = vault.root / "projects" / project
     elif fleet:
         if fleet not in vault.fleets:
@@ -209,7 +210,7 @@ def resolve_target_dir(
         base = vault.fleets[fleet] / "shared" / TYPE_DIRS[note_type]
     else:
         base = vault.shared / TYPE_DIRS[note_type]
-    if note_type in HOME_TYPES and not project:
+    if note_type in HOMES and not project:
         base = base / kind_dir(kind)
 
     if not is_within_root(base, vault.root):
@@ -261,7 +262,9 @@ def _free_slug(base: Path, slug: str) -> Path:
     return target
 
 
-def _tier_label(project: str | None, fleet: str | None) -> str:
+def _tier_label(project: str | None, fleet: str | None, note_type: str = "") -> str:
+    if note_type == "person":
+        return "personal"
     if project:
         return f"project:{project}"
     if fleet:
@@ -286,6 +289,7 @@ def capture(
     run_id: str | None = None,
     kind: str | None = None,
     relations: dict[str, list[str]] | None = None,
+    asserted_by: str | None = None,
 ) -> WriteResult:
     """The guarded write path. Validate → dedup (routes) → write → index.
 
@@ -314,6 +318,9 @@ def capture(
             )
         )
 
+    if note_type == "person" and asserted_by != "user":
+        # #200 §2: what a note says about a person is the user's to assert, never an agent's inference.
+        raise ScopeError("a person note is captured only with asserted_by: user")
     target_dir = resolve_target_dir(vault, note_type, project=project, fleet=fleet, kind=kind)
     if tags:  # the registry's canonical forms (#200 §3): an alias or a merged tag never lands as written
         tags = canonicalize(vault, tags)
@@ -362,7 +369,7 @@ def capture(
         # Maintain the index: append the entry, write index.json last so its
         # mtime ≥ the note's — the next write loads instead of rebuilding.
         index["entries"].append(
-            index_entry(fm, note_body, target, _tier_label(project, fleet), vault.root)
+            index_entry(fm, note_body, target, _tier_label(project, fleet, note_type), vault.root)
         )
         write_index(vault, index)
 
@@ -379,7 +386,7 @@ def capture(
         # uncommitted note, which is exactly the behaviour this replaces — so
         # the change is strictly additive in durability.
         commit_warnings = _commit_after(vault, target, run_id, no_commit, "capture", title, note_type,
-                                            _tier_label(project, fleet))
+                                            _tier_label(project, fleet, note_type))
 
     return WriteResult(
         action="created",

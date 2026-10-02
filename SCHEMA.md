@@ -86,7 +86,7 @@ only the lines that keep the shape.
 
 ## Note types
 
-Six document-shaped types, plus the five memory homes (§Memory homes). Procedural content — skills, slash commands, agent-executable
+Eleven types: the six memory homes (§Memory homes; `decision` is one of them), `knowledge` and `runbook` (kept, no migration), and the document axis — `plan`, `audit`, `review`. Procedural content — skills, slash commands, agent-executable
 how-tos — is **out of scope by design**: it belongs in clauDNA
 (PROJECT_MISSION.md:25, "the schema makes the distinction enforceable").
 There is deliberately no `skill` type, and `validate` warns (W103) on
@@ -311,6 +311,7 @@ Additions are minor-version events recorded in this file's changelog.
 | W106 | status outside vocabulary (lenient form of E003) | warning | n/a |
 | W107 | malformed date (lenient form of E005) | warning | n/a |
 | W108 | note written but not committed by the write door (non-git vault is silent; a wedged tree or a failed `git add`/`commit` warns) | warning | warning |
+| W109 | a `person` note outside `_personal/person/`, or another type inside it (§Memory homes) | warning | warning |
 
 Date semantics: YAML already parses valid ISO dates into date objects —
 those pass. Strings must satisfy `date.fromisoformat`. Anything else
@@ -341,21 +342,27 @@ takes, unchanged. Every home is a type.
 
 - **Additive.** `knowledge` and `runbook` stay valid and nothing migrates;
   new writers file what they held under `entity`/`concept` and `practice`.
-- **`kind`** (optional, open) narrows a home. In a shared tier a home files
-  one folder level per kind (`_shared/entity/api/<slug>.md`), never deeper:
-  paths are stable addresses. `claudron new` scaffolds the home's sections.
+- **`kind`** (optional, open, a string) narrows a home, `decision` included,
+  and only a home. In a shared tier a home files one folder level per kind
+  (`_shared/entity/api/<slug>.md`, `_shared/decisions/architecture/…`), never
+  deeper: paths are stable addresses; a kind matches by its slug.
+  `claudron new` scaffolds the home's sections.
 - **Relations, not directories.** A sub-concept names its parent; the
   relation set is closed: `part_of`, `instance_of`, `depends_on`,
   `owned_by`, `supersedes`, `related` — each a frontmatter list of
   wikilinks, indexed. The generated `INDEX.md` nests a note under the note it
   is `part_of` (within one directory).
-- **`person` is stricter, enforced at the home:** a person note lives only
-  in the personal tier `_personal/person/` (never `_shared/` or a fleet);
-  `amend` takes a fact about a person only when `evidence.asserted_by` is
-  `user`; and `_personal/person/me.md` is injected into every session brief
-  (budgeted like `CONVENTIONS.md`; never from an external draft). No
-  evaluative claims about a person is a rule for the writer: the engine runs
-  no model to judge it.
+- **`person` is stricter, enforced at every door:** a person note lives only
+  in the personal tier `_personal/person/` (never `_shared/` or a fleet; W109
+  flags one placed by hand anywhere else, or another type placed there);
+  `capture` writes one only with `asserted_by: user`, and `amend` takes a fact
+  or an alias about a person (by type or by place) only when the user asserted
+  it. `new` writes only the empty skeleton. `_personal/person/me.md` is
+  injected into the operator's session briefs (`## About me`, budgeted like
+  `CONVENTIONS.md`, its sections as bold labels) only when it is **trusted** —
+  a captured draft speaks for nobody until a person promotes it — and never
+  into a bot's (`BOT_NAME` set). No evaluative claims about a person is a rule
+  for the writer: the engine runs no model to judge it.
 - A vault extends kinds freely (they are open); extending homes waits for
   `pack.yaml` v1 (§pack.yaml). A new home is justified only by different
   time semantics, sections or policy; otherwise it is a kind.

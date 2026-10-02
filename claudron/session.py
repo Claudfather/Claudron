@@ -12,6 +12,7 @@ into agent context verbatim by the SessionStart hook.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .knowledge import KnowledgeDoc, lookup, walk_knowledge_tier
@@ -203,11 +204,15 @@ ME_TOKEN_BUDGET = 120
 
 
 def _about_me(vault: Vault) -> str | None:
-    """The body of ``_personal/person/me.md``, or ``None``: absent, conflicted, or an external draft.
+    """The body of ``_personal/person/me.md``, or ``None``: absent, conflicted, unreviewed, or a bot's session.
 
-    Injected like CONVENTIONS.md, so it gets the same quarantine, and a draft from the web or a
-    session transcript never speaks for the operator.
+    Injected like CONVENTIONS.md, so it gets the same quarantine. Only a TRUSTED note speaks for the
+    operator: a draft (anything `capture` wrote and nobody promoted) never does. And it is the
+    operator's: a bot's session (``BOT_NAME`` set, as Claudlobby sets it) never gets it. Sections
+    render as bold labels, so the note can't open a heading of the brief's own; an empty one is dropped.
     """
+    if os.environ.get("BOT_NAME"):
+        return None
     path = vault.root / ME_NOTE
     if not path.is_file():
         return None
@@ -215,10 +220,22 @@ def _about_me(vault: Vault) -> str | None:
     if has_conflict_markers(text):
         return None
     fm, body, _ = parse_note(text)
-    if fm is None or trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or "")) == "external":
+    if fm is None or trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or "")) != "trusted":
         return None
-    lines = [ln for ln in body.strip().splitlines() if not ln.startswith("# ")]
-    return "\n".join(lines).strip() or None
+    out: list[str] = []
+    pending: str | None = None  # a section heading, kept only once something follows it
+    for line in body.strip().splitlines():
+        if line.startswith("# "):
+            continue
+        if line.startswith("#"):
+            pending = "**" + line.lstrip("#").strip() + "**"
+            continue
+        if line.strip():
+            if pending:
+                out.append(pending)
+                pending = None
+            out.append(line)
+    return "\n".join(out).strip() or None
 
 
 def render_brief(data: dict) -> str:
@@ -248,10 +265,11 @@ def render_brief(data: dict) -> str:
                 break
             kept.append(line)
             cost += count_tokens(line)
-        if any(ln.strip() for ln in kept):
-            block = "## About me\n\n" + "\n".join(kept).strip()
-            sections.append(block)
-            spent += count_tokens(block)
+        if not any(ln.strip() for ln in kept):  # its first line alone is over budget: say so, never silently drop
+            kept = [f"_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: shorten {ME_NOTE.as_posix()})_"]
+        block = "## About me\n\n" + "\n".join(kept).strip()
+        sections.append(block)
+        spent += count_tokens(block)
 
     header = "## Recalled context" + (
         f" — {data['project']}" if data["project"] else ""

@@ -188,11 +188,18 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
         "source_type": str(fm.get("source_type", "") or ""),
         # #200 §2: a memory home's kind, and its relations (wikilink targets, brackets stripped).
         "kind": str(fm.get("kind", "") or ""),
-        "relations": {rel: [_link_target(t) for t in _as_str_list(fm.get(rel))]
-                      for rel in RELATIONS if _as_str_list(fm.get(rel))},
+        "relations": {rel: targets for rel in RELATIONS if (targets := _relation_targets(fm.get(rel)))},
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
+
+
+def _relation_targets(value: object) -> list[str]:
+    """A relation field's targets. An unquoted ``[[Target]]`` (the Obsidian habit) parses as a nested
+    list: one level is flattened, so it indexes as ``Target``, never as ``"['Target']"``."""
+    items = value if isinstance(value, list) else ([value] if value else [])
+    flat = [x for item in items for x in (item if isinstance(item, list) else [item])]
+    return [t for t in (_link_target(str(x)) for x in flat if x is not None) if t]
 
 
 def _link_target(value: str) -> str:

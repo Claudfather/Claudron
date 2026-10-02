@@ -73,7 +73,7 @@ def _live(entries: list[dict], note_type: str | None, project: str | None = None
     (a memory home is a type), of the ``kind``, and (with ``project``) in the project tier asked."""
     return [e for e in entries if e.get("status") not in LOOKUP_EXCLUDED
             and (note_type is None or e.get("type") == note_type)
-            and (kind is None or str(e.get("kind", "")).lower() == kind.lower())
+            and (kind is None or slugify(str(e.get("kind", ""))) == slugify(kind))
             and (project is None or e.get("tier") == f"project:{project}")]
 
 
