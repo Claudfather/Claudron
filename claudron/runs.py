@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass, field
 
+from . import ops
 from .locking import vault_write_lock
 from .vault import Vault
 
@@ -113,5 +114,6 @@ def revert_run(vault: Vault, run_id: str) -> RunResult:
             _git(vault, "revert", "--abort")
             raise RunError(f"the revert of run {run_id} could not be committed: {done.stderr.strip()[:200]}")
         head = _git(vault, "rev-parse", "HEAD").stdout.strip()
+    ops.record(vault, "run.reverted", run_id=run_id, commits=len(todo), revert=head)
     # The reverted notes are newer than the index now, so the next read rebuilds it (mtime staleness).
     return RunResult(run_id, "reverted", todo, head, f"reverted {len(todo)} commit(s) in one")

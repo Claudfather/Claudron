@@ -54,6 +54,7 @@ from .knowledge import (
 )
 from .graph import build_graph, render_html
 from .promote import promote
+from . import ops
 from .amend import AmendError, AmendResult, amend
 from .runs import RunError, revert_run
 from .subjects import resolve, subjects
@@ -321,7 +322,7 @@ def cmd_status(args) -> int:
         # vault path, instead of each maintaining a private detection ladder.
         # Presentation-layer only: vault.status() stays a pure vault summary.
         _emit_json("status", {**info, "engine_version": __version__,
-                              "capabilities": list(CAPABILITIES)})
+                              "capabilities": list(CAPABILITIES), "runs": ops.runs_summary(vault)})
         return 0
 
     print(f"vault: {info['root']}")
@@ -516,10 +517,14 @@ def cmd_resolve(args) -> int:
     return 0
 
 
-def _amend_refused(args, message: str, request: object = None, path: Path | None = None) -> int:
+def _amend_refused(args, message: str, request: object = None, path: Path | None = None,
+                   vault=None) -> int:
     """Exit 2 for a request ``amend`` refuses; with ``--json`` an envelope too, so a caller can tell a
     refused request (a taken alias, a note that isn't there) from a broken engine."""
     print(message, file=sys.stderr)
+    if vault is not None:
+        run_id = (request.get("run_id") if isinstance(request, dict) else None) or args.run_id
+        _log_unwritten(vault, run_id, "amend", "rejected", message)
     if args.json:
         op = request.get("op") if isinstance(request, dict) else None
         # ``request`` is not a catalog code: the request, not the note, is at fault (CLI_CONTRACT §amend).
@@ -537,15 +542,17 @@ def cmd_amend(args) -> int:
     except json.JSONDecodeError as exc:
         return _amend_refused(args, f"invalid JSON on stdin: {exc}")
     if not isinstance(request, dict) or not request.get("note"):
-        return _amend_refused(args, "amend reads one JSON object on stdin, with at least `note` and `op`", request)
+        return _amend_refused(args, "amend reads one JSON object on stdin, with at least `note` and `op`", request,
+                              vault=vault)
     path = resolve_note_ref(vault, str(request["note"]))
     if path is None:
-        return _amend_refused(args, f"no note matches '{request['note']}'", request)
+        return _amend_refused(args, f"no note matches '{request['note']}'", request, vault=vault)
     try:
         result = amend(vault, vault.root / path, request, run_id=request.get("run_id") or args.run_id,
                        no_commit=args.no_commit)
     except (AmendError, ScopeError, RunError) as exc:
-        return _amend_refused(args, str(exc), request, vault.root / path)
+        return _amend_refused(args, str(exc), request, vault.root / path, vault=vault)
+    _log_unwritten(vault, request.get("run_id") or args.run_id, "amend", result.action, result.reason)
     if args.json:
         _emit_json("amend", result.to_dict(), result.errors or result.warnings or None)
     else:
@@ -720,16 +727,20 @@ def cmd_capture(args) -> int:
         note_path = vault.root / args.update
         if not is_within_root(note_path, vault.root) or not note_path.is_file():
             print(f"no such note in vault: {args.update}", file=sys.stderr)
+            _log_unwritten(vault, args.run_id, "addendum", "rejected", f"no such note in vault: {args.update}")
             return 2
         if not args.body:
             print("--update requires --body", file=sys.stderr)
+            _log_unwritten(vault, args.run_id, "addendum", "rejected", "--update requires --body")
             return 2
         try:
             result = append_addendum(vault, note_path, args.body,
                                      no_commit=getattr(args, "no_commit", False), run_id=args.run_id)
         except (ScopeError, RunError) as exc:
             print(str(exc), file=sys.stderr)
+            _log_unwritten(vault, args.run_id, "addendum", "rejected", str(exc))
             return 2
+        _log_unwritten(vault, args.run_id, "addendum", result.action, result.reason)
         return _emit_write_result(args, result)
 
     if args.stdin:
@@ -737,14 +748,17 @@ def cmd_capture(args) -> int:
             finding = json.loads(sys.stdin.read())
         except json.JSONDecodeError as exc:
             print(f"invalid JSON on stdin: {exc}", file=sys.stderr)
+            _log_unwritten(vault, args.run_id, "capture", "rejected", f"invalid JSON on stdin: {exc}")
             return 2
     else:
         finding = {}
+    run_id = (finding.get("run_id") if isinstance(finding, dict) else None) or args.run_id
     note_type = finding.get("type") or args.type
     title = finding.get("title") or args.title
     body = finding.get("body") or args.body or ""
     if not note_type or not title:
         print("capture requires --type and --title (or --stdin JSON)", file=sys.stderr)
+        _log_unwritten(vault, run_id, "capture", "rejected", "capture requires --type and --title")
         return 2
     tags = _tags_arg(finding.get("tags")) or _tags_arg(args.tags)
     owner = finding.get("owner") or _derive_owner(args)
@@ -762,6 +776,7 @@ def cmd_capture(args) -> int:
             f"(choose from {', '.join(repr(v) for v in SOURCE_TYPES)})",
             file=sys.stderr,
         )
+        _log_unwritten(vault, run_id, "capture", "rejected", f"invalid source_type: {source_type!r}")
         return 2
 
     try:
@@ -778,13 +793,25 @@ def cmd_capture(args) -> int:
             no_commit=getattr(args, "no_commit", False),
             source_url=finding.get("source_url") or args.source_url,
             source_type=source_type,
-            run_id=finding.get("run_id") or args.run_id,
+            run_id=run_id,
         )
     except (ScopeError, RunError) as exc:
         print(str(exc), file=sys.stderr)
+        _log_unwritten(vault, run_id, "capture", "rejected", str(exc))
         return 2
 
+    _log_unwritten(vault, run_id, "capture", result.action, result.reason)
     return _emit_write_result(args, result)
+
+
+def _log_unwritten(vault, run_id, verb: str, action: str, reason: str | None) -> None:
+    """A run's write that wrote nothing, in its ops log (#200 §5): refused, or routed by dedup.
+
+    Writes that land are logged where they are committed (``engine._commit_written``).
+    """
+    if run_id and action in ("rejected", "suggest_update", "suggest_supersede"):
+        kind = "write.refused" if action == "rejected" else "write.routed"
+        ops.record(vault, kind, run_id=run_id, verb=verb, action=action, reason=str(reason or ""))
 
 
 def _emit_write_result(args, result) -> int:

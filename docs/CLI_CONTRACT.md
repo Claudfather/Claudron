@@ -107,6 +107,7 @@ rely on them, and removing or retyping one is a breaking change:
 | `total_docs` / `total_stale` | int | Vault-wide note counts. |
 | `tiers` | object | Per-tier `{docs, stale, path}`. |
 | `fleets` / `projects` | array | Names present in the vault. |
+| `runs` | object | The ops log's liveness (#200 §5): `{last_run, last_ok_at, last_failure}`, each `null` until a run has logged. `last_run` is `{run_id, at, writes, failures, reverted}`, `last_failure` is `{run_id, at, kind, reason}`. Gate on `ops-log`. |
 
 Everything else under `status --json` is informational and may change without
 a breaking-change entry.
@@ -635,6 +636,23 @@ stdout, and never to stderr where a host might surface them as a session error.
   `unchanged`. `expect_trust` and the refusal envelope are gated on
   `subject-filing` (0.7.1). Gate on
   `"amend" in status --json → data.capabilities`.
+- **Operations log** (#200 §5, capability `ops-log`): one JSONL file per run and
+  per session under the vault's gitignored `.claudron/` —
+  `runs/<run_id>/ops.jsonl` and `sessions/<session_id>/ops.jsonl` — local and
+  never synced. Every line carries `v` (1), `ts`, `kind`, `session_id`,
+  `run_id`, `emitter` (`claudron`) and `event_id`, then the kind's fields.
+  A run logs `write` (`verb`, `path`) for each committed write,
+  `write.uncommitted` when the commit failed (W108), `write.refused` and
+  `write.routed` (dedup) for what it asked for that didn't land, and
+  `run.reverted`. A session's hooks log `recall.served` (the `trusted`,
+  `drafts` and `unverified` paths the brief showed, after its budget) and
+  `sync.push` (`ok`, `detail`). Logging is best-effort and never fails the
+  write it logs; an id that isn't a safe directory name isn't logged, and
+  nothing is logged in a git vault whose `.gitignore` lacks `.claudron/` (sync
+  would otherwise commit the logs; `doctor --fix` adds the rule). Each of
+  `runs/` and `sessions/` keeps the 200 logs most recently appended to; pruning
+  removes only a log and the directory it leaves empty. Gate on
+  `"ops-log" in status --json → data.capabilities`.
 - **Runs** (#200 §4): `capture`, `capture --update` and `amend` take
   `--run-id ID` (or a `run_id` key on stdin). The write is committed at once,
   like any write (§Write guarantees), and its commit message ends

@@ -49,6 +49,7 @@ CAPABILITIES: tuple[str, ...] = (
     "subjects",     # `subjects` and `resolve`: the derived subject registry and its ranking (#200 §4)
     "amend",        # `amend --stdin`: fact-level section writes, idempotent on fact id + evidence ref (#200 §4)
     "runs",         # `--run-id` on capture/amend tags commits; `revert-run` undoes a run (#200 §4)
+    "ops-log",      # `.claudron/{runs,sessions}/<id>/ops.jsonl`; `status --json` → `runs` (#200 §5)
     "subject-filing",  # resolve's `exact`/`tier`/`--project`/`--alias`; amend's `expect_trust` + refusal envelope
 )
 

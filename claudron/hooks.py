@@ -25,6 +25,7 @@ user's temp dir when no vault resolves), and exits 0.
 from __future__ import annotations
 
 import json
+import re
 import os
 import shlex
 import sys
@@ -33,6 +34,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from . import ops
 from .session import derive_project, recall, render_brief
 from .sync import SyncError, pull_ff_only, sync
 from .vault import Vault, detect
@@ -59,6 +61,16 @@ def _log(vault: Vault | None, event: str, message: str) -> None:
         pass
 
 
+#: The path a brief line ends with (an Unverified line adds `` · from <source>`` after it).
+_RENDERED_PATH = re.compile(r"`([^`]+)`(?: · from .*)?$")
+
+
+def _session_id(payload: dict) -> str | None:
+    """The hook payload's ``session_id``, when it is a string (the ops log keys a directory on it)."""
+    sid = payload.get("session_id")
+    return sid if isinstance(sid, str) and sid else None
+
+
 def _stdin_payload() -> dict:
     """Claude Code hook input (JSON on stdin); tolerate anything."""
     try:
@@ -68,7 +80,7 @@ def _stdin_payload() -> dict:
         return {}
 
 
-def session_start_brief(vault: Vault) -> str:
+def session_start_brief(vault: Vault, session_id: str | None = None) -> str:
     """The order-sensitive SessionStart composition: bounded pull, THEN
     recall (pull must precede recall or machine B briefs stale — the
     epic's acceptance-test invariant). The session-layer seam both the
@@ -110,12 +122,26 @@ def session_start_brief(vault: Vault) -> str:
     # cannot see. Caught live: machine B's first brief about a project
     # born on machine A came back empty.
     vault = detect(vault.root) or vault
-    return render_brief(recall(vault, project=derive_project()))
+    data = recall(vault, project=derive_project())
+    brief = render_brief(data)
+    # The session's ops log (#200 §5): what this session was shown, trusted apart from unreviewed. Only
+    # what the brief kept: the budget drops notes, and each rendered line ends with its `path`.
+    # Each rendered note line ENDS with its backticked path; a path quoted in a summary doesn't count.
+    rendered = {m.group(1) for line in brief.splitlines() if (m := _RENDERED_PATH.search(line))}
+
+    def shown(entries: list[dict], trust: str | None = None) -> list[str]:
+        return [e["path"] for e in entries if (trust is None or e.get("trust") == trust) and e["path"] in rendered]
+
+    notes = data.get("notes") or []
+    ops.record(vault, "recall.served", session_id=session_id, project=data.get("project"),
+               trusted=shown(notes, "trusted"), drafts=shown(notes, "draft"),
+               unverified=shown(data.get("unverified") or []))
+    return brief
 
 
 def hook_session_start(vault: Vault, payload: dict) -> int:
     """Emit the session brief on stdout (fail-open, like every hook)."""
-    brief = session_start_brief(vault)
+    brief = session_start_brief(vault, _session_id(payload))
     if brief:
         print(brief)
     return 0
@@ -161,6 +187,7 @@ def hook_session_end(vault: Vault, payload: dict) -> int:
     """Push the session's vault changes; fail open (nothing to inject)."""
     try:
         result = sync(vault, pull=False, push=True, timeout=SESSION_END_PUSH_TIMEOUT)
+        ops.record(vault, "sync.push", session_id=_session_id(payload), ok=result.ok, detail=str(result.detail or ""))
         if not result.ok:
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
     # Deliberate, not a residual guard the boundary makes redundant: a
