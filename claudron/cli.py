@@ -522,11 +522,11 @@ def _amend_refused(args, message: str, request: object = None, path: Path | None
     print(message, file=sys.stderr)
     if args.json:
         op = request.get("op") if isinstance(request, dict) else None
-        result = AmendResult(action="rejected", path=str(path) if path else "", reason=message,
+        # ``request`` is not a catalog code: the request, not the note, is at fault (CLI_CONTRACT §amend).
+        refusal = Finding("request", "error", str(path) if path else "", None, None, message)
+        result = AmendResult(action="rejected", path=refusal.path, reason=message, errors=[refusal],
                              op=op if isinstance(op, str) else "")
-        refusal = {"code": "request", "severity": "error", "path": result.path, "field": None, "line": None,
-                   "message": message}
-        print(json.dumps({**_envelope("amend", result.to_dict()), "ok": False, "errors": [refusal]}, indent=2))
+        _emit_json("amend", result.to_dict(), [refusal])
     return 2
 
 

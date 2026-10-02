@@ -254,6 +254,7 @@ def test_every_refusal_answers_with_an_envelope_whose_ok_matches_its_errors(vaul
         envelope = json.loads(capsys.readouterr().out)
         assert envelope["ok"] is False and [e["code"] for e in envelope["errors"]] == ["request"]
         assert envelope["data"]["action"] == "rejected" and envelope["data"]["reason"]
+        assert envelope["data"]["errors"] == envelope["errors"]  # a rejection always carries its reason
 
 
 def test_expect_trust_keeps_a_replay_unchanged_after_a_promotion(vault):
