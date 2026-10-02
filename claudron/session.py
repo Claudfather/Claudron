@@ -202,6 +202,8 @@ def recall(
 ME_NOTE = Path(PERSONAL_HUB) / "person" / "me.md"
 #: Its budget inside the brief, in whole lines (never cut mid-line), like CONVENTIONS.md's.
 ME_TOKEN_BUDGET = 120
+#: An ATX heading as CommonMark reads one: up to three spaces of indent, an optional closing run of `#`.
+_ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
 
 
 def _about_me(vault: Vault) -> str | None:
@@ -229,11 +231,12 @@ def _about_me(vault: Vault) -> str | None:
     lines = body.strip().splitlines()
     fenced = fenced_lines(lines)
     for n, line in enumerate(lines):
-        heading = n not in fenced and re.match(r"^(#{1,6}) +(.*)$", line)
+        heading = n not in fenced and _ATX_HEADING.match(line)
         if heading and len(heading.group(1)) == 1:
             continue  # the note's H1: the brief supplies the heading
         if heading:
-            pending = f"**{heading.group(2).strip()}**"
+            label = (heading.group(2) or "").strip()
+            pending = f"**{label}**" if label else None
             continue
         if line.strip():
             if pending:
@@ -270,12 +273,15 @@ def render_brief(data: dict) -> str:
                 break
             kept.append(line)
             cost += count_tokens(line)
-        if len(kept) < len(data["me"].splitlines()):  # cut short: say so, never silently drop
-            while kept and kept[-1].startswith("**") and kept[-1].endswith("**"):
-                kept.pop()  # never end on a label whose content was cut
-            kept.append(f"_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: "
-                        f"shorten {ME_NOTE.as_posix()})_")
-        block = "## About me\n\n" + "\n".join(kept).strip()
+        cut = len(kept) < len(data["me"].splitlines())
+        while cut and kept and kept[-1].startswith("**") and kept[-1].endswith("**"):
+            kept.pop()  # never end on a label whose content was cut
+        # Quoted, line by line: whatever the note holds (an unclosed fence, a setext underline, a
+        # heading) closes with the quote, so it can never open a section of the brief or swallow it.
+        quoted = "\n".join(f"> {ln}" if ln.strip() else ">" for ln in kept)
+        notice = (f"\n\n_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: "
+                  f"shorten {ME_NOTE.as_posix()})_") if cut else ""
+        block = "## About me\n\n" + quoted + notice
         sections.append(block)
         spent += count_tokens(block)
 

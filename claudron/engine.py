@@ -58,6 +58,10 @@ class ScopeError(Exception):
     it to a usage error (exit 2), the MCP layer to its error payload."""
 
 
+class PersonEditError(ScopeError):
+    """An edit of a person note without the user's assertion (#200 §2)."""
+
+
 @dataclass
 class WriteResult:
     """The engine's uniform outcome — one shape for every door.
@@ -194,7 +198,8 @@ def resolve_target_dir(
     tier (#200 §2): a project or fleet scope for one is refused.
     """
     for scope in (project, fleet):  # one directory name: `../_personal/person` must not reach the personal tier
-        if scope is not None and (not str(scope).strip() or Path(str(scope)).name != str(scope) or scope in (".", "..")):
+        if scope is not None and (not isinstance(scope, str) or not scope.strip() or Path(scope).name != scope
+                                  or scope in (".", "..")):
             raise ScopeError(f"scope {scope!r} escapes the vault root: a scope is one directory name")
     if kind is not None and not isinstance(kind, str):
         raise ScopeError(f"kind must be a string, not {type(kind).__name__}")
@@ -528,7 +533,7 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
         original = note_path.read_text()
         fm, _, _ = parse_note(original)
         if is_person_note(fm, rel) and asserted_by != "user":
-            raise ScopeError("a person note is edited only when the user asserted the change (asserted_by: user)")
+            raise PersonEditError("a person note is edited only when the user asserted the change (asserted_by: user)")
         text = transform(original, fm or {})
         if text is None:
             return WriteResult(action="unchanged", path=str(note_path), reason="already there; nothing written")

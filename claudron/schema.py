@@ -61,9 +61,16 @@ PERSON_PARTS = ("_personal", "person")
 
 
 def in_person_dir(path: str | Path) -> bool:
-    """Is ``path`` (vault-relative or absolute) inside a ``_personal/person/`` directory?"""
-    parts = Path(str(path).replace("\\", "/")).parts
-    return any(parts[i:i + 2] == PERSON_PARTS for i in range(len(parts) - 1))
+    """Is ``path`` inside the personal tier's ``person/``?
+
+    A vault-relative path is anchored at the vault root (``projects/x/_personal/person/`` is not the
+    personal tier, and W109 must flag a person note there). An absolute path, which a lint run
+    without a resolvable vault root hands over, is matched by its segments.
+    """
+    p = Path(str(path).replace("\\", "/"))
+    if not p.is_absolute():
+        return p.parts[:2] == PERSON_PARTS
+    return any(p.parts[i:i + 2] == PERSON_PARTS for i in range(len(p.parts) - 1))
 
 
 def is_person_note(fm: dict | None, path: str | Path) -> bool:

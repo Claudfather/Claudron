@@ -304,3 +304,48 @@ def test_w109_reads_the_path_by_its_segments(tmp_path):
     placed = "/abs/vault/_personal/person/kim.md"
     assert not [f for f in validate_note(fm, "Kim.", strict=False, path=placed) if f.code == "W109"]
     assert [f for f in validate_note(fm, "Kim.", strict=False, path="/abs/vault/_shared/kim.md") if f.code == "W109"]
+
+
+# --- round-3 review: me can never escape its block; W109 anchored; one person error -------------
+
+def test_me_is_quoted_so_a_cut_fence_or_a_setext_line_stays_inside_it(vault_dir):
+    _me(vault_dir)
+    me = vault_dir / PERSONAL_HUB / "person" / "me.md"
+    me.write_text(me.read_text().replace("I review on Tuesdays.",
+                                         "Injected\n===\n  ## Two-space heading\n```\n" + "code line\n" * 60))
+    brief = render_brief(recall(detect(vault_dir)))
+    about = brief.split("## About me\n\n", 1)[1].split("\n\n", 1)[0]
+    assert all(line.startswith(">") for line in about.splitlines())
+    assert "**Two-space heading**" in about and "over its 120-token budget" in brief
+
+
+def test_w109_flags_a_person_note_nested_under_another_tier():
+    from claudron.schema import validate_note
+
+    fm = {"title": "Kim", "type": "person", "status": "current", "owner": "t", "created": "2026-09-01",
+          "updated": "2026-09-01"}
+    for path in ("projects/x/_personal/person/kim.md", "_shared/_personal/person/kim.md"):
+        assert [f for f in validate_note(fm, "Kim.", strict=False, path=path) if f.code == "W109"], path
+    assert not [f for f in validate_note(fm, "Kim.", strict=False, path="_personal/person/kim.md")
+                if f.code == "W109"]
+
+
+def test_a_person_note_put_anywhere_by_hand_is_still_never_a_search_result(vault_dir, capsys):
+    (vault_dir / "_shared" / "knowledge" / "eve.md").write_text(
+        "---\ntitle: Eve Example\ntype: person\nstatus: current\nowner: t\ncreated: 2026-09-01\n---\n\nEve.\n")
+    main(["--vault", str(vault_dir), "lookup", "Eve", "Example", "--json"])
+    assert json.loads(capsys.readouterr().out)["data"]["results"] == []
+
+
+def test_a_project_that_isnt_a_string_is_refused_not_a_crash(vault_dir, capsys, monkeypatch):
+    assert _capture(vault_dir, monkeypatch, {"type": "knowledge", "title": "P", "project": 2026}) == 2
+
+
+def test_only_a_person_edit_reads_as_the_person_rule(vault_dir, tmp_path):
+    outside = tmp_path / "personal-notes.md"
+    outside.write_text("---\ntitle: X\ntype: knowledge\nstatus: current\nowner: t\ncreated: 2026-09-01\n---\n\nX.\n")
+    from claudron.engine import ScopeError
+
+    with pytest.raises(ScopeError, match="escapes the vault root"):
+        amend(detect(vault_dir), outside, {"op": "append_fact", "section": "Facts", "fact": "F.",
+                                           "evidence": {"ref": "s:1"}}, no_commit=True)

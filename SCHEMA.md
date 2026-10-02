@@ -361,7 +361,7 @@ takes, unchanged. Every home is a type.
   are never `lookup`/`recall` results: the index knows them (so `subjects`
   sees them), search does not. `_personal/person/me.md` is
   injected into the operator's session briefs (`## About me`, budgeted like
-  `CONVENTIONS.md`, its sections as bold labels) only when it is **trusted** —
+  `CONVENTIONS.md`, quoted line by line so nothing in it can open or swallow a section of the brief, its sections as bold labels) only when it is **trusted** —
   a captured draft speaks for nobody until a person promotes it — must be
   typed `person`, and is never injected into a bot's session (`BOT_NAME` set:
   a bot deployment must set it). No evaluative claims about a person is a rule

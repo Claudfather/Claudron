@@ -592,8 +592,8 @@ def lookup(
     for entry in index.get("entries", []):
         if _is_excluded(entry, include_archived, include_expired):
             continue
-        if entry.get("tier") == "personal":
-            continue  # person notes are never search results (#200 §2): `me` reaches the brief its own way
+        if entry.get("tier") == "personal" or entry.get("type") == "person":
+            continue  # person notes are never search results (#200 §2), wherever one was put by hand
         if not include_external and trust_class(entry.get("maturity", ""), entry.get("source_type", "")) \
                 == "external":
             continue  # decided from the index, before the note is opened
@@ -611,7 +611,7 @@ def lookup(
     if tier_b and best_a_score < TIER_A_THRESHOLD:
         result_by_path = {r.doc.source_path: r for r in results}
         for doc in _collect_all_docs(vault, project=project, fleet=fleet):
-            if _is_doc_excluded(doc, include_archived, include_expired):
+            if _is_doc_excluded(doc, include_archived, include_expired) or doc.note_type == "person":
                 continue
             score, match_type = _score_body(query, doc)
             if score > 0:
