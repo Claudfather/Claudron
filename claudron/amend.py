@@ -160,7 +160,7 @@ def _append(lines: list[str], span: tuple[int, int], new: list[str]) -> None:
     at = span[1]
     while at > span[0] + 1 and not lines[at - 1].strip():
         at -= 1
-    lines[at:at] = new
+    lines[at:at] = ["", *new] if at == span[0] + 1 else new  # a blank line under the heading
 
 
 # --- the operations: each edits ``lines`` and returns (outcome, fact id) --------------------------
