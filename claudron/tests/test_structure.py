@@ -232,7 +232,7 @@ class TestJsonEnvelope:
 class TestReservedSingleSource:
     def test_user_reserved_is_derived_subset(self):
         assert USER_RESERVED == SKIP_DIRS - _INFRA_SKIP
-        assert USER_RESERVED == {"_shared", "shared", "projects", "_packs"}
+        assert USER_RESERVED == {"_shared", "shared", "projects", "_packs", "_personal"}
         assert USER_RESERVED < SKIP_DIRS  # genuine subset
 
     def test_infra_names_never_user_facing(self):

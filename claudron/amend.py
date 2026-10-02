@@ -263,6 +263,10 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
         A replay that would write nothing stays ``unchanged`` either way, so a
         writer retrying after a timeout learns its write landed.
         """
+        if fm.get("type") == "person" and op in _BODY_OPS and \
+                not (isinstance(request.get("evidence"), dict) and request["evidence"].get("asserted_by") == "user"):
+            # #200 §2: a person's facts are the user's to assert, never inferred by an agent or a tool.
+            raise AmendError("a fact about a person must be user-asserted (evidence.asserted_by: user)")
         new = transform(text, fm)
         now = trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or ""))
         if new is not None and expect is not None and now != expect:

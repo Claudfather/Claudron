@@ -35,7 +35,10 @@ from .tags import canonicalize
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     DEDUP_EXEMPT,
+    HOME_TYPES,
+    HOMES,
     MATURITY_VALUES,
+    RELATIONS,
     STATUS_VOCAB,
     TYPE_DIRS,
     TYPES,
@@ -47,7 +50,7 @@ from .schema import (
     slugify,
     validate_note,
 )
-from .vault import Vault, is_within_root
+from .vault import PERSONAL_HUB, Vault, is_within_root
 
 
 class ScopeError(Exception):
@@ -128,6 +131,8 @@ def compose_note(
     maturity: str | None = None,
     source_url: str | None = None,
     source_type: str | None = None,
+    kind: str | None = None,
+    relations: dict[str, list[str]] | None = None,
 ) -> str:
     """Assemble a schema-valid note. Hand-assembled rather than yaml.dump —
     pins key order, flow-style tags, unquoted ISO dates so the note stays
@@ -153,9 +158,24 @@ def compose_note(
         lines.append(f"source_url: {yaml_scalar(source_url)}")
     if source_type:
         lines.append(f"source_type: {yaml_scalar(source_type)}")
+    if kind:
+        lines.append(f"kind: {yaml_scalar(kind)}")
+    for rel, targets in (relations or {}).items():
+        if rel in RELATIONS and targets:
+            lines.append(f"{rel}: [" + ", ".join(yaml_scalar(t) for t in targets) + "]")
     lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
     body = body.strip()
     return "\n".join(lines) + f"\n\n# {title}\n" + (f"\n{body}\n" if body else "")
+
+
+def home_skeleton(note_type: str) -> str:
+    """The empty ``##`` sections a memory home's note starts with (SCHEMA.md §Memory homes), or ``""``."""
+    return "\n\n".join(f"## {section}" for section in HOMES.get(note_type, ()))
+
+
+def kind_dir(kind: str | None) -> str:
+    """A kind's folder name: one slug, one level (``entity/apis/``), or ``""`` for none."""
+    return slugify(kind) if kind and kind.strip() else ""
 
 
 def resolve_target_dir(
@@ -164,13 +184,21 @@ def resolve_target_dir(
     *,
     project: str | None = None,
     fleet: str | None = None,
+    kind: str | None = None,
 ) -> Path:
     """Target directory for a note, with the containment + fleet guards the
     E1 review mandated. Raises ScopeError on refusal.
 
     Projects file flat (projects/<name>/ is one tier); TYPE_DIRS applies
-    only inside shared trees.
+    only inside shared trees, where a memory home files one level per
+    ``kind`` (``entity/apis/``). A ``person`` note lives only in the personal
+    tier (#200 §2): a project or fleet scope for one is refused.
     """
+    if note_type == "person":
+        if project or fleet:
+            raise ScopeError("person notes live in the personal tier (_personal/person/), never a project or fleet")
+        base = vault.root / PERSONAL_HUB / TYPE_DIRS["person"] / kind_dir(kind)
+        return base.resolve()
     if project:
         base = vault.root / "projects" / project
     elif fleet:
@@ -181,6 +209,8 @@ def resolve_target_dir(
         base = vault.fleets[fleet] / "shared" / TYPE_DIRS[note_type]
     else:
         base = vault.shared / TYPE_DIRS[note_type]
+    if note_type in HOME_TYPES and not project:
+        base = base / kind_dir(kind)
 
     if not is_within_root(base, vault.root):
         raise ScopeError(f"scope {(project or fleet)!r} escapes the vault root")
@@ -254,6 +284,8 @@ def capture(
     source_url: str | None = None,
     source_type: str | None = None,
     run_id: str | None = None,
+    kind: str | None = None,
+    relations: dict[str, list[str]] | None = None,
 ) -> WriteResult:
     """The guarded write path. Validate → dedup (routes) → write → index.
 
@@ -282,14 +314,14 @@ def capture(
             )
         )
 
-    target_dir = resolve_target_dir(vault, note_type, project=project, fleet=fleet)
+    target_dir = resolve_target_dir(vault, note_type, project=project, fleet=fleet, kind=kind)
     if tags:  # the registry's canonical forms (#200 §3): an alias or a merged tag never lands as written
         tags = canonicalize(vault, tags)
 
     text = compose_note(
         note_type=note_type, title=title, owner=owner, body=body,
         tags=tags, maturity=MATURITY_VALUES[0],
-        source_url=source_url, source_type=source_type,
+        source_url=source_url, source_type=source_type, kind=kind, relations=relations,
     )
     fm, note_body, err = parse_note(text)
     findings = validate_note(

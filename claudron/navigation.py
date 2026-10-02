@@ -364,7 +364,8 @@ def render_navigation(vault: "Vault", directory: Path, index: dict,
 
     carried: list[str] = []
     rendered: list[str] = []
-    for e in entries:
+
+    def line(e: dict, depth: int) -> str:
         # THE PRECEDENCE, STATED ONCE. The note's frontmatter wins wherever it
         # has one -- that disagreement is the conflict class this door removes.
         # Only where it is silent does the file's own text survive.
@@ -374,7 +375,25 @@ def render_navigation(vault: "Vault", directory: Path, index: dict,
             desc = have.get(tgt, "")
             if desc:
                 carried.append(tgt)
-        rendered.append(_fmt_entry(e, desc))
+        return "  " * depth + _fmt_entry(e, desc)
+
+    children = _part_of_children(entries)
+    placed: set[int] = set()
+
+    def walk(e: dict, depth: int) -> None:
+        placed.add(id(e))
+        rendered.append(line(e, depth))
+        for child in children.get(id(e), []):
+            if id(child) not in placed:
+                walk(child, depth + 1)
+
+    nested = {id(c) for kids in children.values() for c in kids}
+    for e in entries:
+        if id(e) not in nested and id(e) not in placed:
+            walk(e, 0)
+    for e in entries:  # a part_of cycle has no root: its members still get a line each
+        if id(e) not in placed:
+            walk(e, 0)
 
     lines = [HEADER, "", f"# Index: {directory.name}", ""]
     lines.extend(rendered)
@@ -385,6 +404,28 @@ def render_navigation(vault: "Vault", directory: Path, index: dict,
         lines.extend(preserved)
     return DirectoryRender("\n".join(lines).rstrip() + "\n",
                            preserved, dropped, carried)
+
+
+def _part_of_children(entries: list[dict]) -> dict[int, list[dict]]:
+    """``{id(parent): [children]}`` among one directory's entries, by ``part_of`` (#200 §2).
+
+    A note names its parent by title, alias or slug; a parent in another
+    directory isn't drawn (the child stays a top-level line here). Children keep
+    the directory's order.
+    """
+    by_name: dict[str, dict] = {}
+    for e in entries:
+        for name in [e.get("title"), e.get("slug"), *(e.get("aliases") or [])]:
+            if name:
+                by_name.setdefault(str(name).lower(), e)
+    children: dict[int, list[dict]] = {}
+    for e in entries:
+        for target in (e.get("relations") or {}).get("part_of", []):
+            parent = by_name.get(str(target).lower())
+            if parent is not None and parent is not e:
+                children.setdefault(id(parent), []).append(e)
+                break
+    return children
 
 
 def _candidate_directories(vault: "Vault", index: dict) -> list[Path]:

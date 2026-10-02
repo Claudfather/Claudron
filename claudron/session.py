@@ -15,8 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from .knowledge import KnowledgeDoc, lookup, walk_knowledge_tier
-from .schema import count_tokens, has_conflict_markers, parse_note
-from .vault import Vault
+from .schema import count_tokens, has_conflict_markers, parse_note, trust_class
+from .vault import PERSONAL_HUB, Vault
 
 # Whole-brief hard cap (count_tokens proxy, same as
 # schema.CONVENTIONS_BUDGET — which caps just the conventions component at
@@ -131,6 +131,8 @@ def recall(
             fm, body, _ = parse_note(text)
             conventions = (body if fm is not None else text).strip() or None
 
+    me = _about_me(vault)
+
     notes: list[dict] = []
     unverified: list[dict] = []
     seen: set[str] = set()
@@ -187,10 +189,36 @@ def recall(
         "project": project,
         "query": query,
         "conventions": conventions,
+        "me": me,
         "notes": notes,
         "unverified": unverified[:UNVERIFIED_LIMIT],
         "unverified_more": max(len(unverified) - UNVERIFIED_LIMIT, 0),
     }
+
+
+#: The always-injected "about me" note (#200 §2): the personal tier's ``person/me.md``.
+ME_NOTE = Path(PERSONAL_HUB) / "person" / "me.md"
+#: Its budget inside the brief, in whole lines (never cut mid-line), like CONVENTIONS.md's.
+ME_TOKEN_BUDGET = 120
+
+
+def _about_me(vault: Vault) -> str | None:
+    """The body of ``_personal/person/me.md``, or ``None``: absent, conflicted, or an external draft.
+
+    Injected like CONVENTIONS.md, so it gets the same quarantine, and a draft from the web or a
+    session transcript never speaks for the operator.
+    """
+    path = vault.root / ME_NOTE
+    if not path.is_file():
+        return None
+    text = path.read_text()
+    if has_conflict_markers(text):
+        return None
+    fm, body, _ = parse_note(text)
+    if fm is None or trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or "")) == "external":
+        return None
+    lines = [ln for ln in body.strip().splitlines() if not ln.startswith("# ")]
+    return "\n".join(lines).strip() or None
 
 
 def render_brief(data: dict) -> str:
@@ -210,6 +238,18 @@ def render_brief(data: dict) -> str:
             body = "\n".join(lines[1:]).strip()
         if body:
             block = f"## Vault conventions\n\n{body}"
+            sections.append(block)
+            spent += count_tokens(block)
+
+    if data.get("me"):
+        kept, cost = [], 0
+        for line in data["me"].splitlines():  # whole lines, within its own budget
+            if cost + count_tokens(line) > ME_TOKEN_BUDGET:
+                break
+            kept.append(line)
+            cost += count_tokens(line)
+        if any(ln.strip() for ln in kept):
+            block = "## About me\n\n" + "\n".join(kept).strip()
             sections.append(block)
             spent += count_tokens(block)
 

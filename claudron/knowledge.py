@@ -21,6 +21,7 @@ from typing import NamedTuple
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     LOOKUP_EXCLUDED,
+    RELATIONS,
     _as_str_list,
     content_fingerprint,
     has_conflict_markers,
@@ -185,9 +186,21 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
         "type": str(fm.get("type", "") or ""),
         "sections": note_sections(body),
         "source_type": str(fm.get("source_type", "") or ""),
+        # #200 §2: a memory home's kind, and its relations (wikilink targets, brackets stripped).
+        "kind": str(fm.get("kind", "") or ""),
+        "relations": {rel: [_link_target(t) for t in _as_str_list(fm.get(rel))]
+                      for rel in RELATIONS if _as_str_list(fm.get(rel))},
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
+
+
+def _link_target(value: str) -> str:
+    """``[[Target|label]]`` or ``Target`` → ``Target``."""
+    text = value.strip()
+    if text.startswith("[[") and text.endswith("]]"):
+        text = text[2:-2]
+    return text.split("|", 1)[0].strip()
 
 
 _SECTION_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*#*[ \t]*$")

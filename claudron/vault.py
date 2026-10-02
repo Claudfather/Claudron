@@ -37,8 +37,12 @@ def _write_if_absent(path: Path, content: str) -> None:
 
 # ── shared constants ─────────────────────────────────────────────────
 
+#: The operator's personal tier (#200 §2): `person` notes live here, never in a shared tier, and
+#: `person/me.md` is the always-injected "about me" note. Reserved: never a fleet or the other: hatch.
+PERSONAL_HUB = "_personal"
+
 SKIP_DIRS = frozenset(
-    {"_shared", "shared", "projects", "_packs", ".git", ".github", ".claudron",
+    {"_shared", "shared", "projects", "_packs", PERSONAL_HUB, ".git", ".github", ".claudron",
      "__pycache__"}
 )
 
@@ -83,6 +87,11 @@ SHARED_TIERS: dict[str, tuple[str, ...]] = {
     "decisions": (),
     "runbooks": (),
     "planning": ("active", "completed"),
+    # The memory homes (#200 §2), one folder level per kind beneath each (walked recursively).
+    "entity": (),
+    "concept": (),
+    "project": (),
+    "practice": (),
 }
 
 # Walked by status/index/search — derived, cannot drift from the map.
@@ -120,7 +129,7 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
 # LOOKUP_EXCLUDED — ratified is done-not-hidden, so the sets differ.
 
-SCHEMA_VERSION = 6  # bump when index.json entry shape changes (mismatch forces rebuild)
+SCHEMA_VERSION = 7  # bump when index.json entry shape changes (mismatch forces rebuild)
 
 # CONVENTIONS.md is the always-loaded layer (injected, not retrieved) —
 # never indexed/searched as a note; validate budget-checks it separately
@@ -462,6 +471,8 @@ def note_tiers(vault: Vault) -> Iterator[tuple[Path, str]]:
         yield vault.shared / subdir, "shared"
     for name, proj_path in vault.projects.items():
         yield proj_path, f"project:{name}"
+    if (vault.root / PERSONAL_HUB).is_dir():
+        yield vault.root / PERSONAL_HUB, "personal"
     for name, fleet_path in vault.fleets.items():
         yield fleet_path / "shared", f"fleet:{name}"
     # Opt-in system containers: the container's shared/ is its own tier, parallel
