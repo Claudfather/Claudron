@@ -312,6 +312,38 @@ body heading of `Usage`/`Invocation`, on a `knowledge`/`runbook` note.
 Imperative steps alone never trigger it — runbooks are supposed to contain
 those.
 
+## Tags and the tag registry
+
+`tags` is an open list: a note may carry any tag. A vault MAY keep a
+**registry** at `_shared/TAGS.yaml` (a YAML file, so no note walk reads it)
+naming the canonical tags ([#200](https://github.com/Claudfather/Claudron/issues/200) §3):
+
+```yaml
+version: 1
+facets: [domain, tech, repo, fleet, team]   # closed set; a vault may list fewer
+tags:
+  tech:python:
+    description: The Python language and its tooling
+    aliases: [lang:python, py]
+    status: active                          # active | proposed | deprecated
+  tech:py2:
+    status: deprecated
+    merged_into: tech:python
+```
+
+- A registered tag is `facet:value` with a facet from the closed set; its
+  value is open. Tags and aliases are case-insensitive: a tag resolves to the
+  registry's spelling, and an alias never takes over a registered tag.
+- An alias, or a `deprecated` tag along `merged_into`, resolves to its
+  **canonical** tag (`merged_into` on a tag that isn't deprecated is reported
+  and ignored). The write doors (`new`, `capture`) store canonical tags, so an
+  alias never lands as written. Quote alias values YAML would read as
+  something else (`yes`, `no`, `1`).
+- Usage counts are derived from the index, never stored in the registry.
+- Subjects have no stored enum: a subject exists because its note does.
+- A malformed registry is reported by `claudron tags`, never fatal: what can
+  be read is used.
+
 ## pack.yaml v0 (reserved)
 
 Packs (E6) are curated vault subsets published as git repos. v0 reserves the

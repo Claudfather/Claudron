@@ -417,7 +417,7 @@ stdout, and never to stderr where a host might surface them as a session error.
 | fleet | `fleet add`, `fleet list` |
 | integration | `plug`, `unplug`, `config`, `migrate` |
 | curation | `promote` *(E5)* |
-| harvest | `subjects`, `resolve`, `amend`, `revert-run` *(#200 §4)* |
+| harvest | `subjects`, `resolve`, `amend`, `revert-run` *(#200 §4)*, `tags` *(#200 §3)* |
 
 ## Command-specific contracts
 
@@ -636,6 +636,18 @@ stdout, and never to stderr where a host might surface them as a session error.
   `unchanged`. `expect_trust` and the refusal envelope are gated on
   `subject-filing` (0.7.1). Gate on
   `"amend" in status --json → data.capabilities`.
+- `tags [--resolve TAG...]` — the **tag registry** (#200 §3, SCHEMA.md §Tags):
+  `--json` `data` is `{registry, tags, unregistered, noncanonical_in_use, other,
+  problems}`. `registry` is the vault-relative path or `null` when the vault
+  has none; `tags` lists each registered tag (`name, description, aliases,
+  status, merged_into, count`); `unregistered` the tags in use under a
+  registered facet that the registry doesn't name; `noncanonical_in_use` the
+  aliases and deprecated tags notes still carry, with their `canonical` form;
+  `other` how many tags in use sit outside every facet (a consumer's own
+  namespaces); `problems` what is wrong with the file. `--resolve` answers
+  `{registry, resolved: {tag: canonical}}`. `new` and `capture` write
+  canonical tags (case-insensitive; aliases and deprecated tags resolved). Gate on
+  `"tags" in status --json → data.capabilities`.
 - **Operations log** (#200 §5, capability `ops-log`): one JSONL file per run and
   per session under the vault's gitignored `.claudron/` —
   `runs/<run_id>/ops.jsonl` and `sessions/<session_id>/ops.jsonl` — local and

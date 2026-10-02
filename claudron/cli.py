@@ -55,6 +55,7 @@ from .knowledge import (
 from .graph import build_graph, render_html
 from .promote import promote
 from . import ops
+from . import tags as tags_mod
 from .amend import AmendError, AmendResult, amend
 from .runs import RunError, revert_run
 from .subjects import resolve, subjects
@@ -490,6 +491,40 @@ def cmd_promote(args) -> int:
     return 0
 
 
+def cmd_tags(args) -> int:
+    vault = _resolve_vault(args)
+    if args.resolve:
+        reg = tags_mod.load(vault)
+        found = {t: reg.canonical(t) if reg else t.strip() for t in args.resolve}
+        if args.json:
+            _emit_json("tags", {"registry": str(reg.path.relative_to(vault.root)) if reg else None,
+                                "resolved": found})
+        else:
+            for t, c in found.items():
+                print(f"{t} → {c}" if c != t else t)
+        return 0
+    usage: dict[str, int] = {}
+    for entry in ensure_index(vault).get("entries", []):
+        for t in set(_tags_arg(entry.get("tags")) or []):
+            usage[t] = usage.get(t, 0) + 1
+    data = tags_mod.report(vault, usage)
+    if args.json:
+        _emit_json("tags", data)
+        return 0
+    if data["registry"] is None:
+        print(f"no tag registry ({tags_mod.REGISTRY} in the shared tier); {len(usage)} tag(s) in use")
+        return 0
+    for t in data["tags"]:
+        print(f"  {t['name']:<32s} {t['count']:>4d}  {t['status']}" + (f" → {t['merged_into']}" if t["merged_into"] else ""))
+    for u in data["unregistered"]:
+        print(f"  unregistered: {u['tag']} ({u['count']})")
+    for n in data["noncanonical_in_use"]:
+        print(f"  in use as {n['tag']} ({n['count']}): canonical is {n['canonical']}")
+    for problem in data["problems"]:
+        print(f"  problem: {problem}", file=sys.stderr)
+    return 0
+
+
 def cmd_subjects(args) -> int:
     vault = _resolve_vault(args)
     found = subjects(vault, note_type=args.type, project=args.project)
@@ -700,7 +735,7 @@ def cmd_new(args) -> int:
             note_type=args.type,
             title=title,
             owner=_derive_owner(args),
-            tags=_tags_arg(args.tags),
+            tags=tags_mod.canonicalize(vault, _tags_arg(args.tags) or []),  # the same canonical forms as capture
         )
     )
 
@@ -1709,6 +1744,11 @@ def main(argv=None) -> int:
     )
 
     # subjects / resolve — the read pipes harvest places facts with (#200 §4)
+    p_tags = sub.add_parser(
+        "tags", help="The tag registry (_shared/TAGS.yaml) against the tags notes carry",
+        parents=[vault_parent, json_parent],
+    )
+    p_tags.add_argument("--resolve", nargs="+", metavar="TAG", help="Print each tag's canonical form")
     p_subjects = sub.add_parser(
         "subjects", help="List the notes facts can be filed under (derived from the index)",
         parents=[vault_parent, json_parent],
@@ -1862,6 +1902,7 @@ def main(argv=None) -> int:
         "links": cmd_links,
         "promote": cmd_promote,
         "subjects": cmd_subjects,
+        "tags": cmd_tags,
         "resolve": cmd_resolve,
         "amend": cmd_amend,
         "revert-run": cmd_revert_run,

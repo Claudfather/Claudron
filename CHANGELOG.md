@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- **The tag registry ([#200](https://github.com/Claudfather/Claudron/issues/200) §3).** A vault may keep `_shared/TAGS.yaml`: a closed set of facets (`domain`, `tech`, `repo`, `fleet`, `team`) and the canonical `facet:value` tags under them, each with a description, aliases and a status (`active`, `proposed`, `deprecated` with `merged_into`). Tags stay open.
+  - **`new` and `capture` write canonical tags:** an alias, a case variant or a deprecated tag is stored as the tag it resolves to. Tags are case-insensitive, and an alias never takes over a registered tag.
+  - **`claudron tags`** reports each registered tag's usage (derived from the index), tags in use under a registered facet that the registry doesn't name, aliases and deprecated tags still in use, and what is wrong with the file. `tags --resolve TAG...` prints canonical forms.
+  - Capability `tags`. Contract: SCHEMA.md §Tags, `docs/CLI_CONTRACT.md`. Tests: `claudron/tests/test_tags.py`.
 - **The operations log ([#200](https://github.com/Claudfather/Claudron/issues/200) §5).** Under the vault's gitignored `.claudron/`, each run (`runs/<run_id>/ops.jsonl`) and each session (`sessions/<session_id>/ops.jsonl`) gets a JSONL log with one shared envelope (`v`, `ts`, `kind`, `session_id`, `run_id`, `emitter`, `event_id`).
   - A run logs every write it commits (`write`, or `write.uncommitted` with W108), what it asked for that didn't land (`write.refused`, `write.routed` by dedup), and its `revert-run`.
   - A session's hooks log what recall served, split by trust (`recall.served`), and the push outcome (`sync.push`), so "what was this session told?" has an answer after the fact.
