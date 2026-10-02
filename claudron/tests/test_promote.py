@@ -152,4 +152,13 @@ def test_a_promotion_is_committed_like_any_write(git_vault):  # noqa: F811 - the
     result = promote(detect(git_vault), note, to_maturity="verified", actor="chris")
     assert result.action == "promoted" and result.warnings == []
     assert note.name not in _cgit(git_vault, "status", "--porcelain").stdout
-    assert _cgit(git_vault, "log", "-1", "--format=%s").stdout.startswith("promote(")
+    assert _cgit(git_vault, "log", "-1", "--format=%s").stdout.endswith("→ verified (by chris)\n")
+
+
+def test_a_promotion_whose_commit_fails_says_so_in_text_mode_too(git_vault, capsys):  # noqa: F811
+    hook = git_vault / ".git" / "hooks" / "pre-commit"
+    note = _capture(git_vault, "Retry Rules")
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    assert main(["--vault", str(git_vault), "promote", str(note.relative_to(git_vault)), "--to", "verified"]) == 0
+    assert "W108" in capsys.readouterr().err

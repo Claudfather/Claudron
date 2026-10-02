@@ -54,7 +54,7 @@ from .knowledge import (
 )
 from .graph import build_graph, render_html
 from .promote import promote
-from .amend import AmendError, amend
+from .amend import AmendError, AmendResult, amend
 from .runs import RunError, revert_run
 from .subjects import resolve, subjects
 from .session import derive_project, recall, render_brief
@@ -476,9 +476,9 @@ def cmd_promote(args) -> int:
     if args.json:
         _emit_json("promote", result.to_dict(), result.errors or result.warnings or None)
         return 1 if result.action == "rejected" else 0
+    for f in [*result.errors, *result.warnings]:  # W108: written, but the commit failed
+        print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
     if result.action == "rejected":
-        for f in result.errors:
-            print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
         return 1
     if result.action == "unchanged":
         print(f"unchanged: {result.path} already at maturity '{result.to_maturity}'",
@@ -516,31 +516,36 @@ def cmd_resolve(args) -> int:
     return 0
 
 
+def _amend_refused(args, message: str, request: object = None, path: Path | None = None) -> int:
+    """Exit 2 for a request ``amend`` refuses; with ``--json`` an envelope too, so a caller can tell a
+    refused request (a taken alias, a note that isn't there) from a broken engine."""
+    print(message, file=sys.stderr)
+    if args.json:
+        op = request.get("op") if isinstance(request, dict) else None
+        result = AmendResult(action="rejected", path=str(path) if path else "", reason=message,
+                             op=op if isinstance(op, str) else "")
+        refusal = {"code": "request", "severity": "error", "path": result.path, "field": None, "line": None,
+                   "message": message}
+        print(json.dumps({**_envelope("amend", result.to_dict()), "ok": False, "errors": [refusal]}, indent=2))
+    return 2
+
+
 def cmd_amend(args) -> int:
     vault = _resolve_vault(args)
     try:
         request = json.loads(sys.stdin.read())
     except json.JSONDecodeError as exc:
-        print(f"invalid JSON on stdin: {exc}", file=sys.stderr)
-        return 2
+        return _amend_refused(args, f"invalid JSON on stdin: {exc}")
     if not isinstance(request, dict) or not request.get("note"):
-        print("amend reads one JSON object on stdin, with at least `note` and `op`", file=sys.stderr)
-        return 2
+        return _amend_refused(args, "amend reads one JSON object on stdin, with at least `note` and `op`", request)
     path = resolve_note_ref(vault, str(request["note"]))
     if path is None:
-        print(f"no note matches '{request['note']}'", file=sys.stderr)
-        return 2
+        return _amend_refused(args, f"no note matches '{request['note']}'", request)
     try:
         result = amend(vault, vault.root / path, request, run_id=request.get("run_id") or args.run_id,
                        no_commit=args.no_commit)
     except (AmendError, ScopeError, RunError) as exc:
-        print(str(exc), file=sys.stderr)
-        if args.json:  # a caller reads why, not just the exit code (a refused alias isn't a broken engine)
-            print(json.dumps({"ok": False, "command": "amend", "warnings": [], "errors": [],
-                              "data": {"action": "rejected", "op": request.get("op"), "path": str(path),
-                                       "outcome": "", "fact_id": "", "reason": str(exc), "written": False}},
-                             indent=2))
-        return 2
+        return _amend_refused(args, str(exc), request, vault.root / path)
     if args.json:
         _emit_json("amend", result.to_dict(), result.errors or result.warnings or None)
     else:

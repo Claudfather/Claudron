@@ -92,7 +92,8 @@ def test_resolve_marks_exact_matches_and_a_fuzzy_title_hit_is_not_one(vault):
     by_title = {s.title: s for s in resolve(vault, "(unverified) Deploy Pipeline")}
     fuzzy = by_title["(unverified) Pipeline notes"]
     assert fuzzy.match_type == "title" and fuzzy.exact is False
-    assert all(s.exact for s in resolve(vault, "deploy-pipeline")[:1])
+    [best, *_] = resolve(vault, "deploy-pipeline")
+    assert best.exact is True
     assert all(s.exact is None for s in subjects(vault))  # a listing ranks nothing
 
 
@@ -244,6 +245,33 @@ def test_expect_trust_refuses_a_note_that_no_longer_reads_as_expected(vault):
     assert amend(vault, _path(vault), {**req, "expect_trust": "trusted"}, no_commit=True).action == "updated"
     with pytest.raises(AmendError, match="expect_trust must be"):
         amend(vault, _path(vault), {**req, "expect_trust": "nope"}, no_commit=True)
+
+
+def test_every_refusal_answers_with_an_envelope_whose_ok_matches_its_errors(vault, capsys, monkeypatch):
+    for stdin in ("not json", json.dumps({"op": "append_fact"}), json.dumps({"note": "Nothing Here", "op": "x"})):
+        monkeypatch.setattr("sys.stdin", io.StringIO(stdin))
+        assert main(["--vault", str(vault.root), "amend", "--stdin", "--json"]) == 2
+        envelope = json.loads(capsys.readouterr().out)
+        assert envelope["ok"] is False and [e["code"] for e in envelope["errors"]] == ["request"]
+        assert envelope["data"]["action"] == "rejected" and envelope["data"]["reason"]
+
+
+def test_expect_trust_keeps_a_replay_unchanged_after_a_promotion(vault):
+    """A writer retrying after a timeout must learn its write landed, not read a refusal as 'not filed'."""
+    req = {"op": "append_fact", "section": "Facts", "fact": "D.", "evidence": _ev(), "expect_trust": "trusted"}
+    assert amend(vault, _path(vault), req, no_commit=True).action == "updated"
+    assert amend(vault, _path(vault), {**req, "expect_trust": "external"}, no_commit=True).action == "unchanged"
+
+
+def test_project_and_alias_flags_on_the_cli(vault, capsys):
+    (vault.root / "projects" / "webapp").mkdir(parents=True, exist_ok=True)
+    (vault.root / "projects" / "webapp" / "foo-bar.md").write_text(NOTE.replace("Deploy Pipeline", "Foo, bar"))
+    assert main(["--vault", str(vault.root), "resolve", "--name", "x", "--aliases", "ci deploys",
+                 "--alias", "Foo, bar", "--project", "webapp", "--json"]) == 0
+    [only] = json.loads(capsys.readouterr().out)["data"]["candidates"]
+    assert (only["title"], only["tier"], only["exact"]) == ("Foo, bar", "project:webapp", True)
+    assert main(["--vault", str(vault.root), "subjects", "--project", "webapp", "--json"]) == 0
+    assert [s["title"] for s in json.loads(capsys.readouterr().out)["data"]["subjects"]] == ["Foo, bar"]
 
 
 def test_a_taken_alias_is_a_readable_refusal(vault, capsys, monkeypatch):

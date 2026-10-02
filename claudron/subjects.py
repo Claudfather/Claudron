@@ -40,7 +40,7 @@ class Subject:
     trust: str
     updated: str
     source_type: str = ""
-    tier: str = ""  #: ``shared`` | ``project:<name>`` | ``fleet:<name>``, as the index records it
+    tier: str = ""  #: as the index records it: ``shared``, ``project:<name>``, ``fleet:<name>``, ``system:…``, ``other:…``
     score: int | None = None
     match_type: str | None = None
     #: ``resolve`` only: the note *is* one of the names (exact title, alias or slug), not a fuzzy hit.

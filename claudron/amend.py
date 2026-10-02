@@ -255,16 +255,19 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
     done: dict[str, str] = {}
 
     def guarded(text: str, fm: dict) -> str | None:
-        """The op's transform, run only while the note still reads as ``expect_trust``.
+        """The op's transform, writing only while the note still reads as ``expect_trust``.
 
         Checked under the write lock, on the note as it is now: a person who
         promotes the note between a writer's ``resolve`` and its ``amend`` turns
         the amend into a refusal, never into unreviewed text in a reviewed note.
+        A replay that would write nothing stays ``unchanged`` either way, so a
+        writer retrying after a timeout learns its write landed.
         """
-        if expect is not None and (now := trust_class(str(fm.get("maturity") or ""),
-                                                      str(fm.get("source_type") or ""))) != expect:
+        new = transform(text, fm)
+        now = trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or ""))
+        if new is not None and expect is not None and now != expect:
             raise AmendError(f"the note reads as {now!r} now, not {expect!r}; nothing written")
-        return transform(text, fm)
+        return new
 
     if op == "add_alias":
         alias = _one_line(request.get("alias"), "alias")

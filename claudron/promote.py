@@ -133,7 +133,9 @@ def promote(
         write_index(vault, index)
         # Committed like every door's write (#157: durable on return). Uncommitted, a promotion sat in the
         # tree until the next sync, and a `revert-run` touching the note refused to run over it.
-        warnings = _commit_after(vault, note_path, None, False, "promote", str(fm.get("title") or rel),
+        # The reviewer named in the subject: the commit's actor is the process, the promotion is theirs.
+        warnings = _commit_after(vault, note_path, None, False, "promote",
+                                 f"{fm.get('title') or rel} → {to_maturity} (by {actor})",
                                  str(fm.get("type") or "unknown"), "existing")
 
     action = (
