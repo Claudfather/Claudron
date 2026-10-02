@@ -26,7 +26,7 @@ from datetime import date
 from pathlib import Path
 
 from .engine import WriteResult, edit_note, yaml_scalar
-from .knowledge import ensure_index, section_headings
+from .knowledge import ensure_index, fenced_lines, section_headings
 from .schema import _as_str_list, claimed_names, set_frontmatter_field
 from .vault import Vault
 
@@ -91,27 +91,37 @@ def _evidence(raw: object) -> Evidence:
 def _split(text: str) -> tuple[str, str]:
     """The frontmatter (both fences and the newline after) and the body, exactly as read.
 
-    ``read_text`` has already folded CRLF to ``\\n``, as for every door.
+    ``read_text`` has already folded CRLF to ``\\n``, as for every door. A closing
+    fence at the very end (a note with no body) leaves an empty body.
     """
-    if text.startswith("---\n") and (end := text.find("\n---\n", 3)) != -1:
-        return text[:end + 5], text[end + 5:]
+    if text.startswith("---\n"):
+        if (end := text.find("\n---\n", 3)) != -1:
+            return text[:end + 5], text[end + 5:]
+        if text.endswith("\n---"):
+            return text + "\n", ""
     return "", text
 
 
-def _spans(lines: list[str]) -> dict[str, tuple[int, int]]:
-    """``{section: (heading line, end)}`` per ``##`` section; the first of a repeated name."""
+def _sections(lines: list[str]) -> list[tuple[str, int, int]]:
+    """``(name, heading line, end)`` for every ``##`` section, in order (a name may repeat)."""
     heads = section_headings(lines)
+    return [(name, n, heads[k + 1][0] if k + 1 < len(heads) else len(lines)) for k, (n, name) in enumerate(heads)]
+
+
+def _spans(lines: list[str]) -> dict[str, tuple[int, int]]:
+    """``{section: (heading line, end)}``: where a write into a named section goes (its first occurrence)."""
     spans: dict[str, tuple[int, int]] = {}
-    for k, (n, name) in enumerate(heads):
-        spans.setdefault(name, (n, heads[k + 1][0] if k + 1 < len(heads) else len(lines)))
+    for name, n, end in _sections(lines):
+        spans.setdefault(name, (n, end))
     return spans
 
 
 def _facts(lines: list[str], start: int, end: int) -> dict[str, tuple[int, int]]:
-    """``{fact id: (bullet line, end of its evidence lines)}`` within ``lines[start:end]``."""
+    """``{fact id: (bullet line, end of its evidence lines)}`` within ``lines[start:end]``, outside code."""
+    fenced = fenced_lines(lines)
     out, i = {}, start
     while i < end:
-        m = _FACT_RE.match(lines[i])
+        m = None if i in fenced else _FACT_RE.match(lines[i])
         j = i + 1
         if m:
             while j < end and _EVIDENCE_RE.match(lines[j]):
@@ -123,7 +133,7 @@ def _facts(lines: list[str], start: int, end: int) -> dict[str, tuple[int, int]]
 
 def _find_fact(lines: list[str], wanted: str) -> tuple[str, tuple[int, int]] | None:
     """``(section, span)`` of a live fact — anywhere but ``## History``, which holds superseded ones."""
-    for name, (head, end) in _spans(lines).items():
+    for name, head, end in _sections(lines):
         if name != HISTORY and wanted in (facts := _facts(lines, head + 1, end)):
             return name, facts[wanted]
     return None
@@ -192,11 +202,16 @@ def _supersede_fact(lines: list[str], req: dict) -> tuple[str, str]:
         raise AmendError("the new fact is the same fact; use add_evidence")
     section, (start, end) = found
     old_text = _FACT_RE.match(lines[start]).group("text")
+    old_evidence = lines[start + 1:end]
     del lines[start:end]
-    if not _find_fact(lines, new):
+    if existing := _find_fact(lines, new):  # the replacement is already a fact: add this evidence to it
+        if ev.ref not in _refs(lines, existing[1]):
+            lines.insert(existing[1][1], ev.line())
+    else:
         _append(lines, _spans(lines)[section], [f"- {text} <!-- fact:{new} -->", ev.line()])
+    # The old fact keeps its provenance in History: the evidence that backed it moves with it.
     _append(lines, _ensure_section(lines, HISTORY),
-            [f"- {old_text} — superseded {ev.date} by fact:{new} <!-- superseded:{old} -->"])
+            [f"- {old_text} — superseded {ev.date} by fact:{new} <!-- superseded:{old} -->", *old_evidence])
     return "fact_superseded", new
 
 
@@ -204,17 +219,20 @@ _BODY_OPS = {"append_fact": _append_fact, "add_evidence": _add_evidence, "supers
 
 
 def _set_list_field(text: str, key: str, values: list[str]) -> str:
-    """Rewrite a top-level list field as a flow list, dropping a block list's item lines first."""
-    lines = text.splitlines(keepends=True)
+    """Rewrite a top-level frontmatter list field as a flow list, dropping a block list's item lines first.
+
+    Only the frontmatter is touched; a block list's items may be indented or not (``- a`` under ``key:``).
+    """
+    head, body = _split(text)
+    lines = head.splitlines(keepends=True)
     out, skipping = [], False
-    for i, line in enumerate(lines):
-        if i and line.rstrip("\r\n") == "---":
-            skipping = False
-        if skipping and line[:1].isspace():
+    for line in lines:
+        if skipping and (line[:1].isspace() or line.startswith("- ")) and line.rstrip("\n") != "---":
             continue
-        skipping = line.split(":", 1)[0].strip() == key and line.rstrip().endswith(":")
+        skipping = not line[:1].isspace() and line.split(":", 1)[0] == key and line.rstrip().endswith(":")
         out.append(line)
-    return set_frontmatter_field("".join(out), key, "[" + ", ".join(yaml_scalar(v) for v in values) + "]")
+    flow = "[" + ", ".join(yaml_scalar(v) for v in values) + "]"
+    return set_frontmatter_field("".join(out), key, flow) + body
 
 
 # --- the door -------------------------------------------------------------------------------------

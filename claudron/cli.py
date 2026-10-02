@@ -55,7 +55,7 @@ from .knowledge import (
 from .graph import build_graph, render_html
 from .promote import promote
 from .amend import AmendError, amend
-from .runs import RunError, commit_run, revert_run
+from .runs import RunError, revert_run
 from .subjects import resolve, subjects
 from .session import derive_project, recall, render_brief
 from .sync import SyncError, check, pull_ff_only, run_git, sync
@@ -545,28 +545,18 @@ def cmd_amend(args) -> int:
     return 1 if result.action == "rejected" else 0
 
 
-def _run_verb(args, verb: str, fn) -> int:
+def cmd_revert_run(args) -> int:
     vault = _resolve_vault(args)
     try:
-        result = fn(vault, args.run_id)
+        result = revert_run(vault, args.run_id)
     except RunError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     if args.json:
-        _emit_json(verb, result.to_dict())
+        _emit_json("revert-run", result.to_dict())
     else:
         print(f"{result.action}: run {result.run_id} — {result.reason}")
-        for w in result.warnings:
-            print(f"[{w.code}] {w.severity} — {w.message}", file=sys.stderr)
     return 0
-
-
-def cmd_run_commit(args) -> int:
-    return _run_verb(args, "run-commit", commit_run)
-
-
-def cmd_revert_run(args) -> int:
-    return _run_verb(args, "revert-run", revert_run)
 
 
 def cmd_graph(args) -> int:
@@ -1524,7 +1514,7 @@ def main(argv=None) -> int:
     )
     p_capture.add_argument(
         "--run-id", metavar="ID",
-        help="Write as part of a run: not committed now; `run-commit ID` lands the run as one commit",
+        help="Tag the commit with a run id, so `revert-run ID` can undo the whole run",
     )
     p_capture.add_argument(
         "--update", metavar="PATH",
@@ -1704,16 +1694,12 @@ def main(argv=None) -> int:
     )
     p_amend.add_argument("--stdin", action="store_true", required=True,
                          help="Read the request as JSON from stdin (required: the only input form)")
-    p_amend.add_argument("--run-id", metavar="ID", help="Write as part of a run (see run-commit)")
+    p_amend.add_argument("--run-id", metavar="ID", help="Tag the commit with a run id (see revert-run)")
     p_amend.add_argument("--no-commit", action="store_true", help="Write without committing")
 
-    # run-commit / revert-run — one commit per harvest run, and its undo (#200 §4)
-    p_run_commit = sub.add_parser(
-        "run-commit", help="Commit everything a run wrote as one commit", parents=[vault_parent, json_parent],
-    )
-    p_run_commit.add_argument("run_id", help="The run id the writes named")
+    # revert-run — undo every commit a run made, as one revert (#200 §4)
     p_revert_run = sub.add_parser(
-        "revert-run", help="Revert a run's commit", parents=[vault_parent, json_parent],
+        "revert-run", help="Revert every commit a run made, as one commit", parents=[vault_parent, json_parent],
     )
     p_revert_run.add_argument("run_id", help="The run id to revert")
 
@@ -1837,7 +1823,6 @@ def main(argv=None) -> int:
         "subjects": cmd_subjects,
         "resolve": cmd_resolve,
         "amend": cmd_amend,
-        "run-commit": cmd_run_commit,
         "revert-run": cmd_revert_run,
         "graph": cmd_graph,
         "index": cmd_index,

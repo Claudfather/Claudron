@@ -54,8 +54,7 @@ If you are a human opening a vault for the first time:
     runtime/                   #   generated bot dirs — gitignored within the vault
   _packs/<name>/               # subscribed packs, read-only (E6)
   .claudron-vault              # the vault's IDENTITY file — committed (see below)
-  .claudron/                   # Claudron's local state — gitignored, never hand-edited: the derived index (disposable)
-                               # and runs/ journals (not disposable: they name a run's uncommitted writes)
+  .claudron/                   # Claudron's derived index — gitignored, disposable, never hand-edited
   .gitignore                   # vault-root ignores (see below; claudron init writes this)
 ```
 

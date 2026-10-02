@@ -15,7 +15,7 @@ import pytest
 
 from claudron.amend import AmendError, amend, fact_id
 from claudron.cli import main
-from claudron.runs import RunError, commit_run, revert_run
+from claudron.runs import RunError, revert_run
 from claudron.subjects import resolve, subjects
 from claudron.vault import detect
 
@@ -217,51 +217,56 @@ def _log(v) -> list[str]:
     return _cgit(v.root, "log", "--format=%s").stdout.splitlines()
 
 
-def test_a_run_lands_as_one_commit_with_its_trailer(gvault, capsys):
+def test_every_run_write_is_committed_at_once_with_the_trailer(gvault):
     head = len(_log(gvault))
     for n, fact in enumerate(["A.", "B."]):
         amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": fact,
                                       "evidence": _ev(f"s:{n}")}, run_id="run-1")
     assert main(["--vault", str(gvault.root), "capture", "--type", "knowledge", "--title", "Harvested thing",
                  "--body", "It is so.", "--run-id", "run-1"]) == 0
-    assert len(_log(gvault)) == head  # nothing committed yet
-    result = commit_run(gvault, "run-1")
-    assert result.action == "committed" and len(result.paths) == 2
-    assert len(_log(gvault)) == head + 1
-    body = _cgit(gvault.root, "log", "-1", "--format=%B").stdout
-    assert "Claudron-Run: run-1" in body
-    assert commit_run(gvault, "run-1").action == "unchanged"
+    assert len(_log(gvault)) == head + 3  # durable on return (#157), like every write
+    bodies = _cgit(gvault.root, "log", f"-3", "--format=%B%x00").stdout.split("\0")
+    assert all("Claudron-Run: run-1" in b for b in bodies if b.strip())
 
 
-def test_revert_run_undoes_exactly_the_run(gvault):
-    amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "Bad fact.",
-                                  "evidence": _ev()}, run_id="bad-run")
-    commit_run(gvault, "bad-run")
-    assert "Bad fact." in _note(gvault)
+def test_revert_run_undoes_the_whole_run_in_one_commit(gvault):
+    for fact in ("Bad fact.", "Worse fact."):
+        amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": fact, "evidence": _ev()},
+              run_id="bad-run")
+    head = len(_log(gvault))
     result = revert_run(gvault, "bad-run")
-    assert result.action == "reverted" and "Bad fact." not in _note(gvault)
+    assert result.action == "reverted" and len(result.commits) == 2 and len(_log(gvault)) == head + 1
+    assert "Bad fact." not in _note(gvault) and "Worse fact." not in _note(gvault)
     assert revert_run(gvault, "bad-run").action == "unchanged"
     assert _sections(gvault) == ["Facts", "History"]
 
 
-def test_revert_run_refuses_an_uncommitted_run_and_names_its_notes(gvault):
-    amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "X.", "evidence": _ev()},
-          run_id="pending")
-    with pytest.raises(RunError, match="never committed.*deploy-pipeline.md"):
-        revert_run(gvault, "pending")
-
-
-def test_a_conflicting_revert_is_aborted_and_the_tree_left_alone(gvault):
-    amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "X.", "evidence": _ev()},
-          run_id="r1")
-    commit_run(gvault, "r1")
+def test_a_revert_that_conflicts_reverts_nothing(gvault):
+    for fact in ("X.", "Y."):
+        amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": fact, "evidence": _ev()},
+              run_id="r1")
     _path(gvault).write_text(_note(gvault).replace("- X.", "- X, edited by a person."))
     _cgit(gvault.root, "commit", "-qam", "person edits the harvested line")
-    before = _note(gvault)
-    with pytest.raises(RunError, match="conflicts with later edits and was aborted"):
+    before, head = _note(gvault), len(_log(gvault))
+    with pytest.raises(RunError, match="nothing was reverted"):
         revert_run(gvault, "r1")
-    assert _note(gvault) == before
+    assert _note(gvault) == before and len(_log(gvault)) == head
     assert _cgit(gvault.root, "status", "--porcelain", "--untracked-files=no").stdout.strip() == ""
+
+
+def test_revert_run_works_without_a_git_identity(gvault, monkeypatch):
+    amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "Z.", "evidence": _ev()},
+          run_id="r2")
+    _cgit(gvault.root, "config", "--unset", "user.name")
+    _cgit(gvault.root, "config", "--unset", "user.email")
+    for var in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"):
+        monkeypatch.delenv(var, raising=False)
+    assert revert_run(gvault, "r2").action == "reverted"
+
+
+def test_an_unknown_run_is_refused(gvault):
+    with pytest.raises(RunError, match="no commit carries"):
+        revert_run(gvault, "never-was")
 
 
 @pytest.mark.parametrize("bad", ["", "-x", "a b", "a/b", "x" * 65])
@@ -273,11 +278,9 @@ def test_a_bad_run_id_is_refused_before_anything_is_written(vault, bad):
     assert _note(vault) == before
 
 
-def test_run_verbs_cli(gvault, capsys):
+def test_revert_run_cli(gvault, capsys):
     amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "Y.", "evidence": _ev()},
           run_id="cli-run")
-    assert main(["--vault", str(gvault.root), "run-commit", "cli-run", "--json"]) == 0
-    assert json.loads(capsys.readouterr().out)["data"]["action"] == "committed"
     assert main(["--vault", str(gvault.root), "revert-run", "cli-run", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["data"]["action"] == "reverted"
     assert main(["--vault", str(gvault.root), "revert-run", "never-was"]) == 1
@@ -324,3 +327,39 @@ def test_a_crlf_note_amends_cleanly(vault):
 def test_amend_requires_stdin_flag(vault, capsys):
     with pytest.raises(SystemExit):
         main(["--vault", str(vault.root), "amend", "--json"])
+
+
+def test_add_alias_leaves_the_body_alone_and_handles_an_unindented_list(vault):
+    body_example = "\n```yaml\n    aliases:\n        - keep me\n    tags: [also]\n```\n"
+    _path(vault).write_text(NOTE.replace("aliases: [ci deploys]", "aliases:\n- ci deploys") + body_example)
+    result = amend(vault, _path(vault), {"op": "add_alias", "alias": "release pipeline"}, no_commit=True)
+    assert result.action == "updated"
+    text = _note(vault)
+    assert "        - keep me" in text and "    tags: [also]" in text
+    assert "\n- ci deploys\n" not in text.split("\n---\n", 1)[0]
+
+
+def test_a_fact_under_a_repeated_heading_is_still_found(vault):
+    _path(vault).write_text(NOTE + "\n## Facts\n\n- Late. <!-- fact:" + fact_id("Late.") + " -->\n"
+                            "  - evidence: a:1 · 2026-10-01\n")
+    again = amend(vault, _path(vault), {"op": "append_fact", "section": "Facts", "fact": "Late.",
+                                        "evidence": {"ref": "a:1"}}, no_commit=True)
+    assert again.action == "unchanged"
+
+
+def test_a_fact_shaped_line_inside_code_is_not_a_fact(vault):
+    fid = fact_id("Example.")
+    _path(vault).write_text(NOTE.replace("## Facts\n", f"## Facts\n\n```\n- Example. <!-- fact:{fid} -->\n```\n"))
+    with pytest.raises(AmendError, match="no live fact"):
+        amend(vault, _path(vault), {"op": "add_evidence", "fact_id": fid, "evidence": _ev()}, no_commit=True)
+
+
+def test_supersede_into_an_existing_fact_keeps_both_sides_evidence(vault):
+    for fact, ref in (("Old.", "o:1"), ("New.", "n:1")):
+        amend(vault, _path(vault), {"op": "append_fact", "section": "Facts", "fact": fact, "evidence": _ev(ref)},
+              no_commit=True)
+    amend(vault, _path(vault), {"op": "supersede_fact", "fact_id": fact_id("Old."), "fact": "New.",
+                                "evidence": _ev("s:2")}, no_commit=True)
+    facts, history = _note(vault).split("## History")
+    assert "evidence: s:2" in facts and "evidence: n:1" in facts and "Old." not in facts
+    assert "evidence: o:1" in history  # the old fact's provenance moved with it

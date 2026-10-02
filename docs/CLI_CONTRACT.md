@@ -416,7 +416,7 @@ stdout, and never to stderr where a host might surface them as a session error.
 | fleet | `fleet add`, `fleet list` |
 | integration | `plug`, `unplug`, `config`, `migrate` |
 | curation | `promote` *(E5)* |
-| harvest | `subjects`, `resolve`, `amend`, `run-commit`, `revert-run` *(#200 §4)* |
+| harvest | `subjects`, `resolve`, `amend`, `revert-run` *(#200 §4)* |
 
 ## Command-specific contracts
 
@@ -617,20 +617,19 @@ stdout, and never to stderr where a host might surface them as a session error.
   taken alias) exits 2 and writes nothing; `rejected` (validation) exits 1. Gate on
   `"amend" in status --json → data.capabilities`.
 - **Runs** (#200 §4): `capture`, `capture --update` and `amend` take
-  `--run-id ID` (or a `run_id` key on stdin). Such a write is **not committed**;
-  its path joins the run's journal, `.claudron/runs/<ID>.json` (local, never
-  committed). An ID is 1–64 letters, digits, `.`, `_` or `-`, starting with a
-  letter or digit; a bad one exits 2 before anything is written, as does
-  `--run-id` together with `--no-commit`.
-  - `run-commit ID` lands everything the run wrote since its last commit as
-    **one commit**, subject `run(<actor>): ID: N note(s)`, whose message ends
-    `Claudron-Run: ID`. Nothing new → `unchanged`.
-  - `revert-run ID` reverts the run's commit(s), newest first, then refreshes
-    the index entries of the notes they touched. A revert that conflicts with later edits is **aborted** and exits 1,
-    leaving the tree as it was; so does a run never committed (its notes are
-    named), a wedged tree, or a plain-directory vault. Reverting twice → `unchanged`.
-  - `--json` `data` for both is `{run_id, action, paths, commits, reason,
-    warnings}`, `action` ∈ `{committed, reverted, unchanged}`.
+  `--run-id ID` (or a `run_id` key on stdin). The write is committed at once,
+  like any write (§Write guarantees), and its commit message ends
+  `Claudron-Run: ID`. An ID is 1–64 letters, digits, `.`, `_` or `-`, starting
+  with a letter or digit; a bad one, or `--run-id` with `--no-commit`, exits 2
+  before anything is written.
+  - `revert-run ID` reverts **every** commit carrying the trailer that isn't
+    reverted yet, newest first, as **one** commit
+    (`revert-run(<actor>): ID`, with a `This reverts commit <sha>.` line per
+    commit). If any of them conflicts with later edits, **none** is reverted:
+    exit 1, tree and index as they were. A run with no commits, a wedged tree,
+    or a plain-directory vault also exits 1. Reverting twice → `unchanged`.
+  - `--json` `data` is `{run_id, action, commits, revert, reason}`, `action` ∈
+    `{reverted, unchanged}`.
   - Gate on `"runs" in status --json → data.capabilities`.
 - `capture` / `capture --update` — the write door (shared engine with a future
   MCP `claudron_write`). The `--json` `data` payload is the typed write result:

@@ -194,24 +194,32 @@ _SECTION_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
-def section_headings(lines: list[str]) -> list[tuple[int, str]]:
-    """``(line number, name)`` of each level-2 heading outside fenced code — the one section parser.
+def fenced_lines(lines: list[str]) -> set[int]:
+    """Line numbers inside fenced code, fences included — the one fence rule for line walks.
 
-    A fence closes only on the same character, at least as long, as SCHEMA.md's
-    code rule (``_CODE_RE``) reads it; an unclosed fence runs to the end.
+    A fence closes only on the same character, at least as long, as the code
+    rule (``_CODE_RE``) reads it; an unclosed fence runs to the end.
     """
-    out, fence = [], None
+    out, fence = set(), None
     for n, line in enumerate(lines):
-        if m := _FENCE_RE.match(line):
-            mark = m.group(1)
-            if fence is None:
-                fence = mark
-            elif mark[0] == fence[0] and len(mark) >= len(fence) and not line.strip()[len(mark):].strip():
-                fence = None
+        m = _FENCE_RE.match(line)
+        if fence is None and m:
+            fence = m.group(1)
+        elif fence is not None and m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                and not line.strip()[len(m.group(1)):].strip():
+            out.add(n)
+            fence = None
             continue
-        if fence is None and (h := _SECTION_RE.match(line)):
-            out.append((n, h.group(1)))
+        if fence is not None:
+            out.add(n)
     return out
+
+
+def section_headings(lines: list[str]) -> list[tuple[int, str]]:
+    """``(line number, name)`` of each level-2 heading outside fenced code — the one section parser."""
+    fenced = fenced_lines(lines)
+    return [(n, h.group(1)) for n, line in enumerate(lines)
+            if n not in fenced and (h := _SECTION_RE.match(line))]
 
 
 def note_sections(body: str) -> list[str]:

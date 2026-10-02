@@ -29,7 +29,7 @@ from typing import Callable
 import yaml
 
 from .knowledge import ensure_index, index_entry, write_index
-from .runs import check_run_id, record
+from .runs import check_run_id, trailer
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     DEDUP_EXEMPT,
@@ -255,9 +255,8 @@ def capture(
 ) -> WriteResult:
     """The guarded write path. Validate → dedup (routes) → write → index.
 
-    With ``run_id`` the note is written but not committed: its path joins the
-    run's journal, and ``claudron run-commit`` lands the run as one commit
-    (runs.py, #200 §4).
+    With ``run_id`` the commit carries the run's trailer, so ``revert-run`` can
+    undo the whole run (runs.py, #200 §4).
 
     Always returns a WriteResult (action == "rejected" carries the
     validation Findings; nothing written). Raises ScopeError for scope
@@ -343,7 +342,7 @@ def capture(
         # AFTER the write, always. A commit that fails here leaves an
         # uncommitted note, which is exactly the behaviour this replaces — so
         # the change is strictly additive in durability.
-        commit_warnings = _commit_or_record(vault, target, run_id, no_commit, "capture", title, note_type,
+        commit_warnings = _commit_after(vault, target, run_id, no_commit, "capture", title, note_type,
                                             _tier_label(project, fleet))
 
     return WriteResult(
@@ -354,13 +353,10 @@ def capture(
     )
 
 
-def _commit_or_record(vault: Vault, path: Path, run_id: str | None, no_commit: bool, verb: str, title: str,
+def _commit_after(vault: Vault, path: Path, run_id: str | None, no_commit: bool, verb: str, title: str,
                       note_type: str, tier: str) -> list[Finding]:
-    """After a write: join the run's journal when it names one, else commit (unless ``no_commit``)."""
-    if run_id:
-        record(vault, run_id, path)
-        return []
-    return [] if no_commit else _commit_written(vault, [path], verb, title, note_type, tier)
+    """After a write: commit it (unless ``no_commit``), with the run's trailer when it names one."""
+    return [] if no_commit else _commit_written(vault, [path], verb, title, note_type, tier, run_id)
 
 
 def _commit_subject(verb: str, title: str) -> str:
@@ -379,7 +375,7 @@ def _commit_subject(verb: str, title: str) -> str:
 
 
 def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
-                    note_type: str, tier: str) -> list[Finding]:
+                    note_type: str, tier: str, run_id: str | None = None) -> list[Finding]:
     """Commit what the door just wrote. Returns warnings, never raises.
 
     **ORDERING IS THE DURABILITY PROPERTY (#157 requirement 1).** The caller has
@@ -399,7 +395,8 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
     """
     subject = _commit_subject(verb, title)
     rel = str(paths[0].relative_to(vault.root)) if paths else ""
-    return commit_guarded(vault, paths, f"{subject}\n\ntype: {note_type}; tier: {tier}; path: {rel}")
+    return commit_guarded(vault, paths, f"{subject}\n\ntype: {note_type}; tier: {tier}; path: {rel}"
+                          + trailer(run_id))
 
 
 def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Finding]:
@@ -501,7 +498,7 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
         # Same rule as capture (#157): written first, committed second, inside
         # the lock already held. The verb keeps write classes countable in
         # `git log` — the same reason the safety net says "straggler(s)".
-        warnings = _commit_or_record(vault, note_path, run_id, no_commit, verb, fm.get("title") or rel,
+        warnings = _commit_after(vault, note_path, run_id, no_commit, verb, fm.get("title") or rel,
                                      str(fm.get("type") or "unknown"), "existing")
 
     return WriteResult(action="updated", path=str(note_path), reason=f"{verb}: written", warnings=warnings)

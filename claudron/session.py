@@ -275,8 +275,10 @@ def _unverified_block(data: dict, room: int) -> str:
     spent = count_tokens(head)
     lines = []
     for note in items:
-        source = f" · from {note['source_url']}" if note.get("source_url") else ""
-        line = f"- {note['title']} ({note['type'] or 'note'}, draft) `{note['path']}`{source}"
+        # Text from outside: one line each, so a title or URL can't open a section of its own.
+        title, url = (" ".join(str(note.get(k) or "").split()) for k in ("title", "source_url"))
+        source = f" · from {url}" if url else ""
+        line = f"- {title} ({note['type'] or 'note'}, draft) `{note['path']}`{source}"
         if spent + count_tokens(line) > room:
             break
         lines.append(line)

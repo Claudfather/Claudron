@@ -7,7 +7,7 @@
   - **`subjects [--type T]`** lists the notes facts can go under, derived from the index, with each note's `##` sections, aliases and `trust`.
   - **`resolve --name N`** ranks candidate subjects: an exact title, alias or slug outranks any fuzzy match. `--aliases` widens the names tried; `--context` only breaks ties.
   - **`amend --stdin`** writes at the fact level (`append_fact`, `add_evidence`, `add_alias`, `supersede_fact`), in the fact format of the new SCHEMA.md §Facts. It is idempotent on fact id and evidence ref, and refuses an alias another note already has.
-  - **One commit per run:** `capture`, `capture --update` and `amend` take `--run-id`. `run-commit ID` lands the run's writes as one commit with a `Claudron-Run: ID` trailer; `revert-run ID` reverts it, and aborts a revert that conflicts with later edits, leaving the tree alone. The journal lives in `.claudron/runs/` (VAULT-STRUCTURE.md: local, not disposable).
+  - **One revert per run:** `capture`, `capture --update` and `amend` take `--run-id`; each such write is committed at once (durable on return, #157) with a `Claudron-Run: ID` trailer. `revert-run ID` reverts every commit of the run in **one** commit, or, if any conflicts with later edits, none of them. #200 asked for one commit per run; deferring the commit would leave the run's notes uncommitted, where `sync`'s safety net sweeps them up untagged, so the run is one *revert* instead.
   - Keyed on today's note types and each note's real sections, so SCHEMA.md's memory homes (#200 §2) can land later as one more filter.
   - Tests: `claudron/tests/test_pipes.py`.
 

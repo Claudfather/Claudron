@@ -143,13 +143,15 @@ def _pre_session_drafts(vault: Vault) -> list[Path]:
     A read-only walk (no index build): ``doctor`` without ``--fix`` writes nothing.
     """
     from .knowledge import _iter_indexable
-    from .schema import _as_str_list
+    from .schema import EXTERNAL_SOURCE_TYPES, _as_str_list
 
     found = []
     for md, _tier, text in _iter_indexable(vault):
+        if _PRE_SESSION_TAG not in text:
+            continue  # the cheap test first: `needed` runs on every doctor call
         fm, _ = parse_frontmatter(text)
         if fm.get("maturity") == "draft" and _PRE_SESSION_TAG in _as_str_list(fm.get("tags")) \
-                and fm.get("source_type") != "session":
+                and fm.get("source_type") not in EXTERNAL_SOURCE_TYPES:  # a `url` keeps its real provenance
             found.append(md)
     return found
 
