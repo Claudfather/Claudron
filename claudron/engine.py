@@ -24,10 +24,12 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
+from typing import Callable
 
 import yaml
 
 from .knowledge import ensure_index, index_entry, write_index
+from .runs import check_run_id, trailer
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     DEDUP_EXEMPT,
@@ -249,8 +251,12 @@ def capture(
     no_commit: bool = False,
     source_url: str | None = None,
     source_type: str | None = None,
+    run_id: str | None = None,
 ) -> WriteResult:
     """The guarded write path. Validate → dedup (routes) → write → index.
+
+    With ``run_id`` the commit carries the run's trailer, so ``revert-run`` can
+    undo the whole run (runs.py, #200 §4).
 
     Always returns a WriteResult (action == "rejected" carries the
     validation Findings; nothing written). Raises ScopeError for scope
@@ -261,6 +267,7 @@ def capture(
     the name set and the content fingerprint is #55's step, and a half-built
     signal that dedups sometimes is worse than one that never claims to.
     """
+    check_run_id(run_id, no_commit=no_commit)  # refused before anything is written
     if note_type not in TYPES:
         # Guard before any type-keyed access — validate_note owns the E002
         # message but runs after composition, which would KeyError first.
@@ -335,10 +342,8 @@ def capture(
         # AFTER the write, always. A commit that fails here leaves an
         # uncommitted note, which is exactly the behaviour this replaces — so
         # the change is strictly additive in durability.
-        commit_warnings = [] if no_commit else _commit_written(
-            vault, [target], "capture", title, note_type,
-            _tier_label(project, fleet),
-        )
+        commit_warnings = _commit_after(vault, target, run_id, no_commit, "capture", title, note_type,
+                                            _tier_label(project, fleet))
 
     return WriteResult(
         action="created",
@@ -346,6 +351,12 @@ def capture(
         reason="strict-validated, no live duplicate" + (" (forced)" if force else ""),
         warnings=commit_warnings,
     )
+
+
+def _commit_after(vault: Vault, path: Path, run_id: str | None, no_commit: bool, verb: str, title: str,
+                      note_type: str, tier: str) -> list[Finding]:
+    """After a write: commit it (unless ``no_commit``), with the run's trailer when it names one."""
+    return [] if no_commit else _commit_written(vault, [path], verb, title, note_type, tier, run_id)
 
 
 def _commit_subject(verb: str, title: str) -> str:
@@ -364,7 +375,7 @@ def _commit_subject(verb: str, title: str) -> str:
 
 
 def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
-                    note_type: str, tier: str) -> list[Finding]:
+                    note_type: str, tier: str, run_id: str | None = None) -> list[Finding]:
     """Commit what the door just wrote. Returns warnings, never raises.
 
     **ORDERING IS THE DURABILITY PROPERTY (#157 requirement 1).** The caller has
@@ -381,6 +392,20 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
     A WEDGED TREE IS REFUSED, NOT ATTEMPTED, and still written. A capture must
     never make a mid-surgery repository worse, and must never be refused because
     of one — so the note lands, the commit does not, and the warning says which.
+    """
+    subject = _commit_subject(verb, title)
+    rel = str(paths[0].relative_to(vault.root)) if paths else ""
+    return commit_guarded(vault, paths, f"{subject}\n\ntype: {note_type}; tier: {tier}; path: {rel}"
+                          + trailer(run_id))
+
+
+def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Finding]:
+    """Commit ``paths`` with ``message`` under the write door's rules; warnings, never raises.
+
+    The one home of those rules (#157), shared by every door that commits what
+    it wrote: a plain directory is silent, a wedged tree is refused but the
+    files stay written, and a failed stage or commit is a warning on files that
+    are already on disk.
     """
     from .sync import (DEFAULT_GIT_TIMEOUT, SyncError, _git_dir,
                        _interrupted_state, commit_paths)
@@ -409,11 +434,8 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
             "one. Resolve the tree, then `claudron sync` commits this note."
         )
 
-    subject = _commit_subject(verb, title)
-    body = f"type: {note_type}; tier: {tier}; path: {rel}"
     try:
-        outcome = commit_paths(vault.root, paths, f"{subject}\n\n{body}",
-                               timeout=t)
+        outcome = commit_paths(vault.root, paths, message, timeout=t)
     except SyncError as exc:
         return warn(f"note written but NOT committed: {exc}")
     if not outcome.ok:
@@ -424,64 +446,70 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
     return []
 
 
-def append_addendum(vault: Vault, note_path: Path, body: str, *,
-                    no_commit: bool = False) -> WriteResult:
-    """Append a dated addendum section and bump `updated` — line-level
-    edits only, the note's own formatting is preserved.
+def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], str | None], *, verb: str,
+              run_id: str | None = None, no_commit: bool = False) -> WriteResult:
+    """The one door for editing an existing note: lock → transform → validate → write → index → commit.
 
-    Self-guards containment (any door may call this directly) and
-    re-validates the result at the *lenient* tier — updates target
-    existing, possibly adopted/legacy notes, which strict would wrongly
-    block. A corrupting addendum is reported, and reverted, not silently
-    "updated"."""
+    ``transform(text, frontmatter)`` returns the new text, or ``None`` when the
+    edit is already there (an idempotent replay): then nothing is written and
+    the action is ``unchanged``. Line-level edits only — the note's own
+    formatting is preserved — and ``updated`` is bumped. The result is
+    re-validated at the *lenient* tier (edits target existing, possibly
+    adopted/legacy notes, which strict would wrongly block); a corrupting edit
+    is ``rejected`` and nothing is written. The note's index entry is rebuilt
+    whole through ``index_entry``, so every field it carries (sections,
+    aliases, …) follows the edit.
+
+    ``capture --update`` (``append_addendum``) and ``amend`` are transforms over
+    this door. Self-guards containment; refuses a bad ``run_id`` before writing.
+    """
     if not is_within_root(note_path, vault.root):
         raise ScopeError(f"path {str(note_path)!r} escapes the vault root")
+    check_run_id(run_id, no_commit=no_commit)
     note_path = note_path.resolve()
-
-    rel = str(note_path.relative_to(vault.root))
-    today = date.today().isoformat()
+    rel = str(note_path.relative_to(vault.root.resolve()))
 
     # One lock over read→write→index (same critical section as capture): a
     # concurrent writer must not stale the index between our read and rewrite.
     with vault_write_lock(vault):
-        # Fresh index BEFORE the write (writing first would stale it and force
-        # a full rebuild — the pattern this module exists to avoid).
-        index = ensure_index(vault)
-
         original = note_path.read_text()
-        text = set_frontmatter_field(original, "updated", today)
-        text = text.rstrip("\n") + f"\n\n## Addendum — {today}\n\n{body.strip()}\n"
+        fm, _, _ = parse_note(original)
+        text = transform(original, fm or {})
+        if text is None:
+            return WriteResult(action="unchanged", path=str(note_path), reason="already there; nothing written")
+        text = set_frontmatter_field(text, "updated", date.today().isoformat())
 
         fm, note_body, err = parse_note(text)
-        findings = validate_note(
-            fm, note_body, strict=False, path=rel, raw=text, parse_error=err
-        )
-        errors = [f for f in findings if f.severity == "error"]
+        errors = [f for f in validate_note(fm, note_body, strict=False, path=rel, raw=text, parse_error=err)
+                  if f.severity == "error"]
         if errors:
             return _rejected(errors)
 
+        # Fresh index BEFORE the write (writing first would stale it and force
+        # a full rebuild — the pattern this module exists to avoid).
+        index = ensure_index(vault)
         atomic_write_text(note_path, text)
-
-        # Refresh the note's entry, write index.json last (mtime ≥ the note's).
-        for entry in index.get("entries", []):
+        for n, entry in enumerate(index.get("entries", [])):
             if entry.get("path") == rel:
-                entry["updated"] = today
-                entry["content_hash"] = content_fingerprint(note_body)
+                index["entries"][n] = index_entry(fm, note_body, note_path, entry.get("tier", "shared"), vault.root)
                 break
-        write_index(vault, index)
+        write_index(vault, index)  # last, so its mtime ≥ the note's
 
         # Same rule as capture (#157): written first, committed second, inside
-        # the lock already held. `addendum` rather than `capture` in the subject
-        # so the two write classes stay countable in `git log` — the same reason
-        # the safety net says "straggler(s)".
-        commit_warnings = [] if no_commit else _commit_written(
-            vault, [note_path], "addendum", fm.get("title") or rel,
-            str(fm.get("type") or "unknown"), "existing",
-        )
+        # the lock already held. The verb keeps write classes countable in
+        # `git log` — the same reason the safety net says "straggler(s)".
+        warnings = _commit_after(vault, note_path, run_id, no_commit, verb, fm.get("title") or rel,
+                                     str(fm.get("type") or "unknown"), "existing")
 
-    return WriteResult(
-        action="updated",
-        path=str(note_path),
-        reason=f"addendum appended, updated bumped to {today}",
-        warnings=commit_warnings,
-    )
+    return WriteResult(action="updated", path=str(note_path), reason=f"{verb}: written", warnings=warnings)
+
+
+def append_addendum(vault: Vault, note_path: Path, body: str, *,
+                    no_commit: bool = False, run_id: str | None = None) -> WriteResult:
+    """Append a dated ``## Addendum — <date>`` section (``capture --update``), through :func:`edit_note`."""
+    today = date.today().isoformat()
+    result = edit_note(vault, note_path, lambda text, _fm: text.rstrip("\n") + f"\n\n## Addendum — {today}\n\n"
+                       f"{body.strip()}\n", verb="addendum", run_id=run_id, no_commit=no_commit)
+    if result.action == "updated":
+        result.reason = f"addendum appended, updated bumped to {today}"
+    return result

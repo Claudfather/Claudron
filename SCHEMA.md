@@ -38,6 +38,52 @@ audit, review: a drafted decision is genuinely pre-ratification activity).
 For `knowledge` and `runbook` types, `status: draft` is accepted only as a
 legacy alias (W102) and rejected by strict validation (E006).
 
+### Reads: maturity × origin
+
+Read paths decide what to show from maturity and **where the content came
+from** (#200 §1). An unreviewed note its author wrote is useful at once (a
+bot's plan, a person's capture); one fetched from the web or distilled from a
+session transcript can carry someone else's instructions. Each note has one
+read class:
+
+| Class | Which notes |
+|---|---|
+| `trusted` | `maturity` verified, canonical, or absent (unrated) |
+| `draft` | `maturity: draft`, authored: any `source_type` but `url` and `session`, or none |
+| `external` | `maturity: draft` with `source_type` `url` or `session` |
+
+Promoting a note (`claudron promote`) makes it trusted whatever its origin.
+What each command does with each class is `docs/CLI_CONTRACT.md` (§lookup /
+recall). Harvested drafts written before `source_type: session` existed carry
+the tag `origin:session-harvest` instead; `claudron doctor --fix` (migration
+m003) moves them to the field.
+
+### Facts
+
+A note body can carry machine-filed **facts** (`claudron amend`, #200 §4),
+each a bullet in a `##` section with a stable id and its evidence nested
+under it:
+
+```markdown
+## Behavior & gotchas
+
+- The deploy freezes on Fridays. <!-- fact:3f2a91c0d4e1 -->
+  - evidence: session:abc:3 · 2026-10-02 · asserted by user
+```
+
+- **The id** is the first 12 hex of the SHA-256 of the fact's text,
+  lowercased with whitespace collapsed, so the same fact is the same fact.
+  The comment is invisible when the note renders.
+- **Evidence** lines are `  - evidence: <ref> · <date>[ · asserted by <who>]`.
+  A ref and a fact are one line and never contain `<!--`, `-->` (or, for a
+  ref, `·`).
+- **`## History`** holds superseded facts, as
+  `- <old text> — superseded <date> by fact:<new id> <!-- superseded:<old id> -->`.
+  A fact there is not live.
+
+People may edit or delete these lines like any other text; the engine reads
+only the lines that keep the shape.
+
 ## Note types
 
 Six types. Procedural content — skills, slash commands, agent-executable
@@ -112,7 +158,7 @@ from file mtime), `tags` (list of strings).
 | `confidence` | `stated \| high \| medium \| speculation` | Author's confidence in the content (recommended for agent writes; may become required once the write chokepoint enforces it for free) |
 | `expires` | ISO date | Review trigger — **never** a deletion trigger. Past-`expires` notes enter the review queue (E5) |
 | `source_url` | string | Provenance / dedup key for ingested content |
-| `source_type` | `url \| file \| inline` | How the content arrived |
+| `source_type` | `url \| file \| inline \| session` | How the content arrived; `session` is text distilled from a session transcript. `url` and `session` drafts are withheld from default reads (§Reads) |
 | `slug` | string | Explicit slug override; defaults to the kebab-case filename stem |
 | `last_verified` | ISO date | Last human/agent verification of the content |
 | `supersedes` | wikilink | This note replaces that one |

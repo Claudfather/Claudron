@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added
+- **The harvest pipes ([#200](https://github.com/Claudfather/Claudron/issues/200) §4).** Mechanical doors an automated writer files facts through; none runs a model or picks a placement. Contract: `docs/CLI_CONTRACT.md`; capabilities `subjects`, `amend`, `runs`.
+  - **`subjects [--type T]`** lists the notes facts can go under, derived from the index, with each note's `##` sections, aliases and `trust`.
+  - **`resolve --name N`** ranks candidate subjects: an exact title, alias or slug outranks any fuzzy match. `--aliases` widens the names tried; `--context` only breaks ties.
+  - **`amend --stdin`** writes at the fact level (`append_fact`, `add_evidence`, `add_alias`, `supersede_fact`), in the fact format of the new SCHEMA.md §Facts. It is idempotent on fact id and evidence ref, and refuses an alias another note already has.
+  - **One revert per run:** `capture`, `capture --update` and `amend` take `--run-id`; each such write is committed at once (durable on return, #157) with a `Claudron-Run: ID` trailer. `revert-run ID` reverts every commit of the run in **one** commit, or, if any conflicts with later edits, none of them. #200 asked for one commit per run; deferring the commit would leave the run's notes uncommitted, where `sync`'s safety net sweeps them up untagged, so the run is one *revert* instead.
+  - Keyed on today's note types and each note's real sections, so SCHEMA.md's memory homes (#200 §2) can land later as one more filter.
+  - Tests: `claudron/tests/test_pipes.py`.
+
+### Changed
+- **Heads-up: reads are trust-aware, and `lookup` now withholds drafts from the web or a session transcript ([#200](https://github.com/Claudfather/Claudron/issues/200) §1).** A high-scoring draft used to outrank a verified note, and fetched or harvested text could reach the recall brief as context. Each note now has a read class, `trusted`, `draft` (authored) or `external` (SCHEMA.md §Reads: maturity × origin):
+  - `lookup` ranks every trusted note above every draft and leaves external drafts out unless **`--include-external`**. Authored drafts stay, labelled.
+  - `recall` shows external drafts only in a capped **Unverified** block after everything trusted, with `source_url` and never the body.
+  - `--json` gains `maturity`, `trust` and `trusted` (and recall's `unverified`, `unverified_more`). `source_type` gains **`session`**. Gate on the `trust-aware-reads` capability.
+  - **Run `claudron doctor --fix`:** migration m003 (vault format 3) moves harvested drafts written before `session` existed, tagged `origin:session-harvest`, to `source_type: session`, so they read as external.
+  - Tests: `claudron/tests/test_trust.py`.
+- **`capture --update` and `amend` share one edit door, `engine.edit_note`,** which rebuilds the note's index entry whole, so a new section or alias is indexed at once. The index gains `type`, `sections` and `source_type` (index schema 6; existing indexes rebuild once).
+
 ### Fixed
 - **The write door commits only the paths it wrote ([#211](https://github.com/Claudfather/Claudron/issues/211)).** `commit_paths` staged the named paths (`git add -- <paths>`) and then committed with a bare `git commit`, which takes the whole index. A change somebody else had already staged in the vault went into the door's commit, under the door's message.
   - **Which doors:** `capture`, `capture --update` and `doctor --fix`. All three commit through `commit_paths`.

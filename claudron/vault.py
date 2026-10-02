@@ -61,7 +61,7 @@ IDENTITY_FILE = ".claudron-vault"
 # The vault format this engine writes. A vault whose `claudron:` is lower has
 # migrations pending (`claudron doctor`); a vault with no identity file is
 # format 0. Bumped only by the PR that registers the migration reaching it.
-VAULT_FORMAT = 2
+VAULT_FORMAT = 3
 
 
 def identity_text(name: str, hub: str, fmt: int = VAULT_FORMAT) -> str:
@@ -120,7 +120,7 @@ def scaffold_shared_tree(base: Path, *, exist_ok: bool = False) -> None:
 # uses STALENESS_DONE (imported above); lookup exclusion uses the distinct
 # LOOKUP_EXCLUDED — ratified is done-not-hidden, so the sets differ.
 
-SCHEMA_VERSION = 5  # bump when index.json entry shape changes (mismatch forces rebuild)
+SCHEMA_VERSION = 6  # bump when index.json entry shape changes (mismatch forces rebuild)
 
 # CONVENTIONS.md is the always-loaded layer (injected, not retrieved) —
 # never indexed/searched as a note; validate budget-checks it separately

@@ -53,7 +53,8 @@ One shape, every command:
   breakdown; `new` → `{"path": "…"}`; `status` → the health dict **plus
   `engine_version`** (below); `index --navigation` → the navigation result
   (§Command-specific contracts); `lookup` →
-  `{query, results}`; `related` →
+  `{query, results}`, each result `{title, score, match_type, tier, path, tags,
+  maturity, trust, trusted}` (§Trust-aware reads); `related` →
   `{note, related: [{path, title, tier, direction, hops}]}` (`direction` ∈
   `out`/`in`/`both` for a direct neighbor, else `N-hop`); `links` →
   `{broken: [{src, target}], orphans: [path]}` (both keys always present in
@@ -415,6 +416,7 @@ stdout, and never to stderr where a host might surface them as a session error.
 | fleet | `fleet add`, `fleet list` |
 | integration | `plug`, `unplug`, `config`, `migrate` |
 | curation | `promote` *(E5)* |
+| harvest | `subjects`, `resolve`, `amend`, `revert-run` *(#200 §4)* |
 
 ## Command-specific contracts
 
@@ -559,6 +561,76 @@ stdout, and never to stderr where a host might surface them as a session error.
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision
   errors (never silently overwrites); `--force` overrides. `--edit` without
   `$EDITOR` still writes the note and errors on stderr.
+- `lookup` / `recall` — **trust-aware reads** (#200 §1). Each note has a read
+  class, `trust` ∈ `{trusted, draft, external}` (SCHEMA.md §Reads: maturity ×
+  origin); `trusted` is its boolean.
+  - **`lookup` ranks every trusted note above every draft**, whatever the score;
+    score orders notes within a class. An **`external`** draft is withheld
+    unless **`--include-external`**. An authored draft is always included,
+    labelled `(draft)`; an included external one, `(unverified draft)`.
+  - **`recall --json`** adds `trust`, `trusted` and `source_url` to every note,
+    and two keys to `data`: `unverified` (external drafts, newest first, at most
+    `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how many
+    more exist). An external draft never appears in `notes`.
+  - **The brief** renders `unverified` after everything trusted, under its own
+    header and a "never cite as fact" line, in whatever budget is left. Each line
+    is title, type, path and `source_url`; the body is never shown, since the
+    body is where someone else's instructions would be.
+  - Gate on `"trust-aware-reads" in status --json → data.capabilities`. On an
+    engine without it, `lookup` returns drafts ranked by score alone and
+    `recall` has no `unverified` key, so a consumer splits drafts out itself.
+- `subjects [--type T]` — the **derived subject registry** (#200 §4): every live
+  note (not archived or superseded) that facts can be filed under, by title.
+  There is no stored registry; a subject exists because its note does. `--json`
+  `data` is `{type, subjects}`, each `{title, path, type, aliases, sections,
+  tags, maturity, trust, updated, score, match_type}` (`score`/`match_type`
+  `null` here). `sections` are the note's `##` headings. Drafts are included and
+  labelled by `trust`: a writer must find the draft an earlier run wrote, or it
+  files a twin. Gate on `"subjects" in status --json → data.capabilities`.
+- `resolve --name N [--type T] [--aliases a,b] [--context TEXT] [--limit K]` —
+  the top-K **candidate subjects** for a name, best first, same entry shape with
+  `score` and `match_type` set. A candidate scores its best match over the name
+  and aliases: exact title (100), exact alias (90), slug (85, `match_type:
+  "slug"`), then title, tag and filename scoring. `--context` only breaks ties
+  among notes that already matched; it never adds one. **Choosing among the
+  candidates is the caller's job**; `resolve` never picks, writes or runs a
+  model. Same capability as `subjects`.
+- `amend --stdin` — **fact-level section writes** on an existing note (#200 §4),
+  through the same lock, lenient validation, index refresh and commit as
+  `capture --update`. stdin is one JSON object: `note` (title, alias, slug or
+  vault-relative path), `op`, `run_id` (optional), and per op:
+  - `append_fact`: `section`, `fact`, `evidence` `{ref, date?, asserted_by?}`.
+    A missing section is created (before `## History`).
+  - `add_evidence`: `fact_id`, `evidence`.
+  - `add_alias`: `alias` (added to frontmatter `aliases`).
+  - `supersede_fact`: `fact_id`, `fact`, `evidence`. The old fact moves to
+    `## History` as `- <text> — superseded <date> by fact:<new id>`.
+
+  The fact format is SCHEMA.md §Facts. **Idempotent:** a fact whose id and
+  evidence ref are already there is a no-op, and the same fact with a new ref
+  adds only that ref, which is how recurrence is counted. `add_alias` refuses a
+  name another note already has (title or alias). `--json` `data` is `{action, op, path, outcome,
+  fact_id, reason, written}`: `action` ∈ `{updated, unchanged, rejected}`,
+  `outcome` ∈ `{fact_added, evidence_added, alias_added, fact_superseded}`, and
+  `written` is true only for `updated`. A malformed request (unknown op, a
+  missing field, a `fact_id` that isn't live, a comment marker in the text, a
+  taken alias) exits 2 and writes nothing; `rejected` (validation) exits 1. Gate on
+  `"amend" in status --json → data.capabilities`.
+- **Runs** (#200 §4): `capture`, `capture --update` and `amend` take
+  `--run-id ID` (or a `run_id` key on stdin). The write is committed at once,
+  like any write (§Write guarantees), and its commit message ends
+  `Claudron-Run: ID`. An ID is 1–64 letters, digits, `.`, `_` or `-`, starting
+  with a letter or digit; a bad one, or `--run-id` with `--no-commit`, exits 2
+  before anything is written.
+  - `revert-run ID` reverts **every** commit carrying the trailer that isn't
+    reverted yet, newest first, as **one** commit
+    (`revert-run(<actor>): ID`, with a `This reverts commit <sha>.` line per
+    commit). If any of them conflicts with later edits, **none** is reverted:
+    exit 1, tree and index as they were. A run with no commits, a wedged tree,
+    or a plain-directory vault also exits 1. Reverting twice → `unchanged`.
+  - `--json` `data` is `{run_id, action, commits, revert, reason}`, `action` ∈
+    `{reverted, unchanged}`.
+  - Gate on `"runs" in status --json → data.capabilities`.
 - `capture` / `capture --update` — the write door (shared engine with a future
   MCP `claudron_write`). The `--json` `data` payload is the typed write result:
   `{action, path, reason, written}`.
@@ -574,7 +646,7 @@ stdout, and never to stderr where a host might surface them as a session error.
     dedup-routed `capture`; the authoring door `new` always writes-or-errors —
     exit 0 means the note landed — so it carries no `written` field.)
   - **Provenance rides in frontmatter, not in the body.** `--source-url URL`
-    and `--source-type {url,file,inline}` (equally, the `source_url` /
+    and `--source-type {url,file,inline,session}` (equally, the `source_url` /
     `source_type` keys of the `--stdin` JSON) write the SCHEMA.md optional
     fields of the same names. Both are omitted from the note when unset.
     `source_type` accepts only SCHEMA.md's vocabulary **on both spellings** —

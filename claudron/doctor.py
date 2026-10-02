@@ -54,7 +54,7 @@ from .knowledge import index_divergence
 from .locking import vault_write_lock
 from .schema import Finding, validate_path
 from .structure import StructureError, check_structure, fix_structure, is_fixable
-from .vault import (IDENTITY_FILE, VAULT_FORMAT, Vault, _ensure_gitignore, detect,
+from .vault import (IDENTITY_FILE, VAULT_FORMAT, Vault, _ensure_gitignore, detect, parse_frontmatter,
                     identity_text, is_within_root, missing_gitignore_rules,
                     vault_markdown_files)
 
@@ -132,6 +132,49 @@ def _m002_apply(vault: Vault) -> list[Path]:
     return [vault.root / ".gitignore"] if changed else []
 
 
+#: The tag harvested notes carried before SCHEMA.md had ``source_type: session``
+#: (#200 §1). Read only by m003, which moves such drafts to the field.
+_PRE_SESSION_TAG = "origin:session-harvest"
+
+
+def _pre_session_drafts(vault: Vault) -> list[Path]:
+    """Drafts tagged as harvested whose ``source_type`` doesn't say ``session`` yet.
+
+    A read-only walk (no index build): ``doctor`` without ``--fix`` writes nothing.
+    """
+    from .knowledge import _iter_indexable
+    from .schema import EXTERNAL_SOURCE_TYPES, _as_str_list
+
+    found = []
+    for md, _tier, text in _iter_indexable(vault):
+        if _PRE_SESSION_TAG not in text:
+            continue  # the cheap test first: `needed` runs on every doctor call
+        fm, _ = parse_frontmatter(text)
+        if fm.get("maturity") == "draft" and _PRE_SESSION_TAG in _as_str_list(fm.get("tags")) \
+                and fm.get("source_type") not in EXTERNAL_SOURCE_TYPES:  # a `url` keeps its real provenance
+            found.append(md)
+    return found
+
+
+def _m003_needed(vault: Vault) -> bool:
+    return bool(_pre_session_drafts(vault))
+
+
+def _m003_apply(vault: Vault) -> list[Path]:
+    """Set ``source_type: session`` on pre-``session`` harvested drafts, so trust-aware
+    reads treat them as external (#200 §1). Line-level: nothing else in the note moves."""
+    from .schema import set_frontmatter_field
+
+    written = []
+    for path in _pre_session_drafts(vault):
+        text = path.read_text()
+        fixed = set_frontmatter_field(text, "source_type", "session")
+        if fixed != text:
+            path.write_text(fixed)
+            written.append(path)
+    return written
+
+
 #: The registry, in application order. A vault-shape change adds its entry here
 #: and bumps VAULT_FORMAT in the same PR (docs/CLAUDE.md).
 MIGRATIONS: tuple[Migration, ...] = (
@@ -139,6 +182,8 @@ MIGRATIONS: tuple[Migration, ...] = (
               _m001_needed, _m001_apply),
     Migration("m002", 2, "add the F9 .gitignore rules: runtime, telemetry, *.bak (#182)",
               _m002_needed, _m002_apply),
+    Migration("m003", 3, "mark pre-`session` harvested drafts source_type: session (#200 §1)",
+              _m003_needed, _m003_apply),
 )
 
 
