@@ -92,7 +92,7 @@ def _entry(doc: KnowledgeDoc, vault: Vault, score: int | None = None) -> dict:
         "status": doc.status,
         "maturity": doc.maturity,
         "trust": doc.trust,
-        "trusted": doc.trust == "trusted",
+        "trusted": doc.trusted,
         "source_url": doc.source_url,
         "updated": doc.updated,
         "summary": _summary(doc.body),
@@ -169,7 +169,7 @@ def recall(
         # Overfetch: the floor and project-dedup drop some candidates.
         for result in lookup(
             terms, vault, limit=limit * 2, tier_b=query is not None,
-            include_drafts=True,  # external drafts are routed to their own block, not dropped
+            include_external=True,  # external drafts are routed to their own block, not dropped
         ):
             if result.score < RECALL_ABSTENTION_FLOOR:
                 continue

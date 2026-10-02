@@ -15,14 +15,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from .knowledge import _score_index_entry, ensure_index
+from .knowledge import W_ALIAS_EXACT, W_TITLE_EXACT, _score_index_entry, ensure_index
 from .schema import LOOKUP_EXCLUDED, _as_str_list, slugify, trust_class
 from .vault import Vault
 
-#: Exact matches, strongest first, with the score each reports. They outrank every
-#: fuzzy match, whose summed score can reach the same cap (an exact title must
-#: never lose to a note that merely shares its words).
-EXACT = (("title", 100), ("alias", 90), ("slug", 85))
+#: A name whose slug is the note's slug (``api-guide`` ↔ ``API Guide``): under an
+#: exact alias, over a title substring. Exact matches — title, alias, slug, in
+#: that order — outrank every fuzzy one, whose summed score can reach the same
+#: cap: an exact title must never lose to a note that merely shares its words.
+W_SLUG = 85
 
 
 @dataclass
@@ -50,8 +51,7 @@ def _subject(entry: dict, score: int | None = None, match_type: str | None = Non
     return Subject(
         title=entry.get("title", ""), path=entry.get("path", ""), type=entry.get("type", ""),
         aliases=_as_str_list(entry.get("aliases")), sections=list(entry.get("sections") or []), tags=tags,
-        maturity=entry.get("maturity", ""), trust=trust_class(entry.get("maturity", ""),
-                                                              entry.get("source_type", ""), tags),
+        maturity=entry.get("maturity", ""), trust=trust_class(entry.get("maturity", ""), entry.get("source_type", "")),
         updated=entry.get("updated", ""), score=score, match_type=match_type,
     )
 
@@ -83,27 +83,28 @@ def resolve(vault: Vault, name: str, *, note_type: str | None = None, aliases: l
     already matched by name; it never brings in a note on its own, so a long
     context can't drag in everything that mentions a common word.
     """
-    names = [n.strip() for n in [name, *(aliases or [])] if n and n.strip()]
-    found: list[tuple[tuple[int, int, int], Subject]] = []
+    names = [(n.strip(), n.strip().lower(), slugify(n)) for n in [name, *(aliases or [])] if n and n.strip()]
+    found = []
     for entry in _live(ensure_index(vault).get("entries", []), note_type):
-        best = max((_match(candidate, entry) for candidate in names), default=(0, 0, "none"))
-        if best[1]:
-            rank, score, kind = best
-            found.append(((rank, score, _context_overlap(context, entry)), _subject(entry, score, kind)))
-    found.sort(key=lambda f: (-f[0][0], -f[0][1], -f[0][2], f[1].title.lower()))
+        title = str(entry.get("title", "")).lower()
+        entry_aliases = {a.lower() for a in _as_str_list(entry.get("aliases"))}
+        rank, score, kind = max((_match(n, entry, title, entry_aliases) for n in names), default=(0, 0, "none"))
+        if score:
+            found.append(((-rank, -score, -_context_overlap(context, entry), title), _subject(entry, score, kind)))
+    found.sort(key=lambda f: f[0])
     return [subject for _, subject in found[:limit]]
 
 
-def _match(candidate: str, entry: dict) -> tuple[int, int, str]:
-    """``(exactness rank, score, match_type)`` of one name against one note."""
-    lowered = candidate.lower()
-    exact = {"title": lowered == str(entry.get("title", "")).lower(),
-             "alias": lowered in {a.lower() for a in _as_str_list(entry.get("aliases"))},
-             "slug": slugify(candidate) == entry.get("slug")}
-    for rank, (kind, score) in zip(range(len(EXACT), 0, -1), EXACT):
-        if exact[kind]:
-            return rank, score, kind
-    score, kind = _score_index_entry(candidate, entry)
+def _match(name: tuple[str, str, str], entry: dict, title: str, aliases: set[str]) -> tuple[int, int, str]:
+    """``(exactness rank, score, match_type)`` of one ``(name, lowered, slug)`` against one note."""
+    raw, lowered, slug = name
+    if lowered == title:
+        return 3, W_TITLE_EXACT, "title"
+    if lowered in aliases:
+        return 2, W_ALIAS_EXACT, "alias"
+    if slug == entry.get("slug"):
+        return 1, W_SLUG, "slug"
+    score, kind = _score_index_entry(raw, entry)
     return 0, score, kind
 
 

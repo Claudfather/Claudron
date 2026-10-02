@@ -60,7 +60,11 @@ class KnowledgeDoc:
     @property
     def trust(self) -> str:
         """``trusted`` | ``draft`` | ``external`` (schema.trust_class, #200 §1)."""
-        return trust_class(self.maturity, self.source_type, self.tags)
+        return trust_class(self.maturity, self.source_type)
+
+    @property
+    def trusted(self) -> bool:
+        return self.trust == "trusted"
 
 
 @dataclass
@@ -187,20 +191,32 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
 
 
 _SECTION_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*#*[ \t]*$")
+_FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+
+
+def section_headings(lines: list[str]) -> list[tuple[int, str]]:
+    """``(line number, name)`` of each level-2 heading outside fenced code — the one section parser.
+
+    A fence closes only on the same character, at least as long, as SCHEMA.md's
+    code rule (``_CODE_RE``) reads it; an unclosed fence runs to the end.
+    """
+    out, fence = [], None
+    for n, line in enumerate(lines):
+        if m := _FENCE_RE.match(line):
+            mark = m.group(1)
+            if fence is None:
+                fence = mark
+            elif mark[0] == fence[0] and len(mark) >= len(fence) and not line.strip()[len(mark):].strip():
+                fence = None
+            continue
+        if fence is None and (h := _SECTION_RE.match(line)):
+            out.append((n, h.group(1)))
+    return out
 
 
 def note_sections(body: str) -> list[str]:
-    """The note's level-2 headings, in order — the sections a fact can go in.
-
-    Fenced code is skipped, so a ``## `` line inside an example is not a section.
-    """
-    sections, fenced = [], False
-    for line in body.splitlines():
-        if line.lstrip().startswith(("```", "~~~")):
-            fenced = not fenced
-        elif not fenced and (m := _SECTION_RE.match(line)):
-            sections.append(m.group(1))
-    return sections
+    """The note's level-2 headings, in order — the sections a fact can go in."""
+    return [name for _, name in section_headings(body.splitlines())]
 
 
 def write_index(vault: "Vault", index: dict) -> None:
@@ -527,13 +543,13 @@ def lookup(
     include_archived: bool = False,
     include_expired: bool = False,
     tier_b: bool = True,
-    include_drafts: bool = False,
+    include_external: bool = False,
 ) -> list[KnowledgeResult]:
     """Search vault knowledge. Returns ranked results.
 
     Trust-aware (#200 §1): every trusted note ranks above every draft, whatever
     the score, and an ``external`` draft (from the web or a session transcript)
-    is left out unless ``include_drafts``. Score orders notes within a class.
+    is left out unless ``include_external``. Score orders notes within a class.
 
     ``tier_b=False`` restricts to the frontmatter index — no full-text
     body scan. Hot-path callers (recall at every SessionStart) use it for
@@ -548,6 +564,9 @@ def lookup(
     for entry in index.get("entries", []):
         if _is_excluded(entry, include_archived, include_expired):
             continue
+        if not include_external and trust_class(entry.get("maturity", ""), entry.get("source_type", "")) \
+                == "external":
+            continue  # decided from the index, before the note is opened
         score, match_type = _score_index_entry(query, entry)
         if score > 0:
             best_a_score = max(best_a_score, score)
@@ -579,14 +598,14 @@ def lookup(
 
     # ── Sort: score desc, then tier priority (_tier_rank is the single home,
     # shared with wikilink ambiguity resolution) ──
-    if not include_drafts:
+    if not include_external:  # Tier B parsed every note; drop its external drafts too
         results = [r for r in results if r.doc.trust != "external"]
 
     def _sort_key(r: KnowledgeResult) -> tuple:
         # Trusted before drafts first (a high-scoring draft must never outrank a
         # verified note), then score. -ladder_index: canonical(-2) < verified(-1)
         # < draft(0) < unrated(+1), so higher trust sorts first, above tier.
-        return (r.doc.trust != "trusted", -r.score, -ladder_index(r.doc.maturity),
+        return (not r.doc.trusted, -r.score, -ladder_index(r.doc.maturity),
                 _tier_rank(r.doc.tier))
 
     results.sort(key=_sort_key)

@@ -354,6 +354,10 @@ def cmd_status(args) -> int:
     return 0
 
 
+#: How plain output marks an unreviewed note (a trusted one carries no label).
+_TRUST_LABEL = {"draft": "  (draft)", "external": "  (unverified draft)"}
+
+
 def cmd_lookup(args) -> int:
     vault = _resolve_vault(args)
     query = " ".join(args.query)
@@ -365,7 +369,7 @@ def cmd_lookup(args) -> int:
         limit=args.limit,
         include_archived=args.include_archived,
         include_expired=args.include_expired,
-        include_drafts=args.include_drafts,
+        include_external=args.include_external,
     )
 
     if not results:
@@ -390,7 +394,7 @@ def cmd_lookup(args) -> int:
                         "tags": r.doc.tags,
                         "maturity": r.doc.maturity,
                         "trust": r.doc.trust,
-                        "trusted": r.doc.trust == "trusted",
+                        "trusted": r.doc.trusted,
                     }
                     for r in results
                 ],
@@ -401,7 +405,7 @@ def cmd_lookup(args) -> int:
     for r in results:
         rel = r.doc.source_path.relative_to(vault.root)
         tags = f"  [{', '.join(r.doc.tags)}]" if r.doc.tags else ""
-        label = {"draft": "  (draft)", "external": "  (unverified draft)"}.get(r.doc.trust, "")
+        label = _TRUST_LABEL.get(r.doc.trust, "")
         print(f"  [{r.score:3d}] {r.doc.title:<40s} {rel}{tags}{label}")
     return 0
 
@@ -492,7 +496,7 @@ def cmd_subjects(args) -> int:
         _emit_json("subjects", {"type": args.type, "subjects": [s.as_dict() for s in found]})
         return 0
     for s in found:
-        label = {"draft": "  (draft)", "external": "  (unverified draft)"}.get(s.trust, "")
+        label = _TRUST_LABEL.get(s.trust, "")
         print(f"  {s.title:<40s} {s.path}  [{', '.join(s.sections)}]{label}")
     return 0
 
@@ -553,7 +557,7 @@ def _run_verb(args, verb: str, fn) -> int:
     else:
         print(f"{result.action}: run {result.run_id} — {result.reason}")
         for w in result.warnings:
-            print(f"[{w['code']}] {w['severity']} — {w['message']}", file=sys.stderr)
+            print(f"[{w.code}] {w.severity} — {w.message}", file=sys.stderr)
     return 0
 
 
@@ -1649,7 +1653,7 @@ def main(argv=None) -> int:
         "--include-expired", action="store_true", help="Include expired docs"
     )
     p_lookup.add_argument(
-        "--include-drafts", action="store_true",
+        "--include-external", action="store_true",
         help="Include unreviewed drafts from the web or a session transcript "
              "(withheld by default; authored drafts are always included)",
     )
@@ -1698,6 +1702,8 @@ def main(argv=None) -> int:
         "amend", help="Append a fact, add evidence or an alias, or supersede a fact (JSON on stdin)",
         parents=[vault_parent, json_parent],
     )
+    p_amend.add_argument("--stdin", action="store_true", required=True,
+                         help="Read the request as JSON from stdin (required: the only input form)")
     p_amend.add_argument("--run-id", metavar="ID", help="Write as part of a run (see run-commit)")
     p_amend.add_argument("--no-commit", action="store_true", help="Write without committing")
 

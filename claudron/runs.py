@@ -41,13 +41,20 @@ class RunResult:
     paths: list[str]
     commits: list[str] = field(default_factory=list)
     reason: str = ""
-    warnings: list[dict] = field(default_factory=list)
+    warnings: list = field(default_factory=list)  # Finding
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data["warnings"] = [w.to_dict() for w in self.warnings]
+        return data
 
 
-def check_run_id(run_id: str) -> str:
+def check_run_id(run_id: str | None, *, no_commit: bool = False) -> str | None:
+    """Refuse a malformed run id (``None`` is no run). A run commits later, so ``no_commit`` with it is a contradiction."""
+    if run_id is None:
+        return None
+    if no_commit:
+        raise RunError("--run-id and --no-commit conflict: a run's writes are committed by `run-commit`")
     if not isinstance(run_id, str) or not RUN_ID_RE.fullmatch(run_id):
         raise RunError(f"invalid run id {run_id!r}: 1–64 of letters, digits, '.', '_' or '-', not starting with "
                        "a punctuation mark")
@@ -55,7 +62,8 @@ def check_run_id(run_id: str) -> str:
 
 
 def _journal(vault: Vault, run_id: str) -> Path:
-    return vault.root / ".claudron" / "runs" / f"{check_run_id(run_id)}.json"
+    """The run's journal: local state the vault gitignores, but not disposable (VAULT-STRUCTURE.md)."""
+    return vault.root / ".claudron" / "runs" / f"{run_id}.json"
 
 
 def _read(vault: Vault, run_id: str) -> dict | None:
@@ -69,17 +77,14 @@ def _read(vault: Vault, run_id: str) -> dict | None:
 def record(vault: Vault, run_id: str, path: Path) -> None:
     """Add a path the run wrote to its journal. The caller holds the vault write lock."""
     journal = _journal(vault, run_id)
-    data = _read(vault, run_id) or {"run_id": run_id, "started": _now(), "paths": []}
+    data = _read(vault, run_id) or {"run_id": run_id, "paths": [],
+                                    "started": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     rel = str(Path(path).resolve().relative_to(vault.root.resolve()))
     if rel not in data["paths"]:
         data["paths"].append(rel)
     data["dirty"] = True  # written since the run's last commit
     journal.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(journal, json.dumps(data, indent=2) + "\n")
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _commits(vault: Vault, run_id: str) -> list[str]:
@@ -91,13 +96,19 @@ def _commits(vault: Vault, run_id: str) -> list[str]:
     return proc.stdout.split() if proc.returncode == 0 else []
 
 
-def _reverted(vault: Vault, sha: str) -> bool:
-    """Has a later commit reverted ``sha``? (``git revert`` writes 'This reverts commit <sha>'.)"""
+def _already_reverted(vault: Vault) -> set[str]:
+    """Every sha a later commit reverted (``git revert`` writes 'This reverts commit <sha>.'), in one scan."""
     from .sync import DEFAULT_GIT_TIMEOUT, run_git
 
-    proc = run_git(vault.root, "log", "--format=%H", "-F", f"--grep=This reverts commit {sha}",
-                   timeout=DEFAULT_GIT_TIMEOUT)
-    return proc.returncode == 0 and bool(proc.stdout.strip())
+    proc = run_git(vault.root, "log", "--format=%B", "-F", "--grep=This reverts commit", timeout=DEFAULT_GIT_TIMEOUT)
+    return set(re.findall(r"This reverts commit ([0-9a-f]{40})", proc.stdout)) if proc.returncode == 0 else set()
+
+
+def _head(vault: Vault) -> str:
+    from .sync import DEFAULT_GIT_TIMEOUT, run_git
+
+    proc = run_git(vault.root, "rev-parse", "--verify", "-q", "HEAD", timeout=DEFAULT_GIT_TIMEOUT)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
 def commit_run(vault: Vault, run_id: str) -> RunResult:
@@ -105,6 +116,7 @@ def commit_run(vault: Vault, run_id: str) -> RunResult:
     from .engine import _commit_subject, commit_guarded
     from .sync import DEFAULT_GIT_TIMEOUT, _git_dir
 
+    check_run_id(run_id)
     with vault_write_lock(vault):
         data = _read(vault, run_id)
         if data is None:
@@ -112,53 +124,77 @@ def commit_run(vault: Vault, run_id: str) -> RunResult:
         if _git_dir(vault.root, DEFAULT_GIT_TIMEOUT) is None:
             raise RunError("run-commit needs a git vault: in a plain directory the run's notes are already final")
         if not data.get("dirty"):
-            return RunResult(run_id, "unchanged", data["paths"], _commits(vault, run_id), "nothing new to commit")
+            return RunResult(run_id, "unchanged", data["paths"], reason="nothing new to commit")
         paths = [p for p in data["paths"] if (vault.root / p).exists()]
-        subject = _commit_subject("harvest", f"run {run_id}: {len(paths)} note(s)")
-        before = _commits(vault, run_id)
+        before = _head(vault)
         warnings = commit_guarded(vault, [vault.root / p for p in paths],
-                                  f"{subject}\n\n" + "\n".join(paths) + f"\n\n{TRAILER}: {run_id}")
-        commits = _commits(vault, run_id)
-        landed = len(commits) > len(before)
-        if landed:
+                                  f"{_commit_subject('run', f'{run_id}: {len(paths)} note(s)')}\n\n"
+                                  + "\n".join(paths) + f"\n\n{TRAILER}: {run_id}")
+        after = _head(vault)
+        if after != before:
             data["dirty"] = False
             atomic_write_text(_journal(vault, run_id), json.dumps(data, indent=2) + "\n")
-    return RunResult(run_id, "committed" if landed else "unchanged", paths, commits,
-                     "one commit for the run" if landed else "nothing committed",
-                     [w.to_dict() for w in warnings])
+    landed = after != before
+    return RunResult(run_id, "committed" if landed else "unchanged", paths, [after] if landed else [],
+                     "one commit for the run" if landed else "nothing committed", warnings)
 
 
 def revert_run(vault: Vault, run_id: str) -> RunResult:
     """Revert the run's commit(s), newest first. A revert that conflicts is aborted and reported."""
-    from .knowledge import build_index
     from .sync import DEFAULT_GIT_TIMEOUT, _git_dir, _interrupted_state, run_git
 
     t = DEFAULT_GIT_TIMEOUT
     check_run_id(run_id)
     with vault_write_lock(vault):
-        if _git_dir(vault.root, t) is None:
+        git_dir = _git_dir(vault.root, t)
+        if git_dir is None:
             raise RunError("revert-run needs a git vault: a plain directory keeps no runs to revert")
-        interrupted = _interrupted_state(vault.root, _git_dir(vault.root, t), t)
-        if interrupted:
+        if interrupted := _interrupted_state(vault.root, git_dir, t):
             raise RunError(f"refusing to revert: {interrupted} — resolve the tree first")
         commits = _commits(vault, run_id)
         data = _read(vault, run_id)
+        paths = data["paths"] if data else []
         if not commits:
-            if data and data["paths"]:
+            if paths:
                 raise RunError(f"run {run_id!r} was never committed; its notes are on disk uncommitted: "
-                               + ", ".join(data["paths"]) + f" (commit it with `claudron run-commit {run_id}`)")
+                               + ", ".join(paths) + f" (commit it with `claudron run-commit {run_id}`)")
             raise RunError(f"no commit carries '{TRAILER}: {run_id}'")
-        todo = [sha for sha in commits if not _reverted(vault, sha)]
+        reverted = _already_reverted(vault)
+        todo = [sha for sha in commits if sha not in reverted]
         if not todo:
-            return RunResult(run_id, "unchanged", data["paths"] if data else [], commits, "already reverted")
-        made = []
+            return RunResult(run_id, "unchanged", paths, commits, "already reverted")
+        made, touched = [], set()
         for sha in todo:
+            files = run_git(vault.root, "show", "--name-only", "--format=", sha, timeout=t).stdout.split()
             proc = run_git(vault.root, "revert", "--no-edit", sha, timeout=t)
             if proc.returncode != 0:
                 run_git(vault.root, "revert", "--abort", timeout=t)
                 said = (proc.stderr or proc.stdout or "").strip()[:200]
                 raise RunError(f"revert of {sha[:12]} conflicts with later edits and was aborted; the tree is as "
                                f"it was ({said})")
-            made.append(run_git(vault.root, "rev-parse", "HEAD", timeout=t).stdout.strip())
-        build_index(vault)  # reverted notes changed or vanished under the index
-    return RunResult(run_id, "reverted", data["paths"] if data else [], made, f"reverted {len(made)} commit(s)")
+            made.append(_head(vault))
+            touched.update(files)
+        _reindex(vault, touched)
+    return RunResult(run_id, "reverted", paths, made, f"reverted {len(made)} commit(s)")
+
+
+def _reindex(vault: Vault, paths: set[str]) -> None:
+    """Refresh just the index entries a revert changed: rebuilt when the note is back, dropped when it is gone."""
+    from .knowledge import ensure_index, index_entry, write_index
+    from .schema import has_conflict_markers
+    from .vault import note_tiers, parse_frontmatter
+
+    index = ensure_index(vault)
+    entries = [e for e in index.get("entries", []) if e.get("path") not in paths]
+    tiers = sorted(note_tiers(vault), key=lambda bt: len(bt[0].parts), reverse=True)  # deepest base wins
+    for rel in sorted(paths):
+        md = vault.root / rel
+        tier = next((t for base, t in tiers if md.is_relative_to(base)), None)
+        if md.suffix != ".md" or tier is None or not md.is_file():
+            continue
+        text = md.read_text()
+        if not has_conflict_markers(text):
+            fm, body = parse_frontmatter(text)
+            entries.append(index_entry(fm, body, md, tier, vault.root))
+    index["entries"] = entries
+    write_index(vault, index)

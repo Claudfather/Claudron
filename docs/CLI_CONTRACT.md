@@ -562,12 +562,12 @@ stdout, and never to stderr where a host might surface them as a session error.
   errors (never silently overwrites); `--force` overrides. `--edit` without
   `$EDITOR` still writes the note and errors on stderr.
 - `lookup` / `recall` — **trust-aware reads** (#200 §1). Each note has a read
-  class, `trust` ∈ `{trusted, draft, external}`, from its `maturity` and
-  `source_type` (SCHEMA.md §Reads: maturity × origin); `trusted` is its boolean.
+  class, `trust` ∈ `{trusted, draft, external}` (SCHEMA.md §Reads: maturity ×
+  origin); `trusted` is its boolean.
   - **`lookup` ranks every trusted note above every draft**, whatever the score;
-    score orders notes within a class. An **`external`** draft — `source_type`
-    `url` or `session`, or the legacy `origin:session-harvest` tag — is withheld
-    unless **`--include-drafts`**. An authored draft is always included, labelled.
+    score orders notes within a class. An **`external`** draft is withheld
+    unless **`--include-external`**. An authored draft is always included,
+    labelled `(draft)`; an included external one, `(unverified draft)`.
   - **`recall --json`** adds `trust`, `trusted` and `source_url` to every note,
     and two keys to `data`: `unverified` (external drafts, newest first, at most
     `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how many
@@ -606,27 +606,27 @@ stdout, and never to stderr where a host might surface them as a session error.
   - `supersede_fact`: `fact_id`, `fact`, `evidence`. The old fact moves to
     `## History` as `- <text> — superseded <date> by fact:<new id>`.
 
-  A fact is one bullet, `- <text> <!-- fact:<id> -->`, with its evidence nested
-  under it as `  - evidence: <ref> · <date>[ · asserted by <who>]`. The id is
-  the first 12 hex of the SHA-256 of the fact's case- and whitespace-folded
-  text. **Idempotent:** a fact whose id and evidence ref are already there is a
-  no-op, and the same fact with a new ref adds only that ref, which is how
-  recurrence is counted. `--json` `data` is `{action, op, path, outcome,
+  The fact format is SCHEMA.md §Facts. **Idempotent:** a fact whose id and
+  evidence ref are already there is a no-op, and the same fact with a new ref
+  adds only that ref, which is how recurrence is counted. `add_alias` refuses a
+  name another note already has (title or alias). `--json` `data` is `{action, op, path, outcome,
   fact_id, reason, written}`: `action` ∈ `{updated, unchanged, rejected}`,
   `outcome` ∈ `{fact_added, evidence_added, alias_added, fact_superseded}`, and
   `written` is true only for `updated`. A malformed request (unknown op, a
-  missing field, a `fact_id` that isn't live, a comment marker in the text)
-  exits 2 and writes nothing; `rejected` (validation) exits 1. Gate on
+  missing field, a `fact_id` that isn't live, a comment marker in the text, a
+  taken alias) exits 2 and writes nothing; `rejected` (validation) exits 1. Gate on
   `"amend" in status --json → data.capabilities`.
 - **Runs** (#200 §4): `capture`, `capture --update` and `amend` take
   `--run-id ID` (or a `run_id` key on stdin). Such a write is **not committed**;
   its path joins the run's journal, `.claudron/runs/<ID>.json` (local, never
   committed). An ID is 1–64 letters, digits, `.`, `_` or `-`, starting with a
-  letter or digit; a bad one exits 2 before anything is written.
+  letter or digit; a bad one exits 2 before anything is written, as does
+  `--run-id` together with `--no-commit`.
   - `run-commit ID` lands everything the run wrote since its last commit as
-    **one commit** whose message ends `Claudron-Run: ID`. Nothing new → `unchanged`.
-  - `revert-run ID` reverts the run's commit(s), newest first, then rebuilds the
-    index. A revert that conflicts with later edits is **aborted** and exits 1,
+    **one commit**, subject `run(<actor>): ID: N note(s)`, whose message ends
+    `Claudron-Run: ID`. Nothing new → `unchanged`.
+  - `revert-run ID` reverts the run's commit(s), newest first, then refreshes
+    the index entries of the notes they touched. A revert that conflicts with later edits is **aborted** and exits 1,
     leaving the tree as it was; so does a run never committed (its notes are
     named), a wedged tree, or a plain-directory vault. Reverting twice → `unchanged`.
   - `--json` `data` for both is `{run_id, action, paths, commits, reason,

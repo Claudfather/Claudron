@@ -7,6 +7,7 @@ land as one commit that ``revert-run`` undoes exactly.
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
@@ -52,12 +53,12 @@ def _ev(ref: str = "session:abc:3", **extra) -> dict:
     return {"ref": ref, "date": "2026-10-02", **extra}
 
 
-def _note(vault) -> str:
-    return (vault.root / "_shared" / "knowledge" / "deploy-pipeline.md").read_text()
-
-
 def _path(vault) -> Path:
     return vault.root / "_shared" / "knowledge" / "deploy-pipeline.md"
+
+
+def _note(vault) -> str:
+    return _path(vault).read_text()
 
 
 def _sections(vault) -> list[str]:
@@ -190,18 +191,16 @@ def test_malformed_requests_write_nothing(vault, request_, match):
 
 
 def test_amend_cli(vault, capsys, monkeypatch):
-    import io
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(
         {"note": "Deploy Pipeline", "op": "append_fact", "section": "Facts", "fact": "B.", "evidence": _ev()})))
-    assert main(["--vault", str(vault.root), "amend", "--no-commit", "--json"]) == 0
+    assert main(["--vault", str(vault.root), "amend", "--stdin", "--no-commit", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)["data"]
     assert data["outcome"] == "fact_added" and data["written"] is True and data["fact_id"] == fact_id("B.")
 
 
 def test_amend_cli_bad_request_exits_2(vault, capsys, monkeypatch):
-    import io
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"note": "Deploy Pipeline", "op": "nope"})))
-    assert main(["--vault", str(vault.root), "amend", "--json"]) == 2
+    assert main(["--vault", str(vault.root), "amend", "--stdin", "--json"]) == 2
 
 
 # --- runs -----------------------------------------------------------------------------------------
@@ -288,3 +287,40 @@ def test_the_engine_declares_the_pipe_capabilities(vault, capsys):
     main(["--vault", str(vault.root), "status", "--json"])
     caps = json.loads(capsys.readouterr().out)["data"]["capabilities"]
     assert {"subjects", "amend", "runs"} <= set(caps)
+
+
+# --- review fixes ---------------------------------------------------------------------------------
+
+def test_add_alias_refuses_a_name_another_note_already_has(vault):
+    taken = subjects(vault)[0] if subjects(vault)[0].title != "Deploy Pipeline" else subjects(vault)[1]
+    before = _note(vault)
+    with pytest.raises(AmendError, match="already a name of"):
+        amend(vault, _path(vault), {"op": "add_alias", "alias": taken.title}, no_commit=True)
+    assert _note(vault) == before
+
+
+def test_run_id_and_no_commit_conflict_and_write_nothing(vault):
+    before = _note(vault)
+    with pytest.raises(RunError, match="conflict"):
+        amend(vault, _path(vault), {"op": "append_fact", "section": "Facts", "fact": "Q.", "evidence": _ev()},
+              run_id="r", no_commit=True)
+    assert _note(vault) == before
+
+
+def test_an_addendum_refreshes_the_indexed_sections(vault):
+    assert main(["--vault", str(vault.root), "capture", "--update", "_shared/knowledge/deploy-pipeline.md",
+                 "--body", "More.", "--no-commit"]) == 0
+    assert any(name.startswith("Addendum") for name in _sections(vault))
+
+
+def test_a_crlf_note_amends_cleanly(vault):
+    _path(vault).write_bytes(NOTE.replace("\n", "\r\n").encode())
+    result = amend(vault, _path(vault), {"op": "append_fact", "section": "Facts", "fact": "C.", "evidence": _ev()},
+                   no_commit=True)
+    assert result.outcome == "fact_added" and _note(vault).startswith("---\ntitle: Deploy Pipeline\n")
+    assert _sections(vault) == ["Facts", "History"]
+
+
+def test_amend_requires_stdin_flag(vault, capsys):
+    with pytest.raises(SystemExit):
+        main(["--vault", str(vault.root), "amend", "--json"])

@@ -19,7 +19,7 @@ from claudron.cli import main
 from claudron.knowledge import lookup
 from claudron.schema import trust_class
 from claudron.session import UNVERIFIED_LIMIT, recall, render_brief
-from claudron.vault import Vault, detect
+from claudron.vault import IDENTITY_FILE, Vault, detect, identity_text
 
 from .conftest import _identify
 
@@ -41,6 +41,8 @@ def vault(tmp_path: Path) -> Vault:
     (root / "_shared" / "knowledge").mkdir(parents=True)
     (root / "projects").mkdir()
     _identify(root)
+    # A vault from before format 3, so `doctor --fix` still owes it m003.
+    (root / IDENTITY_FILE).write_text(identity_text(root.name, "_shared", fmt=2))
     # Exact-title matches for "rate limits" score highest: give them to the drafts.
     _note(root, "web", "Rate Limits", maturity="draft", source_type="url", source_url="https://x.example/limits")
     _note(root, "harvested", "rate limits", maturity="draft", source_type="session",
@@ -57,20 +59,33 @@ def _titles(results) -> list[str]:
     return [r.doc.title for r in results]
 
 
-@pytest.mark.parametrize("maturity,source_type,tags,expected", [
-    ("verified", "url", [], "trusted"),
-    ("canonical", "session", [], "trusted"),
-    ("", "url", [], "trusted"),           # unrated legacy
-    ("contested", "url", [], "trusted"),  # off the ladder reads as unrated
-    ("draft", "", [], "draft"),
-    ("draft", "file", [], "draft"),
-    ("draft", "inline", [], "draft"),
-    ("draft", "url", [], "external"),
-    ("draft", "session", [], "external"),
-    ("draft", "inline", ["origin:session-harvest"], "external"),
+@pytest.mark.parametrize("maturity,source_type,expected", [
+    ("verified", "url", "trusted"),
+    ("canonical", "session", "trusted"),
+    ("", "url", "trusted"),           # unrated legacy
+    ("contested", "url", "trusted"),  # off the ladder reads as unrated
+    ("draft", "", "draft"),
+    ("draft", "file", "draft"),
+    ("draft", "inline", "draft"),
+    ("draft", "url", "external"),
+    ("draft", "session", "external"),
 ])
-def test_trust_class(maturity, source_type, tags, expected):
-    assert trust_class(maturity, source_type, tags) == expected
+def test_trust_class(maturity, source_type, expected):
+    assert trust_class(maturity, source_type) == expected
+
+
+def _migrate(vault) -> None:
+    """m003 moves the pre-``session`` harvest tag to ``source_type: session``."""
+    assert main(["--vault", str(vault.root), "doctor", "--fix", "--json"]) in (0, 1)
+
+
+def test_doctor_m003_moves_tagged_harvest_drafts_to_source_type_session(vault, capsys):
+    legacy = vault.root / "_shared" / "knowledge" / "legacy-harvest.md"
+    assert "Rate limits" in _titles(lookup("rate limits", vault, limit=10))  # an authored draft until migrated
+    _migrate(vault)
+    capsys.readouterr()
+    assert "source_type: session" in legacy.read_text()
+    assert "Rate limits" not in _titles(lookup("rate limits", vault, limit=10))
 
 
 def test_lookup_ranks_every_trusted_note_above_every_draft(vault):
@@ -79,21 +94,24 @@ def test_lookup_ranks_every_trusted_note_above_every_draft(vault):
     assert titles.index("Gateway rate limits overview") < titles.index("Rate limits rollout plan")
 
 
-def test_lookup_withholds_external_drafts_by_default(vault):
+def test_lookup_withholds_external_drafts_by_default(vault, capsys):
+    _migrate(vault)
     titles = _titles(lookup("rate limits", vault, limit=10))
     assert "Rate Limits" not in titles and "rate limits" not in titles and "Rate limits" not in titles
     assert "Rate limits rollout plan" in titles  # an authored draft stays visible
 
 
-def test_lookup_include_drafts_brings_them_back_still_after_the_trusted(vault):
-    results = lookup("rate limits", vault, limit=10, include_drafts=True)
+def test_lookup_include_external_brings_them_back_still_after_the_trusted(vault, capsys):
+    _migrate(vault)
+    results = lookup("rate limits", vault, limit=10, include_external=True)
     trust = [r.doc.trust for r in results]
     assert trust.count("external") == 3
     assert trust.index("draft") > trust.index("trusted") and min(
         i for i, t in enumerate(trust) if t == "external") > max(i for i, t in enumerate(trust) if t == "trusted")
 
 
-def test_recall_never_puts_an_external_draft_among_the_notes(vault):
+def test_recall_never_puts_an_external_draft_among_the_notes(vault, capsys):
+    _migrate(vault)
     data = recall(vault, query="rate limits", limit=10)
     assert {n["trust"] for n in data["notes"]} <= {"trusted", "draft"}
     assert [n["title"] for n in data["unverified"]] == ["rate limits", "Rate limits", "Rate Limits"]  # newest first
@@ -127,7 +145,7 @@ def test_a_promoted_note_is_trusted_whatever_its_origin(vault):
 
 
 def test_lookup_json_carries_maturity_and_trust(vault, capsys):
-    main(["--vault", str(vault.root), "lookup", "rate", "limits", "--limit", "10", "--include-drafts", "--json"])
+    main(["--vault", str(vault.root), "lookup", "rate", "limits", "--limit", "10", "--include-external", "--json"])
     results = json.loads(capsys.readouterr().out)["data"]["results"]
     assert all({"maturity", "trust", "trusted"} <= set(r) for r in results)
     assert {r["trust"] for r in results} == {"trusted", "draft", "external"}
@@ -135,7 +153,7 @@ def test_lookup_json_carries_maturity_and_trust(vault, capsys):
 
 
 def test_lookup_text_labels_drafts(vault, capsys):
-    main(["--vault", str(vault.root), "lookup", "rate", "limits", "--limit", "10", "--include-drafts"])
+    main(["--vault", str(vault.root), "lookup", "rate", "limits", "--limit", "10", "--include-external"])
     out = capsys.readouterr().out
     assert "(draft)" in out and "(unverified draft)" in out
 
