@@ -567,8 +567,11 @@ stdout, and never to stderr where a host might surface them as a session error.
   isn't a home, or one that isn't a string, exits 2. A `person` note lives only
   in `_personal/person/`: `--project`/`--fleet` with one exits 2, and `capture`
   writes one only with `asserted_by: user` (`--asserted-by` or the `--stdin`
-  key), else exit 2. `amend` refuses a fact or an alias about a person unless
-  the user asserted it (`evidence.asserted_by` / `asserted_by`).
+  key), else exit 2; `capture --update` of one likewise needs `--asserted-by
+  user`, and `amend` refuses a fact or an alias about a person unless the user
+  asserted it (`evidence.asserted_by` / `asserted_by`). Person notes are never
+  `lookup` or `recall` results. A `--project`/`--fleet` that isn't one
+  directory name (`../x`, `a/b`) exits 2.
   `subjects` and `resolve` take `--home H` (the same filter as `--type`, and
   exclusive with it) and `--kind K`, and each subject carries `kind` and
   `relations`. `recall --json` gains `me`: the body of a trusted

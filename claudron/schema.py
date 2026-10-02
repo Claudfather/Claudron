@@ -57,6 +57,18 @@ HOME_TYPES = tuple(h for h in HOMES if h != "decision")
 TYPES = ("knowledge", "decision", "runbook", "plan", "audit", "review", *HOME_TYPES)
 #: Where a person note must live (#200 §2): the personal tier's `person/` (vault.PERSONAL_HUB).
 PERSON_DIR = "_personal/person/"
+PERSON_PARTS = ("_personal", "person")
+
+
+def in_person_dir(path: str | Path) -> bool:
+    """Is ``path`` (vault-relative or absolute) inside a ``_personal/person/`` directory?"""
+    parts = Path(str(path).replace("\\", "/")).parts
+    return any(parts[i:i + 2] == PERSON_PARTS for i in range(len(parts) - 1))
+
+
+def is_person_note(fm: dict | None, path: str | Path) -> bool:
+    """The one person predicate (#200 §2): typed ``person``, or sitting where person notes live."""
+    return bool(fm) and fm.get("type") == "person" or in_person_dir(path)
 
 #: The closed relation set (#200 §2): sub-concepts are relations, never directories. Each is a
 #: frontmatter list of wikilinks; `supersedes` was already a field.
@@ -590,7 +602,7 @@ def validate_note(
     if strict and not fm.get("owner"):
         emit("E007", "missing 'owner' (required on the authoring/engine tier)", field="owner")
 
-    if path and (note_type == "person") != path.replace("\\", "/").startswith(PERSON_DIR):
+    if path and (note_type == "person") != in_person_dir(path):
         emit("W109", "a person note lives only in the personal tier (_personal/person/), and only a person note "
                      "lives there (SCHEMA.md §Memory homes)", field="type")
 

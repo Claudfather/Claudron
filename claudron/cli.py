@@ -493,7 +493,6 @@ def cmd_promote(args) -> int:
     return 0
 
 
-
 def cmd_tags(args) -> int:
     vault = _resolve_vault(args)
     if args.resolve:
@@ -776,7 +775,8 @@ def cmd_capture(args) -> int:
             return 2
         try:
             result = append_addendum(vault, note_path, args.body,
-                                     no_commit=getattr(args, "no_commit", False), run_id=args.run_id)
+                                     no_commit=getattr(args, "no_commit", False), run_id=args.run_id,
+                                     asserted_by=args.asserted_by)
         except (ScopeError, RunError) as exc:
             print(str(exc), file=sys.stderr)
             _log_unwritten(vault, args.run_id, "addendum", "rejected", str(exc))
@@ -855,7 +855,8 @@ def _relations(raw: object) -> dict[str, list[str]] | None:
     """``--stdin``'s ``relations`` object (#200 §2): only the closed set, each a list of targets."""
     if not isinstance(raw, dict):
         return None
-    return {rel: [str(t) for t in (v if isinstance(v, list) else [v]) if str(t).strip()]
+    return {rel: [str(t) for t in (v if isinstance(v, list) else [v])
+                  if isinstance(t, (str, int)) and not isinstance(t, bool) and str(t).strip()]
             for rel, v in raw.items() if rel in RELATIONS}
 
 

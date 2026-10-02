@@ -592,6 +592,8 @@ def lookup(
     for entry in index.get("entries", []):
         if _is_excluded(entry, include_archived, include_expired):
             continue
+        if entry.get("tier") == "personal":
+            continue  # person notes are never search results (#200 §2): `me` reaches the brief its own way
         if not include_external and trust_class(entry.get("maturity", ""), entry.get("source_type", "")) \
                 == "external":
             continue  # decided from the index, before the note is opened

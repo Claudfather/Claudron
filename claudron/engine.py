@@ -42,6 +42,7 @@ from .schema import (
     TYPES,
     Finding,
     claimed_names,
+    is_person_note,
     content_fingerprint,
     parse_note,
     set_frontmatter_field,
@@ -192,6 +193,9 @@ def resolve_target_dir(
     ``kind`` (``entity/apis/``). A ``person`` note lives only in the personal
     tier (#200 §2): a project or fleet scope for one is refused.
     """
+    for scope in (project, fleet):  # one directory name: `../_personal/person` must not reach the personal tier
+        if scope is not None and (not str(scope).strip() or Path(str(scope)).name != str(scope) or scope in (".", "..")):
+            raise ScopeError(f"scope {scope!r} escapes the vault root: a scope is one directory name")
     if kind is not None and not isinstance(kind, str):
         raise ScopeError(f"kind must be a string, not {type(kind).__name__}")
     if kind and kind.strip() and note_type not in HOMES:
@@ -494,7 +498,7 @@ def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Findin
 
 
 def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], str | None], *, verb: str,
-              run_id: str | None = None, no_commit: bool = False) -> WriteResult:
+              run_id: str | None = None, no_commit: bool = False, asserted_by: str | None = None) -> WriteResult:
     """The one door for editing an existing note: lock → transform → validate → write → index → commit.
 
     ``transform(text, frontmatter)`` returns the new text, or ``None`` when the
@@ -509,6 +513,8 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
 
     ``capture --update`` (``append_addendum``) and ``amend`` are transforms over
     this door. Self-guards containment; refuses a bad ``run_id`` before writing.
+    **The person rule lives here, for every edit:** a person note (by type or by
+    place) is edited only when ``asserted_by`` is ``user`` (#200 §2).
     """
     if not is_within_root(note_path, vault.root):
         raise ScopeError(f"path {str(note_path)!r} escapes the vault root")
@@ -521,6 +527,8 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
     with vault_write_lock(vault):
         original = note_path.read_text()
         fm, _, _ = parse_note(original)
+        if is_person_note(fm, rel) and asserted_by != "user":
+            raise ScopeError("a person note is edited only when the user asserted the change (asserted_by: user)")
         text = transform(original, fm or {})
         if text is None:
             return WriteResult(action="unchanged", path=str(note_path), reason="already there; nothing written")
@@ -552,11 +560,12 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
 
 
 def append_addendum(vault: Vault, note_path: Path, body: str, *,
-                    no_commit: bool = False, run_id: str | None = None) -> WriteResult:
+                    no_commit: bool = False, run_id: str | None = None, asserted_by: str | None = None) -> WriteResult:
     """Append a dated ``## Addendum — <date>`` section (``capture --update``), through :func:`edit_note`."""
     today = date.today().isoformat()
     result = edit_note(vault, note_path, lambda text, _fm: text.rstrip("\n") + f"\n\n## Addendum — {today}\n\n"
-                       f"{body.strip()}\n", verb="addendum", run_id=run_id, no_commit=no_commit)
+                       f"{body.strip()}\n", verb="addendum", run_id=run_id, no_commit=no_commit,
+                       asserted_by=asserted_by)
     if result.action == "updated":
         result.reason = f"addendum appended, updated bumped to {today}"
     return result

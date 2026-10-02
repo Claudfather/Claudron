@@ -25,9 +25,9 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .engine import WriteResult, edit_note, yaml_scalar
+from .engine import ScopeError, WriteResult, edit_note, yaml_scalar
 from .knowledge import ensure_index, fenced_lines, section_headings
-from .schema import PERSON_DIR, TRUST_CLASSES, _as_str_list, claimed_names, set_frontmatter_field, trust_class
+from .schema import TRUST_CLASSES, _as_str_list, claimed_names, set_frontmatter_field, trust_class
 from .vault import Vault
 
 OPS = ("append_fact", "add_evidence", "add_alias", "supersede_fact")
@@ -254,13 +254,8 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
         raise AmendError(f"expect_trust must be one of {', '.join(TRUST_CLASSES)}")
     done: dict[str, str] = {}
 
-    try:
-        rel = note_path.resolve().relative_to(vault.root.resolve()).as_posix()
-    except ValueError:
-        rel = ""  # outside the vault: edit_note refuses it
 
     def guarded(text: str, fm: dict) -> str | None:
-        is_person = fm.get("type") == "person" or rel.startswith(PERSON_DIR)
         """The op's transform, writing only while the note still reads as ``expect_trust``.
 
         Checked under the write lock, on the note as it is now: a person who
@@ -269,11 +264,6 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
         A replay that would write nothing stays ``unchanged`` either way, so a
         writer retrying after a timeout learns its write landed.
         """
-        if is_person and not _user_asserted(request):
-            # #200 §2: what a note says about a person (a fact, or a name it answers to) is the user's
-            # to assert, never inferred by an agent or a tool.
-            raise AmendError("a fact or alias about a person must be user-asserted "
-                             "(evidence.asserted_by, or asserted_by for an alias: user)")
         new = transform(text, fm)
         now = trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or ""))
         if new is not None and expect is not None and now != expect:
@@ -296,7 +286,16 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
             done["outcome"], done["fact_id"] = _BODY_OPS[op](lines, request)
             return None if done["outcome"] == "unchanged" else head + "\n".join(lines)
 
-    result = edit_note(vault, note_path, guarded, verb="amend", run_id=run_id, no_commit=no_commit)
+    # The person rule is edit_note's (one door for every edit): a fact or alias about a person is the user's
+    # to assert, never inferred by an agent or a tool.
+    try:
+        result = edit_note(vault, note_path, guarded, verb="amend", run_id=run_id, no_commit=no_commit,
+                           asserted_by="user" if _user_asserted(request) else None)
+    except ScopeError as exc:
+        if "person" in str(exc):
+            raise AmendError("a fact or alias about a person must be user-asserted "
+                             "(evidence.asserted_by, or asserted_by for an alias: user)") from exc
+        raise
     return AmendResult(action=result.action, path=result.path, reason=result.reason, errors=result.errors,
                        warnings=result.warnings, op=op, outcome=done.get("outcome", "") if result.written else "",
                        fact_id=done.get("fact_id", ""))

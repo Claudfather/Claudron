@@ -13,9 +13,10 @@ into agent context verbatim by the SessionStart hook.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
-from .knowledge import KnowledgeDoc, lookup, walk_knowledge_tier
+from .knowledge import KnowledgeDoc, fenced_lines, lookup, walk_knowledge_tier
 from .schema import count_tokens, has_conflict_markers, parse_note, trust_class
 from .vault import PERSONAL_HUB, Vault
 
@@ -220,15 +221,19 @@ def _about_me(vault: Vault) -> str | None:
     if has_conflict_markers(text):
         return None
     fm, body, _ = parse_note(text)
-    if fm is None or trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or "")) != "trusted":
+    if fm is None or fm.get("type") != "person" or \
+            trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or "")) != "trusted":
         return None
     out: list[str] = []
     pending: str | None = None  # a section heading, kept only once something follows it
-    for line in body.strip().splitlines():
-        if line.startswith("# "):
-            continue
-        if line.startswith("#"):
-            pending = "**" + line.lstrip("#").strip() + "**"
+    lines = body.strip().splitlines()
+    fenced = fenced_lines(lines)
+    for n, line in enumerate(lines):
+        heading = n not in fenced and re.match(r"^(#{1,6}) +(.*)$", line)
+        if heading and len(heading.group(1)) == 1:
+            continue  # the note's H1: the brief supplies the heading
+        if heading:
+            pending = f"**{heading.group(2).strip()}**"
             continue
         if line.strip():
             if pending:
@@ -265,8 +270,11 @@ def render_brief(data: dict) -> str:
                 break
             kept.append(line)
             cost += count_tokens(line)
-        if not any(ln.strip() for ln in kept):  # its first line alone is over budget: say so, never silently drop
-            kept = [f"_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: shorten {ME_NOTE.as_posix()})_"]
+        if len(kept) < len(data["me"].splitlines()):  # cut short: say so, never silently drop
+            while kept and kept[-1].startswith("**") and kept[-1].endswith("**"):
+                kept.pop()  # never end on a label whose content was cut
+            kept.append(f"_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: "
+                        f"shorten {ME_NOTE.as_posix()})_")
         block = "## About me\n\n" + "\n".join(kept).strip()
         sections.append(block)
         spent += count_tokens(block)

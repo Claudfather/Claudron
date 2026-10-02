@@ -335,7 +335,7 @@ takes, unchanged. Every home is a type.
 |---|---|---|---|
 | `entity` | system, dataset, vendor, api, repo, org | true until it changes; contradictions supersede | Summary · Facts · Behavior & gotchas · Operating it · History · Open questions |
 | `concept` | pattern, term, method | refined slowly | Definition · Why it matters · Examples · Related |
-| `person` | — | reinforced over time | Role · Preferences · Working style · Notes |
+| `person` | colleague, contact | reinforced over time | Role · Preferences · Working style · Notes |
 | `project` | — | latest-wins, with history | Goal · Status · Current state · Timeline · Open threads · Decisions |
 | `decision` | architecture, process, business | immutable; superseded, never rewritten | Context · Decision · Rationale · Alternatives · Supersedes |
 | `practice` | convention, operational norm | reinforced over time | When · What · Why · Exceptions |
@@ -355,13 +355,16 @@ takes, unchanged. Every home is a type.
 - **`person` is stricter, enforced at every door:** a person note lives only
   in the personal tier `_personal/person/` (never `_shared/` or a fleet; W109
   flags one placed by hand anywhere else, or another type placed there);
-  `capture` writes one only with `asserted_by: user`, and `amend` takes a fact
-  or an alias about a person (by type or by place) only when the user asserted
-  it. `new` writes only the empty skeleton. `_personal/person/me.md` is
+  `capture` writes one only with `asserted_by: user`, and every edit of one
+  (`capture --update`, `amend`'s facts and aliases), by type or by place, needs
+  the user's assertion too. `new` writes only the empty skeleton. Person notes
+  are never `lookup`/`recall` results: the index knows them (so `subjects`
+  sees them), search does not. `_personal/person/me.md` is
   injected into the operator's session briefs (`## About me`, budgeted like
   `CONVENTIONS.md`, its sections as bold labels) only when it is **trusted** —
-  a captured draft speaks for nobody until a person promotes it — and never
-  into a bot's (`BOT_NAME` set). No evaluative claims about a person is a rule
+  a captured draft speaks for nobody until a person promotes it — must be
+  typed `person`, and is never injected into a bot's session (`BOT_NAME` set:
+  a bot deployment must set it). No evaluative claims about a person is a rule
   for the writer: the engine runs no model to judge it.
 - A vault extends kinds freely (they are open); extending homes waits for
   `pack.yaml` v1 (§pack.yaml). A new home is justified only by different
