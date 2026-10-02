@@ -7,7 +7,7 @@
   - A run logs every write it commits (`write`, or `write.uncommitted` with W108), what it asked for that didn't land (`write.refused`, `write.routed` by dedup), and its `revert-run`.
   - A session's hooks log what recall served, split by trust (`recall.served`), and the push outcome (`sync.push`), so "what was this session told?" has an answer after the fact.
   - `status --json` gains `runs`: the newest run, when one last applied cleanly, and the last failure — liveness for an automated writer that has no CI to go red.
-  - Best-effort like the sync journal: logging never fails a write. Capability `ops-log`. Tests: `claudron/tests/test_ops.py`.
+  - Best-effort like the sync journal: logging never fails a write. Nothing is logged in a git vault whose `.gitignore` lacks `.claudron/`, since `sync` would commit the logs (`doctor --fix` adds the rule). Pruning keeps the 200 most recently appended logs per kind and removes only what it wrote. Capability `ops-log`. Tests: `claudron/tests/test_ops.py`.
 
 ## 0.7.1 — 2026-10-02
 

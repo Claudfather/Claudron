@@ -118,13 +118,17 @@ def session_start_brief(vault: Vault, session_id: str | None = None) -> str:
     # born on machine A came back empty.
     vault = detect(vault.root) or vault
     data = recall(vault, project=derive_project())
-    # The session's ops log (#200 §5): what this session was told, trusted apart from unreviewed.
+    brief = render_brief(data)
+    # The session's ops log (#200 §5): what this session was shown, trusted apart from unreviewed. Only
+    # what the brief kept: the budget drops notes, and each rendered line ends with its `path`.
+    def shown(entries: list[dict], trust: str | None = None) -> list[str]:
+        return [e["path"] for e in entries if (trust is None or e.get("trust") == trust) and f"`{e['path']}`" in brief]
+
     notes = data.get("notes") or []
     ops.record(vault, "recall.served", session_id=session_id, project=data.get("project"),
-               trusted=[n["path"] for n in notes if n.get("trust") == "trusted"],
-               drafts=[n["path"] for n in notes if n.get("trust") == "draft"],
-               unverified=[n["path"] for n in data.get("unverified") or []])
-    return render_brief(data)
+               trusted=shown(notes, "trusted"), drafts=shown(notes, "draft"),
+               unverified=shown(data.get("unverified") or []))
+    return brief
 
 
 def hook_session_start(vault: Vault, payload: dict) -> int:
@@ -175,8 +179,7 @@ def hook_session_end(vault: Vault, payload: dict) -> int:
     """Push the session's vault changes; fail open (nothing to inject)."""
     try:
         result = sync(vault, pull=False, push=True, timeout=SESSION_END_PUSH_TIMEOUT)
-        ops.record(vault, "sync.push", session_id=_session_id(payload), ok=result.ok,
-                   detail=str(result.detail or "")[:200])
+        ops.record(vault, "sync.push", session_id=_session_id(payload), ok=result.ok, detail=str(result.detail or ""))
         if not result.ok:
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
     # Deliberate, not a residual guard the boundary makes redundant: a

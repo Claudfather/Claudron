@@ -13,7 +13,7 @@ Claudlobby plane where they overlap: ``v``, ``ts``, ``kind``, ``session_id``,
 **Best-effort by construction**, like the sync journal: a write that can't be
 logged still succeeds, so :func:`record` never raises. Ids become directory
 names, so one that isn't a safe path segment is not logged at all. Each of
-``runs/`` and ``sessions/`` keeps its newest :data:`KEEP` directories.
+``runs/`` and ``sessions/`` keeps its newest :data:`KEEP` logs.
 """
 
 from __future__ import annotations
@@ -21,11 +21,10 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .vault import Vault
+from .vault import Vault, missing_gitignore_rules
 
 OPS_VERSION = 1
 EMITTER = "claudron"
@@ -34,43 +33,71 @@ KEEP = 200  #: run or session directories kept per kind; the oldest go first
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
-def _dir(vault: Vault, *, run_id: str | None, session_id: str | None) -> Path | None:
-    if run_id:
-        kind, ident = "runs", run_id
-    elif session_id:
-        kind, ident = "sessions", session_id
-    else:
-        return None
-    if not _ID_RE.fullmatch(ident) or ident in (".", ".."):
+def _dir(vault: Vault, *, run_id: object, session_id: object) -> Path | None:
+    ident, kind = (run_id, "runs") if run_id else (session_id, "sessions")
+    if not isinstance(ident, str) or not _ID_RE.fullmatch(ident):
         return None
     return vault.root / ".claudron" / kind / ident
 
 
+def _ignored(vault: Vault) -> bool:
+    """Is ``.claudron/`` kept out of git? In a git vault without the rule (an unmigrated one), `sync`'s
+    straggler net would commit and push the logs — session ids, note paths, refusal reasons — so none is written."""
+    return not (vault.root / ".git").exists() or ".claudron/" not in missing_gitignore_rules(vault.root)
+
+
 def _prune(parent: Path) -> None:
-    """Keep the newest :data:`KEEP` directories under ``parent`` (by mtime)."""
-    dirs = sorted((d for d in parent.iterdir() if d.is_dir()), key=lambda d: d.stat().st_mtime, reverse=True)
-    for old in dirs[KEEP:]:
-        shutil.rmtree(old, ignore_errors=True)
+    """Keep the newest :data:`KEEP` logs under ``parent``, by when each was last appended to.
+
+    Only ever removes what :func:`record` made: a directory's ``ops.jsonl``, then the directory if
+    that leaves it empty. Never a symlinked directory, never anything else in it.
+    """
+    logs = [d / "ops.jsonl" for d in parent.iterdir() if not d.is_symlink() and (d / "ops.jsonl").is_file()]
+    logs.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+    for old in logs[KEEP:]:
+        old.unlink()
+        try:
+            old.parent.rmdir()
+        except OSError:
+            pass  # something else lives there: not ours to delete
+
+
+def _short(value: object) -> object:
+    return value[:200] if isinstance(value, str) else value
 
 
 def record(vault: Vault, kind: str, *, run_id: str | None = None, session_id: str | None = None,
            **fields: object) -> None:
-    """Append one event to the run's log (``run_id``) or else the session's; never raises."""
+    """Append one event to the run's log (``run_id``) or else the session's; never raises.
+
+    String fields are cut to 200 characters. Nothing is written in a git vault whose ``.gitignore``
+    doesn't keep ``.claudron/`` out of commits (``claudron doctor --fix`` adds the rule).
+    """
     try:
         where = _dir(vault, run_id=run_id, session_id=session_id)
-        if where is None:
+        if where is None or not _ignored(vault):
             return
-        fresh = not where.exists()
+        log = where / "ops.jsonl"
+        fresh = not log.exists()
         where.mkdir(parents=True, exist_ok=True)
         line = {"v": OPS_VERSION, "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
                 "kind": kind, "session_id": session_id, "run_id": run_id, "emitter": EMITTER,
-                "event_id": os.urandom(8).hex(), **fields}
-        with open(where / "ops.jsonl", "a", encoding="utf-8") as fh:
+                "event_id": os.urandom(8).hex(), **{k: _short(v) for k, v in fields.items()}}
+        with open(log, "a", encoding="utf-8") as fh:
             fh.write(json.dumps(line, default=str) + "\n")
         if fresh:
             _prune(where.parent)
-    except OSError:
+    except Exception:  # noqa: BLE001 — a log must never fail the write (or the hook) it records
         return
+
+
+def _first_ts(path: Path) -> str:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            first = json.loads(fh.readline() or "{}")
+    except (OSError, ValueError):
+        return ""
+    return str(first.get("ts") or "") if isinstance(first, dict) else ""
 
 
 def _events(path: Path) -> list[dict]:
@@ -106,12 +133,11 @@ def runs_summary(vault: Vault) -> dict:
         logs = list((vault.root / ".claudron" / "runs").glob("*/ops.jsonl"))
     except OSError:
         return summary
-    runs = []
-    for log in logs:
-        events = sorted(_events(log), key=lambda e: str(e.get("ts") or ""))
-        if events:
-            runs.append((str(events[0].get("ts") or ""), log.parent.name, events))
-    for _, run_id, events in sorted(runs, reverse=True):
+    # Ordered by each log's first line (when the run started); a whole log is read only when reached.
+    for _, log in sorted(((_first_ts(log), log) for log in logs), reverse=True):
+        run_id, events = log.parent.name, _events(log)
+        if not events:
+            continue
         writes = [e for e in events if e.get("kind") in ("write", *FAILURES, "write.routed")]
         failed = [e for e in events if e.get("kind") in FAILURES]
         at = str((writes or events)[-1].get("ts") or "")

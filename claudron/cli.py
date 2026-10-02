@@ -727,9 +727,11 @@ def cmd_capture(args) -> int:
         note_path = vault.root / args.update
         if not is_within_root(note_path, vault.root) or not note_path.is_file():
             print(f"no such note in vault: {args.update}", file=sys.stderr)
+            _log_unwritten(vault, args.run_id, "addendum", "rejected", f"no such note in vault: {args.update}")
             return 2
         if not args.body:
             print("--update requires --body", file=sys.stderr)
+            _log_unwritten(vault, args.run_id, "addendum", "rejected", "--update requires --body")
             return 2
         try:
             result = append_addendum(vault, note_path, args.body,
@@ -746,14 +748,17 @@ def cmd_capture(args) -> int:
             finding = json.loads(sys.stdin.read())
         except json.JSONDecodeError as exc:
             print(f"invalid JSON on stdin: {exc}", file=sys.stderr)
+            _log_unwritten(vault, args.run_id, "capture", "rejected", f"invalid JSON on stdin: {exc}")
             return 2
     else:
         finding = {}
+    run_id = (finding.get("run_id") if isinstance(finding, dict) else None) or args.run_id
     note_type = finding.get("type") or args.type
     title = finding.get("title") or args.title
     body = finding.get("body") or args.body or ""
     if not note_type or not title:
         print("capture requires --type and --title (or --stdin JSON)", file=sys.stderr)
+        _log_unwritten(vault, run_id, "capture", "rejected", "capture requires --type and --title")
         return 2
     tags = _tags_arg(finding.get("tags")) or _tags_arg(args.tags)
     owner = finding.get("owner") or _derive_owner(args)
@@ -771,6 +776,7 @@ def cmd_capture(args) -> int:
             f"(choose from {', '.join(repr(v) for v in SOURCE_TYPES)})",
             file=sys.stderr,
         )
+        _log_unwritten(vault, run_id, "capture", "rejected", f"invalid source_type: {source_type!r}")
         return 2
 
     try:
@@ -787,14 +793,14 @@ def cmd_capture(args) -> int:
             no_commit=getattr(args, "no_commit", False),
             source_url=finding.get("source_url") or args.source_url,
             source_type=source_type,
-            run_id=finding.get("run_id") or args.run_id,
+            run_id=run_id,
         )
     except (ScopeError, RunError) as exc:
         print(str(exc), file=sys.stderr)
-        _log_unwritten(vault, finding.get("run_id") or args.run_id, "capture", "rejected", str(exc))
+        _log_unwritten(vault, run_id, "capture", "rejected", str(exc))
         return 2
 
-    _log_unwritten(vault, finding.get("run_id") or args.run_id, "capture", result.action, result.reason)
+    _log_unwritten(vault, run_id, "capture", result.action, result.reason)
     return _emit_write_result(args, result)
 
 
@@ -803,9 +809,9 @@ def _log_unwritten(vault, run_id, verb: str, action: str, reason: str | None) ->
 
     Writes that land are logged where they are committed (``engine._commit_written``).
     """
-    if run_id and isinstance(run_id, str) and action in ("rejected", "suggest_update", "suggest_supersede"):
+    if run_id and action in ("rejected", "suggest_update", "suggest_supersede"):
         kind = "write.refused" if action == "rejected" else "write.routed"
-        ops.record(vault, kind, run_id=run_id, verb=verb, action=action, reason=str(reason or "")[:200])
+        ops.record(vault, kind, run_id=run_id, verb=verb, action=action, reason=str(reason or ""))
 
 
 def _emit_write_result(args, result) -> int:

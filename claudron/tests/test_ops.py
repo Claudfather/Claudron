@@ -19,10 +19,18 @@ import pytest
 
 from claudron import ops
 from claudron.cli import main
+from claudron import hooks as hooks_mod
 from claudron.hooks import hook_session_start
 from claudron.vault import detect
 
 from .test_capture import _cgit, git_vault  # noqa: F401 - the fixture
+
+
+@pytest.fixture
+def gvault(git_vault):  # noqa: F811 - the fixture
+    """A git vault that keeps ``.claudron/`` out of commits, as `init` and `doctor --fix` leave one."""
+    (git_vault / ".gitignore").write_text(".claudron/\n")
+    return git_vault
 
 
 def _events(root: Path, kind: str, ident: str) -> list[dict]:
@@ -62,8 +70,8 @@ def test_only_the_newest_directories_are_kept(vault_dir, monkeypatch):
     assert len(list((vault_dir / ".claudron" / "runs").iterdir())) == 3
 
 
-def test_a_runs_writes_refusals_and_revert_are_in_its_log(git_vault, monkeypatch, capsys):  # noqa: F811
-    root = git_vault
+def test_a_runs_writes_refusals_and_revert_are_in_its_log(gvault, monkeypatch, capsys):
+    root = gvault
     assert _capture(root, monkeypatch, {"type": "knowledge", "title": "Rate limits", "body": "Hourly reset.",
                                         "run_id": "h-1"}) == 0
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"note": "Nothing", "op": "append_fact", "run_id": "h-1"})))
@@ -78,8 +86,8 @@ def test_a_runs_writes_refusals_and_revert_are_in_its_log(git_vault, monkeypatch
     assert write["verb"] == "capture" and write["path"].endswith("rate-limits.md")
 
 
-def test_status_reports_the_last_clean_run_and_the_last_failure(git_vault, monkeypatch, capsys):  # noqa: F811
-    root = git_vault
+def test_status_reports_the_last_clean_run_and_the_last_failure(gvault, monkeypatch, capsys):
+    root = gvault
     _capture(root, monkeypatch, {"type": "knowledge", "title": "Alpha", "body": "A.", "run_id": "ok-run"})
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"note": "Nothing", "op": "x", "run_id": "bad-run"})))
     main(["--vault", str(root), "amend", "--stdin"])
@@ -123,3 +131,54 @@ def test_a_later_revert_does_not_make_an_old_run_the_newest(vault_dir):
     summary = ops.runs_summary(vault)
     assert summary["last_run"]["run_id"] == "second"
     assert summary["last_ok_at"] == _events(vault_dir, "runs", "second")[0]["ts"]
+
+
+def test_a_git_vault_that_would_commit_the_logs_gets_none(git_vault):  # noqa: F811
+    """Without the ignore rule, sync's straggler net would push session ids and note paths."""
+    ops.record(detect(git_vault), "write", run_id="r1")
+    assert not (git_vault / ".claudron" / "runs").exists()
+
+
+def test_pruning_keeps_the_logs_still_being_written(vault_dir, monkeypatch):
+    import os
+    import time
+
+    monkeypatch.setattr(ops, "KEEP", 3)
+    vault = detect(vault_dir)
+    ops.record(vault, "write", run_id="long")
+    for n in range(3):
+        time.sleep(0.01)
+        ops.record(vault, "write", run_id=f"r{n}")
+        os.utime(vault_dir / ".claudron" / "runs" / "long" / "ops.jsonl")  # still being appended to
+        ops.record(vault, "write", run_id="long")
+    assert len(_events(vault_dir, "runs", "long")) == 4
+
+
+def test_pruning_never_removes_what_it_did_not_write(vault_dir, tmp_path, monkeypatch):
+    monkeypatch.setattr(ops, "KEEP", 1)
+    precious = tmp_path / "precious"
+    for n in range(3):
+        (precious / f"keep{n}").mkdir(parents=True)
+        (precious / f"keep{n}" / "data.txt").write_text("mine")
+    (vault_dir / ".claudron").mkdir(exist_ok=True)
+    (vault_dir / ".claudron" / "sessions").symlink_to(precious)
+    vault = detect(vault_dir)
+    ops.record(vault, "recall.served", session_id="s1")
+    ops.record(vault, "recall.served", session_id="s2")
+    assert all((precious / f"keep{n}" / "data.txt").exists() for n in range(3))
+
+
+def test_recall_served_logs_only_what_the_brief_kept(vault_dir, monkeypatch, capsys):
+    """The budget drops notes: the log says what the session was shown, not what recall found."""
+    knowledge = vault_dir / "projects" / "webapp"
+    knowledge.mkdir(parents=True, exist_ok=True)
+    for n in range(6):
+        (knowledge / f"n{n}.md").write_text(f"---\ntitle: Rate limit note {n}\ntype: knowledge\nstatus: current\n"
+                                            f"owner: t\ncreated: 2026-09-01\nupdated: 2026-09-0{n + 1}\n---\n\n"
+                                            + "Words about rate limits. " * 30 + "\n")
+    monkeypatch.setattr("claudron.hooks.derive_project", lambda: "webapp")
+    monkeypatch.setattr("claudron.session.BRIEF_TOKEN_BUDGET", 120)
+    brief = hooks_mod.session_start_brief(detect(vault_dir), "sess-2")
+    (ev,) = _events(vault_dir, "sessions", "sess-2")
+    assert all(f"`{p}`" in brief for p in ev["trusted"])
+    assert 0 < len(ev["trusted"]) < 6

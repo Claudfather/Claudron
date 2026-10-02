@@ -645,10 +645,13 @@ stdout, and never to stderr where a host might surface them as a session error.
   `write.uncommitted` when the commit failed (W108), `write.refused` and
   `write.routed` (dedup) for what it asked for that didn't land, and
   `run.reverted`. A session's hooks log `recall.served` (the `trusted`,
-  `drafts` and `unverified` paths it was shown) and `sync.push` (`ok`,
-  `detail`). Logging is best-effort and never fails the write it logs; an id
-  that isn't a safe directory name isn't logged; each of `runs/` and
-  `sessions/` keeps its newest 200 directories. Gate on
+  `drafts` and `unverified` paths the brief showed, after its budget) and
+  `sync.push` (`ok`, `detail`). Logging is best-effort and never fails the
+  write it logs; an id that isn't a safe directory name isn't logged, and
+  nothing is logged in a git vault whose `.gitignore` lacks `.claudron/` (sync
+  would otherwise commit the logs; `doctor --fix` adds the rule). Each of
+  `runs/` and `sessions/` keeps the 200 logs most recently appended to; pruning
+  removes only a log and the directory it leaves empty. Gate on
   `"ops-log" in status --json → data.capabilities`.
 - **Runs** (#200 §4): `capture`, `capture --update` and `amend` take
   `--run-id ID` (or a `run_id` key on stdin). The write is committed at once,
