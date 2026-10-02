@@ -108,16 +108,18 @@ def load(vault: Vault) -> Registry | None:
         raw = {}
     for name, spec in raw.items():
         name = str(name).strip()
+        if spec is not None and not isinstance(spec, dict):
+            reg.problems.append(f"{name}: its entry is not a mapping (read as empty)")
         spec = spec if isinstance(spec, dict) else {}
-        facet = name.split(":", 1)[0].lower() if ":" in name else ""
-        if facet not in reg.facets:
+        facet, _, value = name.partition(":")
+        if facet.lower() not in reg.facets or not value.strip():
             reg.problems.append(f"{name}: not `facet:value` with a facet in {list(reg.facets)}")
             continue
         if name.lower() in reg.names:
             reg.problems.append(f"{name}: the same tag as {reg.names[name.lower()]} (tags are case-insensitive)")
             continue
-        aliases = []
-        for alias in spec.get("aliases") if isinstance(spec.get("aliases"), list) else _as_str_list(spec.get("aliases")):
+        aliases, raw_aliases = [], spec.get("aliases")
+        for alias in raw_aliases if isinstance(raw_aliases, list) else ([] if raw_aliases is None else [raw_aliases]):
             if not isinstance(alias, str):
                 reg.problems.append(f"{name}: alias {alias!r} is not a string (quote it: YAML reads yes/no/1 as values)")
             elif alias.strip():
@@ -133,6 +135,8 @@ def load(vault: Vault) -> Registry | None:
         reg.tags[name] = tag
         reg.names[name.lower()] = name
     for tag in reg.tags.values():
+        # A merge target written in another case is the registered tag: store the registry's spelling.
+        tag.merged_into = reg.names.get(tag.merged_into.lower(), tag.merged_into)
         if tag.status == "deprecated" and tag.merged_into and tag.merged_into not in reg.tags:
             reg.problems.append(f"{tag.name}: merged_into {tag.merged_into!r} is not a registered tag")
         for alias in tag.aliases:
@@ -155,9 +159,8 @@ def load(vault: Vault) -> Registry | None:
 def canonicalize(vault: Vault, tags: list[str]) -> list[str]:
     """``tags`` with each alias and merged tag replaced by its canonical form, order kept, duplicates dropped."""
     reg = load(vault)
-    if reg is None:
-        return list(tags)
-    return list(dict.fromkeys(reg.canonical(t) for t in tags))
+    found = (reg.canonical(t) if reg else t.strip() for t in tags)
+    return list(dict.fromkeys(t for t in found if t))  # an empty tag is no tag
 
 
 def report(vault: Vault, usage: dict[str, int]) -> dict:

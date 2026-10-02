@@ -135,3 +135,21 @@ def test_a_case_variant_in_use_is_reported_as_noncanonical(vault_dir):
     data = tags.report(_registry(vault_dir), {"tech:PYTHON": 2})
     assert data["unregistered"] == [] and data["noncanonical_in_use"] == [
         {"tag": "tech:PYTHON", "count": 2, "canonical": "tech:python"}]
+
+
+def test_a_merge_target_in_another_case_is_the_registered_spelling(vault_dir):
+    reg = tags.load(_registry(vault_dir, REGISTRY.replace("merged_into: tech:python", "merged_into: Tech:Python")))
+    assert reg.problems == [] and reg.canonical("tech:py2") == "tech:python"
+    assert tags.canonicalize(detect(vault_dir), ["tech:py2", "py"]) == ["tech:python"]
+
+
+def test_scalar_aliases_bad_entries_and_empty_values_are_reported(vault_dir):
+    reg = tags.load(_registry(vault_dir, "tags:\n  tech:a: {aliases: yes}\n  tech:b: just text\n  tech: {}\n"))
+    joined = " | ".join(reg.problems)
+    for expected in ("alias True is not a string", "tech:b: its entry is not a mapping", "tech: not `facet:value`"):
+        assert expected in joined, expected
+
+
+def test_empty_tags_never_land(vault_dir):
+    assert tags.canonicalize(_registry(vault_dir), ["", " ", "py"]) == ["tech:python"]
+    assert tags.canonicalize(detect(vault_dir), ["", "x"]) == ["x"]
