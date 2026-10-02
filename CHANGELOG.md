@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 0.7.1 — 2026-10-02
+
+### Fixed
+- **`promote` commits.** It was the one write door that left its note uncommitted (#157: a write is durable on return), so a promotion waited in the tree for the next `sync`, and a `revert-run` over the same note refused to run. It now commits like `capture` and `amend` (`promote(<process actor>): <title> → <maturity> (by <reviewer>)`), and W108 is shown when the commit fails, in text mode too. Like `amend`, it commits the note's whole file, so a hand edit already in it rides along.
+
+### Added
+- **`resolve` says which candidates are exact.** Each candidate gains `exact` (true for an exact title, alias or slug match) and `source_type`. `match_type` couldn't say it: a fuzzy title hit is labelled `title` too, so a note sharing one word with the name (every `(unverified) …` draft shares one) read like the subject itself. `subjects` carries both fields too (`exact` is `null` there).
+- **`amend` takes `expect_trust`.** The trust class the caller resolved the note as, checked under the write lock: if a person promoted the note in between, the amend is refused and nothing is written, so an automated writer can't put unreviewed text into a note that was just reviewed.
+- **`resolve --project P` and `subjects --project P`** keep only that project's notes, and each subject carries its `tier`: the same name in two repos is two subjects.
+- **`resolve --alias NAME`**, repeatable, for a name with a comma in it (`--aliases` splits on commas).
+- **Capability `subject-filing`** covers this release's additions (`exact`, `tier`, `--project`, `--alias`, `expect_trust`, the refusal envelope).
+- **A refused `amend` still answers with `--json`.** It exits 2 as before, and now prints an envelope with `ok: false`, one `errors` entry with code `request`, and `data.action: "rejected"` with the refusal in `data.reason`, so an automated writer can tell a refused request (a taken alias, a fact that isn't live, a note that isn't there, unparseable stdin) from a broken engine. Under `expect_trust`, a replay that would write nothing stays `unchanged`.
+
 ## 0.7.0 — 2026-10-02
 
 ### Added

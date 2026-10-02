@@ -54,7 +54,7 @@ from .knowledge import (
 )
 from .graph import build_graph, render_html
 from .promote import promote
-from .amend import AmendError, amend
+from .amend import AmendError, AmendResult, amend
 from .runs import RunError, revert_run
 from .subjects import resolve, subjects
 from .session import derive_project, recall, render_brief
@@ -474,11 +474,11 @@ def cmd_promote(args) -> int:
     actor = args.by or _derive_owner(args)
     result = promote(vault, vault.root / path, to_maturity=args.to, actor=actor)
     if args.json:
-        _emit_json("promote", result.to_dict(), result.errors or None)
+        _emit_json("promote", result.to_dict(), result.errors or result.warnings or None)
         return 1 if result.action == "rejected" else 0
+    for f in [*result.errors, *result.warnings]:  # W108: written, but the commit failed
+        print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
     if result.action == "rejected":
-        for f in result.errors:
-            print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
         return 1
     if result.action == "unchanged":
         print(f"unchanged: {result.path} already at maturity '{result.to_maturity}'",
@@ -491,7 +491,7 @@ def cmd_promote(args) -> int:
 
 def cmd_subjects(args) -> int:
     vault = _resolve_vault(args)
-    found = subjects(vault, note_type=args.type)
+    found = subjects(vault, note_type=args.type, project=args.project)
     if args.json:
         _emit_json("subjects", {"type": args.type, "subjects": [s.as_dict() for s in found]})
         return 0
@@ -503,9 +503,9 @@ def cmd_subjects(args) -> int:
 
 def cmd_resolve(args) -> int:
     vault = _resolve_vault(args)
-    aliases = _tags_arg(args.aliases) if args.aliases else []
+    aliases = [*(_tags_arg(args.aliases) if args.aliases else []), *args.alias]
     found = resolve(vault, args.name, note_type=args.type, aliases=aliases, context=args.context,
-                    limit=args.limit)
+                    limit=args.limit, project=args.project)
     if args.json:
         _emit_json("resolve", {"name": args.name, "candidates": [s.as_dict() for s in found]})
         return 0
@@ -516,26 +516,36 @@ def cmd_resolve(args) -> int:
     return 0
 
 
+def _amend_refused(args, message: str, request: object = None, path: Path | None = None) -> int:
+    """Exit 2 for a request ``amend`` refuses; with ``--json`` an envelope too, so a caller can tell a
+    refused request (a taken alias, a note that isn't there) from a broken engine."""
+    print(message, file=sys.stderr)
+    if args.json:
+        op = request.get("op") if isinstance(request, dict) else None
+        # ``request`` is not a catalog code: the request, not the note, is at fault (CLI_CONTRACT §amend).
+        refusal = Finding("request", "error", str(path) if path else "", None, None, message)
+        result = AmendResult(action="rejected", path=refusal.path, reason=message, errors=[refusal],
+                             op=op if isinstance(op, str) else "")
+        _emit_json("amend", result.to_dict(), [refusal])
+    return 2
+
+
 def cmd_amend(args) -> int:
     vault = _resolve_vault(args)
     try:
         request = json.loads(sys.stdin.read())
     except json.JSONDecodeError as exc:
-        print(f"invalid JSON on stdin: {exc}", file=sys.stderr)
-        return 2
+        return _amend_refused(args, f"invalid JSON on stdin: {exc}")
     if not isinstance(request, dict) or not request.get("note"):
-        print("amend reads one JSON object on stdin, with at least `note` and `op`", file=sys.stderr)
-        return 2
+        return _amend_refused(args, "amend reads one JSON object on stdin, with at least `note` and `op`", request)
     path = resolve_note_ref(vault, str(request["note"]))
     if path is None:
-        print(f"no note matches '{request['note']}'", file=sys.stderr)
-        return 2
+        return _amend_refused(args, f"no note matches '{request['note']}'", request)
     try:
         result = amend(vault, vault.root / path, request, run_id=request.get("run_id") or args.run_id,
                        no_commit=args.no_commit)
     except (AmendError, ScopeError, RunError) as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
+        return _amend_refused(args, str(exc), request, vault.root / path)
     if args.json:
         _emit_json("amend", result.to_dict(), result.errors or result.warnings or None)
     else:
@@ -1677,13 +1687,17 @@ def main(argv=None) -> int:
         parents=[vault_parent, json_parent],
     )
     p_subjects.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_subjects.add_argument("--project", help="Only subjects in this project's tier")
     p_resolve = sub.add_parser(
         "resolve", help="Rank candidate subjects for a name (exact, alias, slug, then text)",
         parents=[vault_parent, json_parent],
     )
     p_resolve.add_argument("--name", required=True, help="The subject's name")
     p_resolve.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_resolve.add_argument("--project", help="Only subjects in this project's tier (same name, other repo: other subject)")
     p_resolve.add_argument("--aliases", help="Other names for it, comma-separated")
+    p_resolve.add_argument("--alias", action="append", default=[], metavar="NAME",
+                           help="Another name for it, repeatable (for a name with a comma in it)")
     p_resolve.add_argument("--context", help="A sentence about it; only breaks ties")
     p_resolve.add_argument("--limit", type=int, default=5, help="Max candidates (default: 5)")
 

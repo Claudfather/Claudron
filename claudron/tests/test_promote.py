@@ -18,6 +18,8 @@ from claudron.promote import promote
 from claudron.schema import parse_note
 from claudron.vault import detect, status
 
+from .test_capture import git_vault  # noqa: F401 - the fixture
+
 
 def _capture(vault_dir: Path, title: str, body: str | None = None) -> Path:
     # Body defaults to something title-derived + unique so content-dedup (#52,
@@ -140,3 +142,23 @@ class TestPromoteCLI:
         rc = main(["--vault", str(vault_dir), "promote", "No Such Note", "--to", "verified"])
         assert rc == 1
         assert "no note matches" in capsys.readouterr().err
+
+
+def test_a_promotion_is_committed_like_any_write(git_vault):  # noqa: F811 - the fixture
+    """#157: durable on return. Left in the tree, it waited for `sync`, and blocked a `revert-run` over the note."""
+    from .test_capture import _cgit
+
+    note = _capture(git_vault, "Retry Rules")
+    result = promote(detect(git_vault), note, to_maturity="verified", actor="chris")
+    assert result.action == "promoted" and result.warnings == []
+    assert note.name not in _cgit(git_vault, "status", "--porcelain").stdout
+    assert _cgit(git_vault, "log", "-1", "--format=%s").stdout.endswith("→ verified (by chris)\n")
+
+
+def test_a_promotion_whose_commit_fails_says_so_in_text_mode_too(git_vault, capsys):  # noqa: F811
+    hook = git_vault / ".git" / "hooks" / "pre-commit"
+    note = _capture(git_vault, "Retry Rules")
+    hook.write_text("#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    assert main(["--vault", str(git_vault), "promote", str(note.relative_to(git_vault)), "--to", "verified"]) == 0
+    assert "W108" in capsys.readouterr().err

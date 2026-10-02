@@ -39,41 +39,51 @@ class Subject:
     maturity: str
     trust: str
     updated: str
+    source_type: str = ""
+    tier: str = ""  #: as the index records it: ``shared``, ``project:<name>``, ``fleet:<name>``, ``system:…``, ``other:…``
     score: int | None = None
     match_type: str | None = None
+    #: ``resolve`` only: the note *is* one of the names (exact title, alias or slug), not a fuzzy hit.
+    #: ``match_type`` can't say so: a fuzzy title hit is labelled ``title`` too.
+    exact: bool | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
 
 
-def _subject(entry: dict, score: int | None = None, match_type: str | None = None) -> Subject:
+def _subject(entry: dict, score: int | None = None, match_type: str | None = None,
+             exact: bool | None = None) -> Subject:
     tags = _as_str_list(entry.get("tags"))
     return Subject(
         title=entry.get("title", ""), path=entry.get("path", ""), type=entry.get("type", ""),
         aliases=_as_str_list(entry.get("aliases")), sections=list(entry.get("sections") or []), tags=tags,
         maturity=entry.get("maturity", ""), trust=trust_class(entry.get("maturity", ""), entry.get("source_type", "")),
-        updated=entry.get("updated", ""), score=score, match_type=match_type,
+        updated=entry.get("updated", ""), source_type=entry.get("source_type", ""),
+        tier=entry.get("tier", ""), score=score,
+        match_type=match_type, exact=exact,
     )
 
 
-def _live(entries: list[dict], note_type: str | None) -> list[dict]:
-    """Index entries a fact could still be filed under: not archived or superseded, of the type asked."""
+def _live(entries: list[dict], note_type: str | None, project: str | None = None) -> list[dict]:
+    """Index entries a fact could still be filed under: not archived or superseded, of the type
+    and (with ``project``) in the project tier asked."""
     return [e for e in entries if e.get("status") not in LOOKUP_EXCLUDED
-            and (note_type is None or e.get("type") == note_type)]
+            and (note_type is None or e.get("type") == note_type)
+            and (project is None or e.get("tier") == f"project:{project}")]
 
 
-def subjects(vault: Vault, *, note_type: str | None = None) -> list[Subject]:
+def subjects(vault: Vault, *, note_type: str | None = None, project: str | None = None) -> list[Subject]:
     """Every live subject (optionally of one ``type``), by title.
 
     Drafts are included and labelled by ``trust``: a harvested fact must find
     the draft a previous run wrote, or it would file a twin beside it.
     """
-    entries = _live(ensure_index(vault).get("entries", []), note_type)
+    entries = _live(ensure_index(vault).get("entries", []), note_type, project)
     return sorted((_subject(e) for e in entries), key=lambda s: (s.title.lower(), s.path))
 
 
 def resolve(vault: Vault, name: str, *, note_type: str | None = None, aliases: list[str] | None = None,
-            context: str | None = None, limit: int = 5) -> list[Subject]:
+            context: str | None = None, limit: int = 5, project: str | None = None) -> list[Subject]:
     """The top ``limit`` candidate subjects for ``name``, best first.
 
     Each candidate takes its best match across ``name`` and ``aliases``. An exact
@@ -85,12 +95,13 @@ def resolve(vault: Vault, name: str, *, note_type: str | None = None, aliases: l
     """
     names = [(n.strip(), n.strip().lower(), slugify(n)) for n in [name, *(aliases or [])] if n and n.strip()]
     found = []
-    for entry in _live(ensure_index(vault).get("entries", []), note_type):
+    for entry in _live(ensure_index(vault).get("entries", []), note_type, project):
         title = str(entry.get("title", "")).lower()
         entry_aliases = {a.lower() for a in _as_str_list(entry.get("aliases"))}
         rank, score, kind = max((_match(n, entry, title, entry_aliases) for n in names), default=(0, 0, "none"))
         if score:
-            found.append(((-rank, -score, -_context_overlap(context, entry), title), _subject(entry, score, kind)))
+            found.append(((-rank, -score, -_context_overlap(context, entry), title),
+                          _subject(entry, score, kind, exact=rank > 0)))
     found.sort(key=lambda f: f[0])
     return [subject for _, subject in found[:limit]]
 
