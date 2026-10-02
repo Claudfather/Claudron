@@ -395,8 +395,14 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
     """
     subject = _commit_subject(verb, title)
     rel = str(paths[0].relative_to(vault.root)) if paths else ""
-    return commit_guarded(vault, paths, f"{subject}\n\ntype: {note_type}; tier: {tier}; path: {rel}"
-                          + trailer(run_id))
+    warnings = commit_guarded(vault, paths, f"{subject}\n\ntype: {note_type}; tier: {tier}; path: {rel}"
+                              + trailer(run_id))
+    if run_id:  # the run's ops log (#200 §5): what it wrote, and whether it is durable
+        from . import ops
+
+        ops.record(vault, "write.uncommitted" if warnings else "write", run_id=run_id, verb=verb, path=rel,
+                   reason=warnings[0].message[:200] if warnings else "")
+    return warnings
 
 
 def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Finding]:
