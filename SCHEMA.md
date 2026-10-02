@@ -38,6 +38,24 @@ audit, review: a drafted decision is genuinely pre-ratification activity).
 For `knowledge` and `runbook` types, `status: draft` is accepted only as a
 legacy alias (W102) and rejected by strict validation (E006).
 
+### Reads: maturity × origin
+
+Read paths (`lookup`, `recall`) decide what to show from maturity and **where
+the content came from** (#200 §1). An unreviewed note that its author wrote is
+useful at once (a bot's plan, a person's capture); one fetched from the web or
+distilled from a session transcript can carry someone else's instructions.
+Each note falls in one class:
+
+| Class | Which notes | `lookup` | `recall` |
+|---|---|---|---|
+| `trusted` | `maturity` verified, canonical, or absent (unrated) | shown; every trusted note ranks above every draft | the brief's main block |
+| `draft` | `maturity: draft`, authored (any other `source_type`, or none) | shown, labelled draft, after the trusted notes | the main block, labelled draft |
+| `external` | `maturity: draft` with `source_type` `url` or `session` | **withheld** unless `--include-drafts` | only the capped **Unverified** block, with `source_url` as provenance, never a summary |
+
+A note tagged `origin:session-harvest` is `external` too: that is how
+harvested notes were marked before `source_type: session` existed.
+Promoting a note (`claudron promote`) makes it trusted whatever its origin.
+
 ## Note types
 
 Six types. Procedural content — skills, slash commands, agent-executable
@@ -112,7 +130,7 @@ from file mtime), `tags` (list of strings).
 | `confidence` | `stated \| high \| medium \| speculation` | Author's confidence in the content (recommended for agent writes; may become required once the write chokepoint enforces it for free) |
 | `expires` | ISO date | Review trigger — **never** a deletion trigger. Past-`expires` notes enter the review queue (E5) |
 | `source_url` | string | Provenance / dedup key for ingested content |
-| `source_type` | `url \| file \| inline` | How the content arrived |
+| `source_type` | `url \| file \| inline \| session` | How the content arrived; `session` is text distilled from a session transcript. `url` and `session` drafts are withheld from default reads (§Reads) |
 | `slug` | string | Explicit slug override; defaults to the kebab-case filename stem |
 | `last_verified` | ISO date | Last human/agent verification of the content |
 | `supersedes` | wikilink | This note replaces that one |

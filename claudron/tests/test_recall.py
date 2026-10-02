@@ -204,8 +204,9 @@ class TestBrief:
         env = json.loads(capsys.readouterr().out)
         notes = env["data"]["notes"]
         keys = {"title", "path", "tier", "type", "status", "maturity",
-                "updated", "summary", "score"}
+                "trust", "trusted", "source_url", "updated", "summary", "score"}
         assert all(set(n) == keys for n in notes)
+        assert env["data"]["unverified"] == [] and env["data"]["unverified_more"] == 0
         by_tier = {n["tier"]: n for n in notes}
         assert by_tier["project:storydump"]["score"] is None
         assert isinstance(by_tier["shared"]["score"], int)

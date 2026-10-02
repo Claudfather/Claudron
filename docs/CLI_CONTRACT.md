@@ -53,7 +53,8 @@ One shape, every command:
   breakdown; `new` → `{"path": "…"}`; `status` → the health dict **plus
   `engine_version`** (below); `index --navigation` → the navigation result
   (§Command-specific contracts); `lookup` →
-  `{query, results}`; `related` →
+  `{query, results}`, each result `{title, score, match_type, tier, path, tags,
+  maturity, trust, trusted}` (§Trust-aware reads); `related` →
   `{note, related: [{path, title, tier, direction, hops}]}` (`direction` ∈
   `out`/`in`/`both` for a direct neighbor, else `N-hop`); `links` →
   `{broken: [{src, target}], orphans: [path]}` (both keys always present in
@@ -559,6 +560,24 @@ stdout, and never to stderr where a host might surface them as a session error.
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision
   errors (never silently overwrites); `--force` overrides. `--edit` without
   `$EDITOR` still writes the note and errors on stderr.
+- `lookup` / `recall` — **trust-aware reads** (#200 §1). Each note has a read
+  class, `trust` ∈ `{trusted, draft, external}`, from its `maturity` and
+  `source_type` (SCHEMA.md §Reads: maturity × origin); `trusted` is its boolean.
+  - **`lookup` ranks every trusted note above every draft**, whatever the score;
+    score orders notes within a class. An **`external`** draft — `source_type`
+    `url` or `session`, or the legacy `origin:session-harvest` tag — is withheld
+    unless **`--include-drafts`**. An authored draft is always included, labelled.
+  - **`recall --json`** adds `trust`, `trusted` and `source_url` to every note,
+    and two keys to `data`: `unverified` (external drafts, newest first, at most
+    `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how many
+    more exist). An external draft never appears in `notes`.
+  - **The brief** renders `unverified` after everything trusted, under its own
+    header and a "never cite as fact" line, in whatever budget is left. Each line
+    is title, type, path and `source_url`; the body is never shown, since the
+    body is where someone else's instructions would be.
+  - Gate on `"trust-aware-reads" in status --json → data.capabilities`. On an
+    engine without it, `lookup` returns drafts ranked by score alone and
+    `recall` has no `unverified` key, so a consumer splits drafts out itself.
 - `capture` / `capture --update` — the write door (shared engine with a future
   MCP `claudron_write`). The `--json` `data` payload is the typed write result:
   `{action, path, reason, written}`.
@@ -574,7 +593,7 @@ stdout, and never to stderr where a host might surface them as a session error.
     dedup-routed `capture`; the authoring door `new` always writes-or-errors —
     exit 0 means the note landed — so it carries no `written` field.)
   - **Provenance rides in frontmatter, not in the body.** `--source-url URL`
-    and `--source-type {url,file,inline}` (equally, the `source_url` /
+    and `--source-type {url,file,inline,session}` (equally, the `source_url` /
     `source_type` keys of the `--stdin` JSON) write the SCHEMA.md optional
     fields of the same names. Both are omitted from the note when unset.
     `source_type` accepts only SCHEMA.md's vocabulary **on both spellings** —

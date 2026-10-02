@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+- **Heads-up: reads are trust-aware, and `lookup` now withholds drafts from the web or a session transcript ([#200](https://github.com/Claudfather/Claudron/issues/200) §1).** A high-scoring draft used to outrank a verified note, and a planted instruction in harvested or fetched text could reach a session's brief as context. Each note now has a read class from its `maturity` and `source_type` (SCHEMA.md §Reads: maturity × origin):
+  - **`trusted`** (verified, canonical, or unrated legacy): every trusted note ranks above every draft in `lookup`, whatever the score.
+  - **`draft`**, authored (a bot's plan, a person's capture): still shown, labelled `(draft)`, after the trusted notes.
+  - **`external`** (`source_type` `url` or `session`, or the legacy `origin:session-harvest` tag): **left out of `lookup` unless `--include-drafts`**, and shown by `recall` only in a capped **Unverified** block after everything trusted, with its `source_url` and never its body.
+  - `lookup --json` results gain `maturity`, `trust` and `trusted`. `recall --json` notes gain `trust`, `trusted` and `source_url`, and `data` gains `unverified` and `unverified_more`.
+  - `source_type` gains **`session`**, for text distilled from a session transcript.
+  - Consumers gate on the new **`trust-aware-reads`** capability; `docs/CLI_CONTRACT.md` names it.
+  - **Tests** (`claudron/tests/test_trust.py`): the class table, and a fixture where the drafts hold the top score. No external draft reaches `lookup`'s default results or recall's `notes`; every trusted note ranks above every draft; the Unverified block is capped, newest first, and carries provenance but no body; promoting a note makes it trusted.
+
 ### Fixed
 - **The write door commits only the paths it wrote ([#211](https://github.com/Claudfather/Claudron/issues/211)).** `commit_paths` staged the named paths (`git add -- <paths>`) and then committed with a bare `git commit`, which takes the whole index. A change somebody else had already staged in the vault went into the door's commit, under the door's message.
   - **Which doors:** `capture`, `capture --update` and `doctor --fix`. All three commit through `commit_paths`.

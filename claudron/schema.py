@@ -130,7 +130,39 @@ MATURITY_VALUES = ("draft", "verified", "canonical")
 # rather than trusting this copy. Not a validation code: the 0.x error catalog
 # is closed, so `validate` still treats an out-of-vocabulary value already on
 # disk as preserved-and-ignored, exactly like any unknown field.
-SOURCE_TYPES = ("url", "file", "inline")
+SOURCE_TYPES = ("url", "file", "inline", "session")
+
+# Where content came from, when it came from outside the vault's own authors:
+# fetched from the web (`url`) or distilled from a session transcript
+# (`session`). Text from either can carry someone else's instructions, so a
+# *draft* from outside is withheld from default reads until a person promotes
+# it (SCHEMA.md §The two axes, origin; #200 §1). `file` stays authored: it is a
+# document the author pointed at, not text the engine fetched.
+EXTERNAL_SOURCE_TYPES = ("url", "session")
+
+# The tag harvested notes carried before `source_type: session` existed — a
+# vault convention SCHEMA.md documents, read so those notes stay external.
+LEGACY_SESSION_TAG = "origin:session-harvest"
+
+# A note's read class (#200 §1): `trusted` (verified, canonical, or unrated
+# legacy), `draft` (an unreviewed note its author wrote — shown, labelled,
+# ranked after every trusted note), or `external` (an unreviewed note from
+# outside — withheld from default reads, shown only in recall's Unverified
+# block).
+TRUST_CLASSES = ("trusted", "draft", "external")
+
+
+def trust_class(maturity: str, source_type: str, tags: list[str]) -> str:
+    """The note's read class (:data:`TRUST_CLASSES`) — the one home of the rule.
+
+    Only ``draft`` is unreviewed: a value off the ladder reads as unrated, which
+    is trusted (legacy notes predate the axis).
+    """
+    if maturity != MATURITY_VALUES[0]:
+        return "trusted"
+    if source_type in EXTERNAL_SOURCE_TYPES or LEGACY_SESSION_TAG in tags:
+        return "external"
+    return "draft"
 
 
 def ladder_index(maturity: str) -> int:

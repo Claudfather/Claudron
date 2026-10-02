@@ -45,6 +45,7 @@ CAPABILITIES: tuple[str, ...] = (
     "navigation",   # `index --navigation` regenerates INDEX.md from the index
     "doctor",       # `doctor [--fix]` diagnoses a vault + applies migrations (#190)
     "doctor-settings",  # `doctor --settings PATH` checks those files' claudron hooks (#204)
+    "trust-aware-reads",  # lookup/recall rank trusted first, withhold external drafts (#200 §1)
 )
 
 from .vault import Vault, detect

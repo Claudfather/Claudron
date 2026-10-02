@@ -362,6 +362,7 @@ def cmd_lookup(args) -> int:
         limit=args.limit,
         include_archived=args.include_archived,
         include_expired=args.include_expired,
+        include_drafts=args.include_drafts,
     )
 
     if not results:
@@ -384,6 +385,9 @@ def cmd_lookup(args) -> int:
                         "tier": r.doc.tier,
                         "path": str(r.doc.source_path.relative_to(vault.root)),
                         "tags": r.doc.tags,
+                        "maturity": r.doc.maturity,
+                        "trust": r.doc.trust,
+                        "trusted": r.doc.trust == "trusted",
                     }
                     for r in results
                 ],
@@ -394,7 +398,8 @@ def cmd_lookup(args) -> int:
     for r in results:
         rel = r.doc.source_path.relative_to(vault.root)
         tags = f"  [{', '.join(r.doc.tags)}]" if r.doc.tags else ""
-        print(f"  [{r.score:3d}] {r.doc.title:<40s} {rel}{tags}")
+        label = {"draft": "  (draft)", "external": "  (unverified draft)"}.get(r.doc.trust, "")
+        print(f"  [{r.score:3d}] {r.doc.title:<40s} {rel}{tags}{label}")
     return 0
 
 
@@ -1554,6 +1559,11 @@ def main(argv=None) -> int:
     )
     p_lookup.add_argument(
         "--include-expired", action="store_true", help="Include expired docs"
+    )
+    p_lookup.add_argument(
+        "--include-drafts", action="store_true",
+        help="Include unreviewed drafts from the web or a session transcript "
+             "(withheld by default; authored drafts are always included)",
     )
 
     # related — wikilink neighbors of a note

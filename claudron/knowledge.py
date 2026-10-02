@@ -26,6 +26,7 @@ from .schema import (
     has_conflict_markers,
     ladder_index,
     slugify,
+    trust_class,
 )
 from .vault import (
     SCHEMA_VERSION,
@@ -53,6 +54,13 @@ class KnowledgeDoc:
     note_type: str = ""  # SCHEMA.md type enum
     maturity: str = ""  # D11 trust axis — E4 ranks on it; recall labels it
     updated: str = ""  # sortable stamp (updated, else created)
+    source_type: str = ""  # how the content arrived (SCHEMA.md); decides `trust`
+    source_url: str = ""  # its provenance, shown beside an unverified note
+
+    @property
+    def trust(self) -> str:
+        """``trusted`` | ``draft`` | ``external`` (schema.trust_class, #200 §1)."""
+        return trust_class(self.maturity, self.source_type, self.tags)
 
 
 @dataclass
@@ -136,6 +144,8 @@ def _parse_doc(path: Path, tier: str) -> KnowledgeDoc | None:
         note_type=str(fm.get("type", "")),
         maturity=str(fm.get("maturity", "")),
         updated=_stamp(fm),
+        source_type=str(fm.get("source_type", "") or ""),
+        source_url=str(fm.get("source_url", "") or ""),
     )
 
 
@@ -495,8 +505,13 @@ def lookup(
     include_archived: bool = False,
     include_expired: bool = False,
     tier_b: bool = True,
+    include_drafts: bool = False,
 ) -> list[KnowledgeResult]:
     """Search vault knowledge. Returns ranked results.
+
+    Trust-aware (#200 §1): every trusted note ranks above every draft, whatever
+    the score, and an ``external`` draft (from the web or a session transcript)
+    is left out unless ``include_drafts``. Score orders notes within a class.
 
     ``tier_b=False`` restricts to the frontmatter index — no full-text
     body scan. Hot-path callers (recall at every SessionStart) use it for
@@ -542,10 +557,15 @@ def lookup(
 
     # ── Sort: score desc, then tier priority (_tier_rank is the single home,
     # shared with wikilink ambiguity resolution) ──
+    if not include_drafts:
+        results = [r for r in results if r.doc.trust != "external"]
+
     def _sort_key(r: KnowledgeResult) -> tuple:
-        # -ladder_index: canonical(-2) < verified(-1) < draft(0) < unrated(+1),
-        # so higher trust sorts first, above tier.
-        return (-r.score, -ladder_index(r.doc.maturity), _tier_rank(r.doc.tier))
+        # Trusted before drafts first (a high-scoring draft must never outrank a
+        # verified note), then score. -ladder_index: canonical(-2) < verified(-1)
+        # < draft(0) < unrated(+1), so higher trust sorts first, above tier.
+        return (r.doc.trust != "trusted", -r.score, -ladder_index(r.doc.maturity),
+                _tier_rank(r.doc.tier))
 
     results.sort(key=_sort_key)
     return results[:limit]
