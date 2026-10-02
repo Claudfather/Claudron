@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-02
+
 ### Added
 - **The harvest pipes ([#200](https://github.com/Claudfather/Claudron/issues/200) §4).** Mechanical doors an automated writer files facts through; none runs a model or picks a placement. Contract: `docs/CLI_CONTRACT.md`; capabilities `subjects`, `amend`, `runs`.
   - **`subjects [--type T]`** lists the notes facts can go under, derived from the index, with each note's `##` sections, aliases and `trust`.
