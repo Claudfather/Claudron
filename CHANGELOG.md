@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+- **The harvest pipes ([#200](https://github.com/Claudfather/Claudron/issues/200) §4).** Mechanical doors an automated writer files facts through; none runs a model or picks a placement. Each has its own capability (`subjects`, `amend`, `runs`) and a `docs/CLI_CONTRACT.md` entry.
+  - **`subjects [--type T]`** lists the notes facts can go under, derived from the index (a subject exists because its note does), with each note's `##` sections, aliases and `trust`. Drafts are included, so a later run finds what an earlier one wrote.
+  - **`resolve --name N`** ranks candidate subjects: an exact title, alias or slug outranks any fuzzy match, then the index's own scoring orders the rest. `--aliases` widens the names tried; `--context` only breaks ties.
+  - **`amend --stdin`** writes at the fact level: `append_fact` to a named section, `add_evidence`, `add_alias`, and `supersede_fact`, which moves the old fact to `## History`. A fact is one bullet with a stable id (a hash of its folded text) and its evidence nested under it. **Idempotent:** the same fact with a known ref is a no-op, and with a new ref adds only the ref.
+  - **One commit per run:** `capture`, `capture --update` and `amend` take `--run-id`. Such writes aren't committed; `run-commit ID` lands them as one commit with a `Claudron-Run: ID` trailer, and `revert-run ID` reverts it. A revert that conflicts with later edits is aborted and leaves the tree alone.
+  - Keyed on today's note types and each note's real sections, so SCHEMA.md's memory homes (#200 §2) can land later as one more filter.
+  - The index gains `type`, `sections` and `source_type` (index schema 6, so existing indexes rebuild once). `capture` and `amend` share one guarded-commit helper with the write door (`engine.commit_guarded`).
+  - **Tests** (`claudron/tests/test_pipes.py`): resolve's exact-over-fuzzy ranking and alias/slug matches; each amend op, its no-op replay, its refusals (each writing nothing), and the index seeing a new section or alias; a run committing once, reverting exactly, refusing an uncommitted run, aborting a conflicting revert with the tree untouched, and a bad run id refused before any write.
+
 ### Changed
 - **Heads-up: reads are trust-aware, and `lookup` now withholds drafts from the web or a session transcript ([#200](https://github.com/Claudfather/Claudron/issues/200) §1).** A high-scoring draft used to outrank a verified note, and a planted instruction in harvested or fetched text could reach a session's brief as context. Each note now has a read class from its `maturity` and `source_type` (SCHEMA.md §Reads: maturity × origin):
   - **`trusted`** (verified, canonical, or unrated legacy): every trusted note ranks above every draft in `lookup`, whatever the score.

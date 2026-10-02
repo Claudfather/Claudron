@@ -46,6 +46,9 @@ CAPABILITIES: tuple[str, ...] = (
     "doctor",       # `doctor [--fix]` diagnoses a vault + applies migrations (#190)
     "doctor-settings",  # `doctor --settings PATH` checks those files' claudron hooks (#204)
     "trust-aware-reads",  # lookup/recall rank trusted first, withhold external drafts (#200 §1)
+    "subjects",     # `subjects` and `resolve`: the derived subject registry and its ranking (#200 §4)
+    "amend",        # `amend --stdin`: fact-level section writes, idempotent on fact id + evidence ref (#200 §4)
+    "runs",         # `--run-id` on capture/amend, `run-commit` and `revert-run` (#200 §4)
 )
 
 from .vault import Vault, detect

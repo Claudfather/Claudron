@@ -416,6 +416,7 @@ stdout, and never to stderr where a host might surface them as a session error.
 | fleet | `fleet add`, `fleet list` |
 | integration | `plug`, `unplug`, `config`, `migrate` |
 | curation | `promote` *(E5)* |
+| harvest | `subjects`, `resolve`, `amend`, `run-commit`, `revert-run` *(#200 §4)* |
 
 ## Command-specific contracts
 
@@ -578,6 +579,59 @@ stdout, and never to stderr where a host might surface them as a session error.
   - Gate on `"trust-aware-reads" in status --json → data.capabilities`. On an
     engine without it, `lookup` returns drafts ranked by score alone and
     `recall` has no `unverified` key, so a consumer splits drafts out itself.
+- `subjects [--type T]` — the **derived subject registry** (#200 §4): every live
+  note (not archived or superseded) that facts can be filed under, by title.
+  There is no stored registry; a subject exists because its note does. `--json`
+  `data` is `{type, subjects}`, each `{title, path, type, aliases, sections,
+  tags, maturity, trust, updated, score, match_type}` (`score`/`match_type`
+  `null` here). `sections` are the note's `##` headings. Drafts are included and
+  labelled by `trust`: a writer must find the draft an earlier run wrote, or it
+  files a twin. Gate on `"subjects" in status --json → data.capabilities`.
+- `resolve --name N [--type T] [--aliases a,b] [--context TEXT] [--limit K]` —
+  the top-K **candidate subjects** for a name, best first, same entry shape with
+  `score` and `match_type` set. A candidate scores its best match over the name
+  and aliases: exact title (100), exact alias (90), slug (85, `match_type:
+  "slug"`), then title, tag and filename scoring. `--context` only breaks ties
+  among notes that already matched; it never adds one. **Choosing among the
+  candidates is the caller's job**; `resolve` never picks, writes or runs a
+  model. Same capability as `subjects`.
+- `amend --stdin` — **fact-level section writes** on an existing note (#200 §4),
+  through the same lock, lenient validation, index refresh and commit as
+  `capture --update`. stdin is one JSON object: `note` (title, alias, slug or
+  vault-relative path), `op`, `run_id` (optional), and per op:
+  - `append_fact`: `section`, `fact`, `evidence` `{ref, date?, asserted_by?}`.
+    A missing section is created (before `## History`).
+  - `add_evidence`: `fact_id`, `evidence`.
+  - `add_alias`: `alias` (added to frontmatter `aliases`).
+  - `supersede_fact`: `fact_id`, `fact`, `evidence`. The old fact moves to
+    `## History` as `- <text> — superseded <date> by fact:<new id>`.
+
+  A fact is one bullet, `- <text> <!-- fact:<id> -->`, with its evidence nested
+  under it as `  - evidence: <ref> · <date>[ · asserted by <who>]`. The id is
+  the first 12 hex of the SHA-256 of the fact's case- and whitespace-folded
+  text. **Idempotent:** a fact whose id and evidence ref are already there is a
+  no-op, and the same fact with a new ref adds only that ref, which is how
+  recurrence is counted. `--json` `data` is `{action, op, path, outcome,
+  fact_id, reason, written}`: `action` ∈ `{updated, unchanged, rejected}`,
+  `outcome` ∈ `{fact_added, evidence_added, alias_added, fact_superseded}`, and
+  `written` is true only for `updated`. A malformed request (unknown op, a
+  missing field, a `fact_id` that isn't live, a comment marker in the text)
+  exits 2 and writes nothing; `rejected` (validation) exits 1. Gate on
+  `"amend" in status --json → data.capabilities`.
+- **Runs** (#200 §4): `capture`, `capture --update` and `amend` take
+  `--run-id ID` (or a `run_id` key on stdin). Such a write is **not committed**;
+  its path joins the run's journal, `.claudron/runs/<ID>.json` (local, never
+  committed). An ID is 1–64 letters, digits, `.`, `_` or `-`, starting with a
+  letter or digit; a bad one exits 2 before anything is written.
+  - `run-commit ID` lands everything the run wrote since its last commit as
+    **one commit** whose message ends `Claudron-Run: ID`. Nothing new → `unchanged`.
+  - `revert-run ID` reverts the run's commit(s), newest first, then rebuilds the
+    index. A revert that conflicts with later edits is **aborted** and exits 1,
+    leaving the tree as it was; so does a run never committed (its notes are
+    named), a wedged tree, or a plain-directory vault. Reverting twice → `unchanged`.
+  - `--json` `data` for both is `{run_id, action, paths, commits, reason,
+    warnings}`, `action` ∈ `{committed, reverted, unchanged}`.
+  - Gate on `"runs" in status --json → data.capabilities`.
 - `capture` / `capture --update` — the write door (shared engine with a future
   MCP `claudron_write`). The `--json` `data` payload is the typed write result:
   `{action, path, reason, written}`.

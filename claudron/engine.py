@@ -249,8 +249,13 @@ def capture(
     no_commit: bool = False,
     source_url: str | None = None,
     source_type: str | None = None,
+    run_id: str | None = None,
 ) -> WriteResult:
     """The guarded write path. Validate → dedup (routes) → write → index.
+
+    With ``run_id`` the note is written but not committed: its path joins the
+    run's journal, and ``claudron run-commit`` lands the run as one commit
+    (runs.py, #200 §4).
 
     Always returns a WriteResult (action == "rejected" carries the
     validation Findings; nothing written). Raises ScopeError for scope
@@ -261,6 +266,9 @@ def capture(
     the name set and the content fingerprint is #55's step, and a half-built
     signal that dedups sometimes is worse than one that never claims to.
     """
+    if run_id:
+        from .runs import check_run_id
+        check_run_id(run_id)  # refused before anything is written
     if note_type not in TYPES:
         # Guard before any type-keyed access — validate_note owns the E002
         # message but runs after composition, which would KeyError first.
@@ -335,10 +343,8 @@ def capture(
         # AFTER the write, always. A commit that fails here leaves an
         # uncommitted note, which is exactly the behaviour this replaces — so
         # the change is strictly additive in durability.
-        commit_warnings = [] if no_commit else _commit_written(
-            vault, [target], "capture", title, note_type,
-            _tier_label(project, fleet),
-        )
+        commit_warnings = _commit_or_record(vault, target, run_id, no_commit, "capture", title, note_type,
+                                            _tier_label(project, fleet))
 
     return WriteResult(
         action="created",
@@ -346,6 +352,16 @@ def capture(
         reason="strict-validated, no live duplicate" + (" (forced)" if force else ""),
         warnings=commit_warnings,
     )
+
+
+def _commit_or_record(vault: Vault, path: Path, run_id: str | None, no_commit: bool, verb: str, title: str,
+                      note_type: str, tier: str) -> list[Finding]:
+    """After a write: join the run's journal when it names one, else commit (unless ``no_commit``)."""
+    if run_id:
+        from .runs import record
+        record(vault, run_id, path)
+        return []
+    return [] if no_commit else _commit_written(vault, [path], verb, title, note_type, tier)
 
 
 def _commit_subject(verb: str, title: str) -> str:
@@ -382,6 +398,19 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
     never make a mid-surgery repository worse, and must never be refused because
     of one — so the note lands, the commit does not, and the warning says which.
     """
+    subject = _commit_subject(verb, title)
+    rel = str(paths[0].relative_to(vault.root)) if paths else ""
+    return commit_guarded(vault, paths, f"{subject}\n\ntype: {note_type}; tier: {tier}; path: {rel}")
+
+
+def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Finding]:
+    """Commit ``paths`` with ``message`` under the write door's rules; warnings, never raises.
+
+    The one home of those rules (#157), shared by every door that commits what
+    it wrote: a plain directory is silent, a wedged tree is refused but the
+    files stay written, and a failed stage or commit is a warning on files that
+    are already on disk.
+    """
     from .sync import (DEFAULT_GIT_TIMEOUT, SyncError, _git_dir,
                        _interrupted_state, commit_paths)
 
@@ -409,11 +438,8 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
             "one. Resolve the tree, then `claudron sync` commits this note."
         )
 
-    subject = _commit_subject(verb, title)
-    body = f"type: {note_type}; tier: {tier}; path: {rel}"
     try:
-        outcome = commit_paths(vault.root, paths, f"{subject}\n\n{body}",
-                               timeout=t)
+        outcome = commit_paths(vault.root, paths, message, timeout=t)
     except SyncError as exc:
         return warn(f"note written but NOT committed: {exc}")
     if not outcome.ok:
@@ -425,7 +451,7 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
 
 
 def append_addendum(vault: Vault, note_path: Path, body: str, *,
-                    no_commit: bool = False) -> WriteResult:
+                    no_commit: bool = False, run_id: str | None = None) -> WriteResult:
     """Append a dated addendum section and bump `updated` — line-level
     edits only, the note's own formatting is preserved.
 
@@ -436,6 +462,9 @@ def append_addendum(vault: Vault, note_path: Path, body: str, *,
     "updated"."""
     if not is_within_root(note_path, vault.root):
         raise ScopeError(f"path {str(note_path)!r} escapes the vault root")
+    if run_id:
+        from .runs import check_run_id
+        check_run_id(run_id)  # refused before anything is written
     note_path = note_path.resolve()
 
     rel = str(note_path.relative_to(vault.root))
@@ -474,10 +503,8 @@ def append_addendum(vault: Vault, note_path: Path, body: str, *,
         # the lock already held. `addendum` rather than `capture` in the subject
         # so the two write classes stay countable in `git log` — the same reason
         # the safety net says "straggler(s)".
-        commit_warnings = [] if no_commit else _commit_written(
-            vault, [note_path], "addendum", fm.get("title") or rel,
-            str(fm.get("type") or "unknown"), "existing",
-        )
+        commit_warnings = _commit_or_record(vault, note_path, run_id, no_commit, "addendum",
+                                            fm.get("title") or rel, str(fm.get("type") or "unknown"), "existing")
 
     return WriteResult(
         action="updated",

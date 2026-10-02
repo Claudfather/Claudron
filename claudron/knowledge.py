@@ -176,9 +176,31 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
         # so they land first and the renderer reads them rather than the notes.
         "description": str(fm.get("description", "") or ""),
         "owner": str(fm.get("owner", "") or ""),
+        # #200 §4: the note's `##` sections and provenance, so `subjects` and
+        # `resolve` answer from the index instead of opening every note.
+        "type": str(fm.get("type", "") or ""),
+        "sections": note_sections(body),
+        "source_type": str(fm.get("source_type", "") or ""),
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
+
+
+_SECTION_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*#*[ \t]*$")
+
+
+def note_sections(body: str) -> list[str]:
+    """The note's level-2 headings, in order — the sections a fact can go in.
+
+    Fenced code is skipped, so a ``## `` line inside an example is not a section.
+    """
+    sections, fenced = [], False
+    for line in body.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        elif not fenced and (m := _SECTION_RE.match(line)):
+            sections.append(m.group(1))
+    return sections
 
 
 def write_index(vault: "Vault", index: dict) -> None:

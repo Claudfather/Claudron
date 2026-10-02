@@ -54,6 +54,9 @@ from .knowledge import (
 )
 from .graph import build_graph, render_html
 from .promote import promote
+from .amend import AmendError, amend
+from .runs import RunError, commit_run, revert_run
+from .subjects import resolve, subjects
 from .session import derive_project, recall, render_brief
 from .sync import SyncError, check, pull_ff_only, run_git, sync
 
@@ -482,6 +485,86 @@ def cmd_promote(args) -> int:
     return 0
 
 
+def cmd_subjects(args) -> int:
+    vault = _resolve_vault(args)
+    found = subjects(vault, note_type=args.type)
+    if args.json:
+        _emit_json("subjects", {"type": args.type, "subjects": [s.as_dict() for s in found]})
+        return 0
+    for s in found:
+        label = {"draft": "  (draft)", "external": "  (unverified draft)"}.get(s.trust, "")
+        print(f"  {s.title:<40s} {s.path}  [{', '.join(s.sections)}]{label}")
+    return 0
+
+
+def cmd_resolve(args) -> int:
+    vault = _resolve_vault(args)
+    aliases = _tags_arg(args.aliases) if args.aliases else []
+    found = resolve(vault, args.name, note_type=args.type, aliases=aliases, context=args.context,
+                    limit=args.limit)
+    if args.json:
+        _emit_json("resolve", {"name": args.name, "candidates": [s.as_dict() for s in found]})
+        return 0
+    if not found:
+        print(f"no subject matches '{args.name}'", file=sys.stderr)
+    for s in found:
+        print(f"  [{s.score:3d}] {s.title:<40s} {s.path}  ({s.match_type})")
+    return 0
+
+
+def cmd_amend(args) -> int:
+    vault = _resolve_vault(args)
+    try:
+        request = json.loads(sys.stdin.read())
+    except json.JSONDecodeError as exc:
+        print(f"invalid JSON on stdin: {exc}", file=sys.stderr)
+        return 2
+    if not isinstance(request, dict) or not request.get("note"):
+        print("amend reads one JSON object on stdin, with at least `note` and `op`", file=sys.stderr)
+        return 2
+    path = resolve_note_ref(vault, str(request["note"]))
+    if path is None:
+        print(f"no note matches '{request['note']}'", file=sys.stderr)
+        return 2
+    try:
+        result = amend(vault, vault.root / path, request, run_id=request.get("run_id") or args.run_id,
+                       no_commit=args.no_commit)
+    except (AmendError, ScopeError, RunError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if args.json:
+        _emit_json("amend", result.to_dict(), result.errors or result.warnings or None)
+    else:
+        for f in [*result.errors, *result.warnings]:
+            print(f"[{f.code}] {f.severity} — {f.message}", file=sys.stderr)
+        print(f"{result.action}: {result.path}" + (f"  ({result.outcome})" if result.outcome else ""))
+    return 1 if result.action == "rejected" else 0
+
+
+def _run_verb(args, verb: str, fn) -> int:
+    vault = _resolve_vault(args)
+    try:
+        result = fn(vault, args.run_id)
+    except RunError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        _emit_json(verb, result.to_dict())
+    else:
+        print(f"{result.action}: run {result.run_id} — {result.reason}")
+        for w in result.warnings:
+            print(f"[{w['code']}] {w['severity']} — {w['message']}", file=sys.stderr)
+    return 0
+
+
+def cmd_run_commit(args) -> int:
+    return _run_verb(args, "run-commit", commit_run)
+
+
+def cmd_revert_run(args) -> int:
+    return _run_verb(args, "revert-run", revert_run)
+
+
 def cmd_graph(args) -> int:
     vault = _resolve_vault(args)
     graph = build_graph(vault)
@@ -639,8 +722,8 @@ def cmd_capture(args) -> int:
             return 2
         try:
             result = append_addendum(vault, note_path, args.body,
-                                     no_commit=getattr(args, "no_commit", False))
-        except ScopeError as exc:
+                                     no_commit=getattr(args, "no_commit", False), run_id=args.run_id)
+        except (ScopeError, RunError) as exc:
             print(str(exc), file=sys.stderr)
             return 2
         return _emit_write_result(args, result)
@@ -691,8 +774,9 @@ def cmd_capture(args) -> int:
             no_commit=getattr(args, "no_commit", False),
             source_url=finding.get("source_url") or args.source_url,
             source_type=source_type,
+            run_id=finding.get("run_id") or args.run_id,
         )
-    except ScopeError as exc:
+    except (ScopeError, RunError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
@@ -1432,7 +1516,11 @@ def main(argv=None) -> int:
     )
     p_capture.add_argument(
         "--stdin", action="store_true",
-        help="Read the finding as JSON from stdin (fields: type, title, body, tags, owner, project, fleet, source_url, source_type)",
+        help="Read the finding as JSON from stdin (fields: type, title, body, tags, owner, project, fleet, source_url, source_type, run_id)",
+    )
+    p_capture.add_argument(
+        "--run-id", metavar="ID",
+        help="Write as part of a run: not committed now; `run-commit ID` lands the run as one commit",
     )
     p_capture.add_argument(
         "--update", metavar="PATH",
@@ -1589,6 +1677,40 @@ def main(argv=None) -> int:
         "--orphans", action="store_true", help="Only notes nothing links to"
     )
 
+    # subjects / resolve — the read pipes harvest places facts with (#200 §4)
+    p_subjects = sub.add_parser(
+        "subjects", help="List the notes facts can be filed under (derived from the index)",
+        parents=[vault_parent, json_parent],
+    )
+    p_subjects.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_resolve = sub.add_parser(
+        "resolve", help="Rank candidate subjects for a name (exact, alias, slug, then text)",
+        parents=[vault_parent, json_parent],
+    )
+    p_resolve.add_argument("--name", required=True, help="The subject's name")
+    p_resolve.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_resolve.add_argument("--aliases", help="Other names for it, comma-separated")
+    p_resolve.add_argument("--context", help="A sentence about it; only breaks ties")
+    p_resolve.add_argument("--limit", type=int, default=5, help="Max candidates (default: 5)")
+
+    # amend — section-targeted writes (#200 §4)
+    p_amend = sub.add_parser(
+        "amend", help="Append a fact, add evidence or an alias, or supersede a fact (JSON on stdin)",
+        parents=[vault_parent, json_parent],
+    )
+    p_amend.add_argument("--run-id", metavar="ID", help="Write as part of a run (see run-commit)")
+    p_amend.add_argument("--no-commit", action="store_true", help="Write without committing")
+
+    # run-commit / revert-run — one commit per harvest run, and its undo (#200 §4)
+    p_run_commit = sub.add_parser(
+        "run-commit", help="Commit everything a run wrote as one commit", parents=[vault_parent, json_parent],
+    )
+    p_run_commit.add_argument("run_id", help="The run id the writes named")
+    p_revert_run = sub.add_parser(
+        "revert-run", help="Revert a run's commit", parents=[vault_parent, json_parent],
+    )
+    p_revert_run.add_argument("run_id", help="The run id to revert")
+
     # promote — move a note along the maturity trust ladder (E5)
     p_promote = sub.add_parser(
         "promote", help="Set a note's maturity (draft/verified/canonical)",
@@ -1706,6 +1828,11 @@ def main(argv=None) -> int:
         "related": cmd_related,
         "links": cmd_links,
         "promote": cmd_promote,
+        "subjects": cmd_subjects,
+        "resolve": cmd_resolve,
+        "amend": cmd_amend,
+        "run-commit": cmd_run_commit,
+        "revert-run": cmd_revert_run,
         "graph": cmd_graph,
         "index": cmd_index,
         "version": cmd_version,
