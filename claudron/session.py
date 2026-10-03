@@ -133,7 +133,7 @@ def recall(
             fm, body, _ = parse_note(text)
             conventions = (body if fm is not None else text).strip() or None
 
-    me = _about_me(vault)
+    me = _quoted_me(_about_me(vault))
 
     notes: list[dict] = []
     unverified: list[dict] = []
@@ -150,7 +150,9 @@ def recall(
 
     # Project tier: membership, not relevance — most recently updated first.
     if project and project in vault.projects:
-        docs = walk_knowledge_tier(vault.projects[project], f"project:{project}")
+        # A person note put here by hand (W109) is still never a recall result (#200 §2).
+        docs = [d for d in walk_knowledge_tier(vault.projects[project], f"project:{project}")
+                if d.note_type != "person"]
         entries = sorted(
             (_entry(doc, vault) for doc in docs),
             key=lambda e: e["updated"],
@@ -246,6 +248,31 @@ def _about_me(vault: Vault) -> str | None:
     return "\n".join(out).strip() or None
 
 
+def _quoted_me(me: str | None) -> str | None:
+    """The about-me note as every consumer gets it (``recall --json``'s ``me``, the brief's block):
+    within its budget by whole lines, quoted line by line, with a notice when the budget cut it.
+
+    Quoted so whatever the note holds (an unclosed fence, a setext underline, a heading) closes with
+    the quote: it can never open a section of the brief, or swallow one, wherever it is rendered.
+    """
+    if not me:
+        return None
+    lines = me.splitlines()
+    kept, cost = [], 0
+    for line in lines:
+        if cost + count_tokens(line) > ME_TOKEN_BUDGET:
+            break
+        kept.append(line)
+        cost += count_tokens(line)
+    cut = len(kept) < len(lines)
+    while cut and kept and kept[-1].startswith("**") and kept[-1].endswith("**"):
+        kept.pop()  # never end on a label whose content was cut
+    quoted = "\n".join(f"> {ln}" if ln.strip() else ">" for ln in kept)
+    notice = (f"_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: "
+              f"shorten {ME_NOTE.as_posix()})_") if cut else ""
+    return "\n\n".join(part for part in (quoted, notice) if part) or None
+
+
 def render_brief(data: dict) -> str:
     """Render recall data as the injectable markdown brief, enforcing the
     whole-brief token budget (drop notes, never truncate mid-thought).
@@ -267,21 +294,7 @@ def render_brief(data: dict) -> str:
             spent += count_tokens(block)
 
     if data.get("me"):
-        kept, cost = [], 0
-        for line in data["me"].splitlines():  # whole lines, within its own budget
-            if cost + count_tokens(line) > ME_TOKEN_BUDGET:
-                break
-            kept.append(line)
-            cost += count_tokens(line)
-        cut = len(kept) < len(data["me"].splitlines())
-        while cut and kept and kept[-1].startswith("**") and kept[-1].endswith("**"):
-            kept.pop()  # never end on a label whose content was cut
-        # Quoted, line by line: whatever the note holds (an unclosed fence, a setext underline, a
-        # heading) closes with the quote, so it can never open a section of the brief or swallow it.
-        quoted = "\n".join(f"> {ln}" if ln.strip() else ">" for ln in kept)
-        notice = (f"\n\n_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: "
-                  f"shorten {ME_NOTE.as_posix()})_") if cut else ""
-        block = "## About me\n\n" + quoted + notice
+        block = "## About me\n\n" + data["me"]
         sections.append(block)
         spent += count_tokens(block)
 

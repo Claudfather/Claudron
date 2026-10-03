@@ -574,9 +574,13 @@ stdout, and never to stderr where a host might surface them as a session error.
   directory name (`../x`, `a/b`) exits 2.
   `subjects` and `resolve` take `--home H` (the same filter as `--type`, and
   exclusive with it) and `--kind K`, and each subject carries `kind` and
-  `relations`. `recall --json` gains `me`: the body of a trusted
-  `_personal/person/me.md`, or `null` (absent, a draft, conflicted, or
-  `BOT_NAME` set), rendered as `## About me`. Gate on
+  `relations`. `recall --json` gains `me`: a trusted, person-typed
+  `_personal/person/me.md` as ready-to-render markdown — within its
+  120-token budget by whole lines, quoted line by line (so nothing in it can
+  open or swallow a section wherever it is rendered), with a notice when the
+  budget cut it — or `null` (absent, a draft, conflicted, or `BOT_NAME` set).
+  The brief renders it under `## About me`. Person notes are never in
+  `notes` or `unverified`, wherever one sits. Gate on
   `"memory-homes" in status --json → data.capabilities`.
 - `new <type> "<title>"` — output always passes `validate --strict`. `owner`
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision

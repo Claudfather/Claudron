@@ -94,7 +94,7 @@ def _me(vault_dir, extra=""):
 def test_person_me_is_injected_into_every_brief(vault_dir):
     _me(vault_dir)
     data = recall(detect(vault_dir))
-    assert data["me"] == "I review on Tuesdays." and "## About me" in render_brief(data)
+    assert data["me"] == "> I review on Tuesdays." and "## About me\n\n> I review" in render_brief(data)
 
 
 def test_an_external_draft_never_speaks_for_the_operator(vault_dir):
@@ -154,7 +154,7 @@ def test_me_sections_render_as_labels_and_empty_ones_drop(vault_dir):
     me.parent.mkdir(parents=True, exist_ok=True)
     me.write_text("---\ntitle: Me\ntype: person\nstatus: current\nowner: t\ncreated: 2026-09-01\n---\n\n# Me\n\n"
                   "## Role\n\nEngineer.\n\n## Preferences\n\n## Notes\n\nTuesdays.\n")
-    assert recall(detect(vault_dir))["me"] == "**Role**\nEngineer.\n**Notes**\nTuesdays."
+    assert recall(detect(vault_dir))["me"] == "> **Role**\n> Engineer.\n> **Notes**\n> Tuesdays."
 
 
 def test_an_over_budget_me_says_so(vault_dir):
@@ -349,3 +349,21 @@ def test_only_a_person_edit_reads_as_the_person_rule(vault_dir, tmp_path):
     with pytest.raises(ScopeError, match="escapes the vault root"):
         amend(detect(vault_dir), outside, {"op": "append_fact", "section": "Facts", "fact": "F.",
                                            "evidence": {"ref": "s:1"}}, no_commit=True)
+
+
+def test_recall_never_returns_a_person_note_put_in_a_project_by_hand(vault_dir):
+    (vault_dir / "projects" / "x").mkdir(parents=True, exist_ok=True)
+    (vault_dir / "projects" / "x" / "eve.md").write_text(
+        "---\ntitle: Eve Example\ntype: person\nstatus: current\nowner: t\ncreated: 2026-09-01\n---\n\nTea.\n")
+    vault = detect(vault_dir)
+    for data in (recall(vault, project="x"), recall(vault, project="x", query="tea")):
+        assert "Eve Example" not in [n["title"] for n in data["notes"]]
+
+
+def test_the_json_me_is_already_quoted_and_budgeted_for_every_consumer(vault_dir):
+    _me(vault_dir)
+    me = vault_dir / PERSONAL_HUB / "person" / "me.md"
+    me.write_text(me.read_text().replace("I review on Tuesdays.", "```\n" + "code line here\n" * 80))
+    got = recall(detect(vault_dir))["me"]
+    quote, notice = got.split("\n\n", 1)
+    assert all(ln.startswith(">") for ln in quote.splitlines()) and "over its 120-token budget" in notice
