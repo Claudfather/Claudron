@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.9.0 — 2026-10-03
+
+Adds `claudron contract --json`, the contract as data, so a consumer can check its mirrors of the schema in its own CI without installing the engine.
+
 ### Added
 - **`claudron contract --json`: the contract as data.** One payload with what a consumer writes against: `capabilities`, `types`, `type_dirs`, per-type `statuses`, `homes` (each home's sections, in order), `relations`, the `maturity`, `source_types` and `trust_classes` vocabularies, and `person_dir`. It needs no vault and carries no engine version, so a consumer's copy changes only when the contract does. A consumer keeps that copy and checks its own mirrors against it in its own CI, with no engine installed; until now that check had to import `claudron.schema`, so it skipped wherever the engine wasn't installed. `contract_version` (1) changes only when the shape does. Capability `contract`. Contract: `docs/CLI_CONTRACT.md`. Tests: `claudron/tests/test_contract.py`.
 
