@@ -52,6 +52,7 @@ CAPABILITIES: tuple[str, ...] = (
     "memory-homes",  # entity/concept/person/project/practice types, `kind`, relations, _personal/ (#200 §2)
     "tags",         # `tags [--resolve]`: the _shared/TAGS.yaml registry; capture writes canonical tags (#200 §3)
     "ops-log",      # `.claudron/{runs,sessions}/<id>/ops.jsonl`; `status --json` → `runs` (#200 §5)
+    "contract",     # `contract --json`: the machine-readable contract consumers mirror (claudron.contract)
     "subject-filing",  # resolve's `exact`/`tier`/`--project`/`--alias`; amend's `expect_trust` + refusal envelope
 )
 

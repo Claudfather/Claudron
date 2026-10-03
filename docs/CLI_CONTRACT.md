@@ -415,7 +415,7 @@ stdout, and never to stderr where a host might surface them as a session error.
 | notes | `new`, `lookup`, `related`, `links`, `graph` |
 | session | `recall`, `capture`, `sync`, `hooks` *(E2)* |
 | fleet | `fleet add`, `fleet list` |
-| integration | `plug`, `unplug`, `config`, `migrate` |
+| integration | `plug`, `unplug`, `config`, `migrate`, `contract` |
 | curation | `promote` *(E5)* |
 | harvest | `subjects`, `resolve`, `amend`, `revert-run` *(#200 §4)*, `tags` *(#200 §3)* |
 
@@ -738,5 +738,14 @@ stdout, and never to stderr where a host might surface them as a session error.
     `$(...)`, backticks); building a `--body "…"` shell argument truncates the
     note or executes substitutions in the caller's shell before `claudron` runs.
     `--stdin` carries arbitrary content safely.
+- `contract [--json]` — **the machine-readable contract**, for a consumer to keep a copy of and
+  check its own mirrors against in its own CI, with no engine installed (a rendered copy with a
+  drift gate). Needs no vault. `data` is `{contract_version, engine_version, capabilities, types,
+  homes, relations, maturity, source_types, trust_classes, person_dir}`: `homes` maps each memory
+  home to its sections in order, and every other list is the vocabulary SCHEMA.md defines.
+  `contract_version` (now `1`) changes only when the payload's shape does (a key removed, renamed
+  or retyped); a new key or a new value in a list is additive. Without `--json` it prints the
+  same payload, unwrapped. Gate on
+  `"contract" in status --json → data.capabilities`.
 - `init --adopt` — additionally backfills missing `updated` from file mtime
   (the one sanctioned mutation, at adoption time only).

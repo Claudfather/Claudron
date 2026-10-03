@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- **`claudron contract --json`: the contract as data.** One payload with what a consumer writes against: `capabilities`, `types`, `homes` (each home's sections, in order), `relations`, and the `maturity`, `source_types` and `trust_classes` vocabularies, plus `person_dir`. It needs no vault. A consumer keeps a copy and checks its own mirrors against it in its own CI, with no engine installed; until now that check had to import `claudron.schema`, so it skipped wherever the engine wasn't installed. `contract_version` (1) changes only when the shape does. Capability `contract`. Contract: `docs/CLI_CONTRACT.md`. Tests: `claudron/tests/test_contract.py`.
+
 ## 0.8.0 — 2026-10-03
 
 Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory homes (§2), the tag registry (§3) and the operations log (§5) join 0.7's trust-aware reads (§1) and harvest pipes (§4). Run `claudron doctor --fix` if you haven't since 0.7.0; indexes rebuild once (index schema 7).
