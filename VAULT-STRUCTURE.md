@@ -44,6 +44,9 @@ If you are a human opening a vault for the first time:
     runbooks/
     planning/
       active/  completed/      #   human filing split
+    entity/  concept/  project/  practice/   # the memory homes (SCHEMA.md §Memory homes), one level per kind
+  _personal/                   # the operator's personal tier (#200 §2): not shared across fleets
+    person/                    #   person notes live only here; person/me.md is always injected
   projects/<repo>/             # the operator's personal, per-repo notes (roadmap D4)
   <fleet>/                     # a fleet — a flat, root-level dir marked by fleet.yaml
     fleet.yaml                 #   fleet config. Claudlobby writes it; Claudron never parses it.
@@ -109,10 +112,10 @@ config (`fleet.yaml`, `library/`, `voices/`, `runtime/`) is this document's.
 
 ## Reserved names
 
-The top-level names **`_shared`, `shared`, `projects`, and `_packs`** are
+The top-level names **`_shared`, `shared`, `projects`, `_packs`, and `_personal`** are
 vault-internal: a fleet may not take any of them (a fleet named `projects` would
 collide with the personal tier; `_packs` is the E6 pack container, reserved
-ahead of packs landing). These are the user-facing subset of `SKIP_DIRS`
+ahead of packs landing; `_personal` holds the operator's person notes). These are the user-facing subset of `SKIP_DIRS`
 (`claudron/vault.py`) — the names a human could collide with; `SKIP_DIRS` also
 reserves infrastructure names (`.git` and friends). Read `SKIP_DIRS` for the full
 set: it is the single source, and enforcement (P2) derives the reserved subset
@@ -128,6 +131,7 @@ What *kind* of knowledge belongs where:
 | project | `projects/<repo>/` | the operator's personal, per-repo notes (ranked highest in a query) |
 | fleet | `<fleet>/shared/` | knowledge scoped to one fleet's mission |
 | vault-wide | `_shared/` | knowledge true across the whole tenant (cross-fleet) |
+| personal | `_personal/` | the operator's `person` notes (SCHEMA.md §Memory homes), and `person/me.md`, injected into the operator's briefs; not a fleet's. The engine indexes it (so `subjects`/`resolve` see it) and leaves it out of a bot's brief (`BOT_NAME`); a deployment read-denies the path for bots too |
 
 - **Scope is chosen by location** — the directory you write to *is* the
   visibility declaration; there is deliberately no `scope:` / `visibility:`

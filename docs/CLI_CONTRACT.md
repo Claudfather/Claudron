@@ -558,6 +558,30 @@ stdout, and never to stderr where a host might surface them as a session error.
     capability is gated on `status --json` → `data.engine_version` (§Capability
     probe); a second version concept beside the sanctioned one only makes a
     consumer guess which to read.
+- **Memory homes** (#200 §2, SCHEMA.md §Memory homes): `entity`, `concept`,
+  `person`, `project` and `practice` are types. `new` and `capture` take
+  `--kind K` (and `kind` / `relations` on `--stdin`: `relations` is an object
+  over the closed set `part_of, instance_of, depends_on, owned_by, supersedes,
+  related`, each a list of wikilinks); a home files under `<home>/<kind>/`
+  in a shared tier and `new` scaffolds its sections. `kind` on a type that
+  isn't a home, or one that isn't a string, exits 2. A `person` note lives only
+  in `_personal/person/`: `--project`/`--fleet` with one exits 2, and `capture`
+  writes one only with `asserted_by: user` (`--asserted-by` or the `--stdin`
+  key), else exit 2; `capture --update` of one likewise needs `--asserted-by
+  user`, and `amend` refuses a fact or an alias about a person unless the user
+  asserted it (`evidence.asserted_by` / `asserted_by`). Person notes are never
+  `lookup` or `recall` results. A `--project`/`--fleet` that isn't one
+  directory name (`../x`, `a/b`) exits 2.
+  `subjects` and `resolve` take `--home H` (the same filter as `--type`, and
+  exclusive with it) and `--kind K`, and each subject carries `kind` and
+  `relations`. `recall --json` gains `me`: a trusted, person-typed
+  `_personal/person/me.md` as ready-to-render markdown — within its
+  120-token budget by whole lines, quoted line by line (so nothing in it can
+  open or swallow a section wherever it is rendered), with a notice when the
+  budget cut it — or `null` (absent, a draft, conflicted, or `BOT_NAME` set).
+  The brief renders it under `## About me`. Person notes are never in
+  `notes` or `unverified`, wherever one sits. Gate on
+  `"memory-homes" in status --json → data.capabilities`.
 - `new <type> "<title>"` — output always passes `validate --strict`. `owner`
   derivation: `--owner` → `git config user.name` → `$USER`. Slug collision
   errors (never silently overwrites); `--force` overrides. `--edit` without

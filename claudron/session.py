@@ -12,11 +12,13 @@ into agent context verbatim by the SessionStart hook.
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 
-from .knowledge import KnowledgeDoc, lookup, walk_knowledge_tier
-from .schema import count_tokens, has_conflict_markers, parse_note
-from .vault import Vault
+from .knowledge import KnowledgeDoc, fenced_lines, lookup, walk_knowledge_tier
+from .schema import count_tokens, has_conflict_markers, parse_note, trust_class
+from .vault import PERSONAL_HUB, Vault
 
 # Whole-brief hard cap (count_tokens proxy, same as
 # schema.CONVENTIONS_BUDGET — which caps just the conventions component at
@@ -131,6 +133,8 @@ def recall(
             fm, body, _ = parse_note(text)
             conventions = (body if fm is not None else text).strip() or None
 
+    me = _quoted_me(_about_me(vault))
+
     notes: list[dict] = []
     unverified: list[dict] = []
     seen: set[str] = set()
@@ -146,7 +150,9 @@ def recall(
 
     # Project tier: membership, not relevance — most recently updated first.
     if project and project in vault.projects:
-        docs = walk_knowledge_tier(vault.projects[project], f"project:{project}")
+        # A person note put here by hand (W109) is still never a recall result (#200 §2).
+        docs = [d for d in walk_knowledge_tier(vault.projects[project], f"project:{project}")
+                if d.note_type != "person"]
         entries = sorted(
             (_entry(doc, vault) for doc in docs),
             key=lambda e: e["updated"],
@@ -187,10 +193,84 @@ def recall(
         "project": project,
         "query": query,
         "conventions": conventions,
+        "me": me,
         "notes": notes,
         "unverified": unverified[:UNVERIFIED_LIMIT],
         "unverified_more": max(len(unverified) - UNVERIFIED_LIMIT, 0),
     }
+
+
+#: The always-injected "about me" note (#200 §2): the personal tier's ``person/me.md``.
+ME_NOTE = Path(PERSONAL_HUB) / "person" / "me.md"
+#: Its budget inside the brief, in whole lines (never cut mid-line), like CONVENTIONS.md's.
+ME_TOKEN_BUDGET = 120
+#: An ATX heading as CommonMark reads one: up to three spaces of indent, an optional closing run of `#`.
+_ATX_HEADING = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
+
+
+def _about_me(vault: Vault) -> str | None:
+    """The body of ``_personal/person/me.md``, or ``None``: absent, conflicted, unreviewed, or a bot's session.
+
+    Injected like CONVENTIONS.md, so it gets the same quarantine. Only a TRUSTED note speaks for the
+    operator: a draft (anything `capture` wrote and nobody promoted) never does. And it is the
+    operator's: a bot's session (``BOT_NAME`` set, as Claudlobby sets it) never gets it. Sections
+    render as bold labels, so the note can't open a heading of the brief's own; an empty one is dropped.
+    """
+    if os.environ.get("BOT_NAME"):
+        return None
+    path = vault.root / ME_NOTE
+    if not path.is_file():
+        return None
+    text = path.read_text()
+    if has_conflict_markers(text):
+        return None
+    fm, body, _ = parse_note(text)
+    if fm is None or fm.get("type") != "person" or \
+            trust_class(str(fm.get("maturity") or ""), str(fm.get("source_type") or "")) != "trusted":
+        return None
+    out: list[str] = []
+    pending: str | None = None  # a section heading, kept only once something follows it
+    lines = body.strip().splitlines()
+    fenced = fenced_lines(lines)
+    for n, line in enumerate(lines):
+        heading = n not in fenced and _ATX_HEADING.match(line)
+        if heading and len(heading.group(1)) == 1:
+            continue  # the note's H1: the brief supplies the heading
+        if heading:
+            label = (heading.group(2) or "").strip()
+            pending = f"**{label}**" if label else None
+            continue
+        if line.strip():
+            if pending:
+                out.append(pending)
+                pending = None
+            out.append(line)
+    return "\n".join(out).strip() or None
+
+
+def _quoted_me(me: str | None) -> str | None:
+    """The about-me note as every consumer gets it (``recall --json``'s ``me``, the brief's block):
+    within its budget by whole lines, quoted line by line, with a notice when the budget cut it.
+
+    Quoted so whatever the note holds (an unclosed fence, a setext underline, a heading) closes with
+    the quote: it can never open a section of the brief, or swallow one, wherever it is rendered.
+    """
+    if not me:
+        return None
+    lines = me.splitlines()
+    kept, cost = [], 0
+    for line in lines:
+        if cost + count_tokens(line) > ME_TOKEN_BUDGET:
+            break
+        kept.append(line)
+        cost += count_tokens(line)
+    cut = len(kept) < len(lines)
+    while cut and kept and kept[-1].startswith("**") and kept[-1].endswith("**"):
+        kept.pop()  # never end on a label whose content was cut
+    quoted = "\n".join(f"> {ln}" if ln.strip() else ">" for ln in kept)
+    notice = (f"_(the about-me note is over its {ME_TOKEN_BUDGET}-token budget: "
+              f"shorten {ME_NOTE.as_posix()})_") if cut else ""
+    return "\n\n".join(part for part in (quoted, notice) if part) or None
 
 
 def render_brief(data: dict) -> str:
@@ -212,6 +292,11 @@ def render_brief(data: dict) -> str:
             block = f"## Vault conventions\n\n{body}"
             sections.append(block)
             spent += count_tokens(block)
+
+    if data.get("me"):
+        block = "## About me\n\n" + data["me"]
+        sections.append(block)
+        spent += count_tokens(block)
 
     header = "## Recalled context" + (
         f" — {data['project']}" if data["project"] else ""

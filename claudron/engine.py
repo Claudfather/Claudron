@@ -35,25 +35,31 @@ from .tags import canonicalize
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     DEDUP_EXEMPT,
+    HOMES,
     MATURITY_VALUES,
     STATUS_VOCAB,
     TYPE_DIRS,
     TYPES,
     Finding,
     claimed_names,
+    is_person_note,
     content_fingerprint,
     parse_note,
     set_frontmatter_field,
     slugify,
     validate_note,
 )
-from .vault import Vault, is_within_root
+from .vault import PERSONAL_HUB, Vault, is_within_root
 
 
 class ScopeError(Exception):
     """A write refused before composition: unregistered fleet, or a path/
     scope that escapes the vault root. Not a schema Finding — the CLI maps
     it to a usage error (exit 2), the MCP layer to its error payload."""
+
+
+class PersonEditError(ScopeError):
+    """An edit of a person note without the user's assertion (#200 §2)."""
 
 
 @dataclass
@@ -128,6 +134,8 @@ def compose_note(
     maturity: str | None = None,
     source_url: str | None = None,
     source_type: str | None = None,
+    kind: str | None = None,
+    relations: dict[str, list[str]] | None = None,
 ) -> str:
     """Assemble a schema-valid note. Hand-assembled rather than yaml.dump —
     pins key order, flow-style tags, unquoted ISO dates so the note stays
@@ -153,9 +161,24 @@ def compose_note(
         lines.append(f"source_url: {yaml_scalar(source_url)}")
     if source_type:
         lines.append(f"source_type: {yaml_scalar(source_type)}")
+    if kind:
+        lines.append(f"kind: {yaml_scalar(kind)}")
+    for rel, targets in (relations or {}).items():
+        if targets:  # JSON lists, like tags: a target with a comma or a bracket stays one target
+            lines.append(f"{rel}: {json.dumps([str(t).strip() for t in targets])}")
     lines += [f"created: {today}", f"updated: {today}", "schema_version: 1", "---"]
     body = body.strip()
     return "\n".join(lines) + f"\n\n# {title}\n" + (f"\n{body}\n" if body else "")
+
+
+def home_skeleton(note_type: str) -> str:
+    """The empty ``##`` sections a memory home's note starts with (SCHEMA.md §Memory homes), or ``""``."""
+    return "\n\n".join(f"## {section}" for section in HOMES.get(note_type, ()))
+
+
+def kind_dir(kind: object) -> str:
+    """A kind's folder name: one slug, one level (``entity/apis/``), or ``""`` for none."""
+    return slugify(kind) if isinstance(kind, str) and kind.strip() else ""
 
 
 def resolve_target_dir(
@@ -164,14 +187,29 @@ def resolve_target_dir(
     *,
     project: str | None = None,
     fleet: str | None = None,
+    kind: str | None = None,
 ) -> Path:
     """Target directory for a note, with the containment + fleet guards the
     E1 review mandated. Raises ScopeError on refusal.
 
     Projects file flat (projects/<name>/ is one tier); TYPE_DIRS applies
-    only inside shared trees.
+    only inside shared trees, where a memory home files one level per
+    ``kind`` (``entity/apis/``). A ``person`` note lives only in the personal
+    tier (#200 §2): a project or fleet scope for one is refused.
     """
-    if project:
+    for scope in (project, fleet):  # one directory name: `../_personal/person` must not reach the personal tier
+        if scope is not None and (not isinstance(scope, str) or not scope.strip() or Path(scope).name != scope
+                                  or scope in (".", "..")):
+            raise ScopeError(f"scope {scope!r} escapes the vault root: a scope is one directory name")
+    if kind is not None and not isinstance(kind, str):
+        raise ScopeError(f"kind must be a string, not {type(kind).__name__}")
+    if kind and kind.strip() and note_type not in HOMES:
+        raise ScopeError(f"kind applies to a memory home ({', '.join(HOMES)}), not {note_type!r}")
+    if note_type == "person":
+        if project or fleet:
+            raise ScopeError("person notes live in the personal tier (_personal/person/), never a project or fleet")
+        base = vault.root / PERSONAL_HUB / TYPE_DIRS["person"]
+    elif project:
         base = vault.root / "projects" / project
     elif fleet:
         if fleet not in vault.fleets:
@@ -181,6 +219,8 @@ def resolve_target_dir(
         base = vault.fleets[fleet] / "shared" / TYPE_DIRS[note_type]
     else:
         base = vault.shared / TYPE_DIRS[note_type]
+    if note_type in HOMES and not project:
+        base = base / kind_dir(kind)
 
     if not is_within_root(base, vault.root):
         raise ScopeError(f"scope {(project or fleet)!r} escapes the vault root")
@@ -231,7 +271,9 @@ def _free_slug(base: Path, slug: str) -> Path:
     return target
 
 
-def _tier_label(project: str | None, fleet: str | None) -> str:
+def _tier_label(project: str | None, fleet: str | None, note_type: str = "") -> str:
+    if note_type == "person":
+        return "personal"
     if project:
         return f"project:{project}"
     if fleet:
@@ -254,6 +296,9 @@ def capture(
     source_url: str | None = None,
     source_type: str | None = None,
     run_id: str | None = None,
+    kind: str | None = None,
+    relations: dict[str, list[str]] | None = None,
+    asserted_by: str | None = None,
 ) -> WriteResult:
     """The guarded write path. Validate → dedup (routes) → write → index.
 
@@ -282,14 +327,17 @@ def capture(
             )
         )
 
-    target_dir = resolve_target_dir(vault, note_type, project=project, fleet=fleet)
+    if note_type == "person" and asserted_by != "user":
+        # #200 §2: what a note says about a person is the user's to assert, never an agent's inference.
+        raise ScopeError("a person note is captured only with asserted_by: user")
+    target_dir = resolve_target_dir(vault, note_type, project=project, fleet=fleet, kind=kind)
     if tags:  # the registry's canonical forms (#200 §3): an alias or a merged tag never lands as written
         tags = canonicalize(vault, tags)
 
     text = compose_note(
         note_type=note_type, title=title, owner=owner, body=body,
         tags=tags, maturity=MATURITY_VALUES[0],
-        source_url=source_url, source_type=source_type,
+        source_url=source_url, source_type=source_type, kind=kind, relations=relations,
     )
     fm, note_body, err = parse_note(text)
     findings = validate_note(
@@ -330,7 +378,7 @@ def capture(
         # Maintain the index: append the entry, write index.json last so its
         # mtime ≥ the note's — the next write loads instead of rebuilding.
         index["entries"].append(
-            index_entry(fm, note_body, target, _tier_label(project, fleet), vault.root)
+            index_entry(fm, note_body, target, _tier_label(project, fleet, note_type), vault.root)
         )
         write_index(vault, index)
 
@@ -347,7 +395,7 @@ def capture(
         # uncommitted note, which is exactly the behaviour this replaces — so
         # the change is strictly additive in durability.
         commit_warnings = _commit_after(vault, target, run_id, no_commit, "capture", title, note_type,
-                                            _tier_label(project, fleet))
+                                            _tier_label(project, fleet, note_type))
 
     return WriteResult(
         action="created",
@@ -455,7 +503,7 @@ def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Findin
 
 
 def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], str | None], *, verb: str,
-              run_id: str | None = None, no_commit: bool = False) -> WriteResult:
+              run_id: str | None = None, no_commit: bool = False, asserted_by: str | None = None) -> WriteResult:
     """The one door for editing an existing note: lock → transform → validate → write → index → commit.
 
     ``transform(text, frontmatter)`` returns the new text, or ``None`` when the
@@ -470,6 +518,8 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
 
     ``capture --update`` (``append_addendum``) and ``amend`` are transforms over
     this door. Self-guards containment; refuses a bad ``run_id`` before writing.
+    **The person rule lives here, for every edit:** a person note (by type or by
+    place) is edited only when ``asserted_by`` is ``user`` (#200 §2).
     """
     if not is_within_root(note_path, vault.root):
         raise ScopeError(f"path {str(note_path)!r} escapes the vault root")
@@ -482,6 +532,8 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
     with vault_write_lock(vault):
         original = note_path.read_text()
         fm, _, _ = parse_note(original)
+        if is_person_note(fm, rel) and asserted_by != "user":
+            raise PersonEditError("a person note is edited only when the user asserted the change (asserted_by: user)")
         text = transform(original, fm or {})
         if text is None:
             return WriteResult(action="unchanged", path=str(note_path), reason="already there; nothing written")
@@ -513,11 +565,12 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
 
 
 def append_addendum(vault: Vault, note_path: Path, body: str, *,
-                    no_commit: bool = False, run_id: str | None = None) -> WriteResult:
+                    no_commit: bool = False, run_id: str | None = None, asserted_by: str | None = None) -> WriteResult:
     """Append a dated ``## Addendum — <date>`` section (``capture --update``), through :func:`edit_note`."""
     today = date.today().isoformat()
     result = edit_note(vault, note_path, lambda text, _fm: text.rstrip("\n") + f"\n\n## Addendum — {today}\n\n"
-                       f"{body.strip()}\n", verb="addendum", run_id=run_id, no_commit=no_commit)
+                       f"{body.strip()}\n", verb="addendum", run_id=run_id, no_commit=no_commit,
+                       asserted_by=asserted_by)
     if result.action == "updated":
         result.reason = f"addendum appended, updated bumped to {today}"
     return result

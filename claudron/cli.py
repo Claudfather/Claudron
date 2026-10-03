@@ -9,9 +9,11 @@ import sys
 from pathlib import Path
 
 from . import CAPABILITIES, __version__
-from .engine import ScopeError, append_addendum, capture, compose_note, resolve_target_dir
+from .engine import ScopeError, append_addendum, capture, compose_note, home_skeleton, resolve_target_dir
 from .schema import (
+    HOMES,
     MATURITY_VALUES,
+    RELATIONS,
     SOURCE_TYPES,
     TYPES,
     Finding,
@@ -527,9 +529,10 @@ def cmd_tags(args) -> int:
 
 def cmd_subjects(args) -> int:
     vault = _resolve_vault(args)
-    found = subjects(vault, note_type=args.type, project=args.project)
+    note_type = args.home or args.type
+    found = subjects(vault, note_type=note_type, project=args.project, kind=args.kind)
     if args.json:
-        _emit_json("subjects", {"type": args.type, "subjects": [s.as_dict() for s in found]})
+        _emit_json("subjects", {"type": note_type, "subjects": [s.as_dict() for s in found]})
         return 0
     for s in found:
         label = _TRUST_LABEL.get(s.trust, "")
@@ -540,8 +543,8 @@ def cmd_subjects(args) -> int:
 def cmd_resolve(args) -> int:
     vault = _resolve_vault(args)
     aliases = [*(_tags_arg(args.aliases) if args.aliases else []), *args.alias]
-    found = resolve(vault, args.name, note_type=args.type, aliases=aliases, context=args.context,
-                    limit=args.limit, project=args.project)
+    found = resolve(vault, args.name, note_type=args.home or args.type, aliases=aliases, context=args.context,
+                    limit=args.limit, project=args.project, kind=args.kind)
     if args.json:
         _emit_json("resolve", {"name": args.name, "candidates": [s.as_dict() for s in found]})
         return 0
@@ -715,7 +718,7 @@ def cmd_new(args) -> int:
 
     try:
         base = resolve_target_dir(
-            vault, args.type, project=args.project, fleet=args.fleet
+            vault, args.type, project=args.project, fleet=args.fleet, kind=args.kind
         )
     except ScopeError as exc:
         print(str(exc), file=sys.stderr)
@@ -736,6 +739,8 @@ def cmd_new(args) -> int:
             title=title,
             owner=_derive_owner(args),
             tags=tags_mod.canonicalize(vault, _tags_arg(args.tags) or []),  # the same canonical forms as capture
+            body=home_skeleton(args.type),  # a memory home starts with its sections
+            kind=args.kind,
         )
     )
 
@@ -770,7 +775,8 @@ def cmd_capture(args) -> int:
             return 2
         try:
             result = append_addendum(vault, note_path, args.body,
-                                     no_commit=getattr(args, "no_commit", False), run_id=args.run_id)
+                                     no_commit=getattr(args, "no_commit", False), run_id=args.run_id,
+                                     asserted_by=args.asserted_by)
         except (ScopeError, RunError) as exc:
             print(str(exc), file=sys.stderr)
             _log_unwritten(vault, args.run_id, "addendum", "rejected", str(exc))
@@ -829,6 +835,9 @@ def cmd_capture(args) -> int:
             source_url=finding.get("source_url") or args.source_url,
             source_type=source_type,
             run_id=run_id,
+            kind=finding.get("kind") or args.kind,
+            relations=_relations(finding.get("relations")),
+            asserted_by=finding.get("asserted_by") or args.asserted_by,
         )
     except (ScopeError, RunError) as exc:
         print(str(exc), file=sys.stderr)
@@ -837,6 +846,18 @@ def cmd_capture(args) -> int:
 
     _log_unwritten(vault, run_id, "capture", result.action, result.reason)
     return _emit_write_result(args, result)
+
+
+HOME_NAMES = tuple(HOMES)  #: the memory homes, as `--home` choices
+
+
+def _relations(raw: object) -> dict[str, list[str]] | None:
+    """``--stdin``'s ``relations`` object (#200 §2): only the closed set, each a list of targets."""
+    if not isinstance(raw, dict):
+        return None
+    return {rel: [str(t) for t in (v if isinstance(v, list) else [v])
+                  if isinstance(t, (str, int)) and not isinstance(t, bool) and str(t).strip()]
+            for rel, v in raw.items() if rel in RELATIONS}
 
 
 def _log_unwritten(vault, run_id, verb: str, action: str, reason: str | None) -> None:
@@ -1552,6 +1573,7 @@ def main(argv=None) -> int:
     scope.add_argument("--project", help="File under projects/<name>/")
     scope.add_argument("--fleet", help="File under <fleet>/shared/")
     p_new.add_argument("--tags", help="Comma-separated tags")
+    p_new.add_argument("--kind", help="A memory home's kind (api, pattern, ...): files it one level down")
     p_new.add_argument("--owner", help="Owner (default: git user.name, then $USER)")
     p_new.add_argument("--edit", action="store_true", help="Open in $EDITOR")
     p_new.add_argument(
@@ -1568,6 +1590,9 @@ def main(argv=None) -> int:
     p_capture.add_argument("--title", help="Note title")
     p_capture.add_argument("--body", help="Note body (markdown)")
     p_capture.add_argument("--tags", help="Comma-separated tags")
+    p_capture.add_argument("--kind", help="A memory home's kind (api, pattern, ...): files it one level down")
+    p_capture.add_argument("--asserted-by", choices=("user", "agent", "tool"),
+                           help="Who asserted the content; a person note needs `user` (#200 §2)")
     p_capture.add_argument("--owner", help="Owner (default: git user.name, then $USER)")
     cap_scope = p_capture.add_mutually_exclusive_group()
     cap_scope.add_argument("--project", help="File under projects/<name>/")
@@ -1753,15 +1778,21 @@ def main(argv=None) -> int:
         "subjects", help="List the notes facts can be filed under (derived from the index)",
         parents=[vault_parent, json_parent],
     )
-    p_subjects.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_subjects_scope = p_subjects.add_mutually_exclusive_group()
+    p_subjects_scope.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
     p_subjects.add_argument("--project", help="Only subjects in this project's tier")
+    p_subjects_scope.add_argument("--home", choices=HOME_NAMES, help="Only subjects in this memory home (#200 §2)")
+    p_subjects.add_argument("--kind", help="Only subjects of this kind")
     p_resolve = sub.add_parser(
         "resolve", help="Rank candidate subjects for a name (exact, alias, slug, then text)",
         parents=[vault_parent, json_parent],
     )
     p_resolve.add_argument("--name", required=True, help="The subject's name")
-    p_resolve.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
+    p_resolve_scope = p_resolve.add_mutually_exclusive_group()
+    p_resolve_scope.add_argument("--type", choices=TYPES, help="Only subjects of this note type")
     p_resolve.add_argument("--project", help="Only subjects in this project's tier (same name, other repo: other subject)")
+    p_resolve_scope.add_argument("--home", choices=HOME_NAMES, help="Only subjects in this memory home (#200 §2)")
+    p_resolve.add_argument("--kind", help="Only subjects of this kind")
     p_resolve.add_argument("--aliases", help="Other names for it, comma-separated")
     p_resolve.add_argument("--alias", action="append", default=[], metavar="NAME",
                            help="Another name for it, repeatable (for a name with a comma in it)")

@@ -86,7 +86,7 @@ only the lines that keep the shape.
 
 ## Note types
 
-Six types. Procedural content — skills, slash commands, agent-executable
+Eleven types: the six memory homes (§Memory homes; `decision` is one of them), `knowledge` and `runbook` (kept, no migration), and the document axis — `plan`, `audit`, `review`. Procedural content — skills, slash commands, agent-executable
 how-tos — is **out of scope by design**: it belongs in clauDNA
 (PROJECT_MISSION.md:25, "the schema makes the distinction enforceable").
 There is deliberately no `skill` type, and `validate` warns (W103) on
@@ -186,6 +186,11 @@ emit them.
 | plan | `draft`, `active`, `completed`, `superseded`, `archived` | `completed`, `superseded`, `archived` | — |
 | audit | `draft`, `completed`, `archived` | `completed`, `archived` | — |
 | review | `draft`, `completed`, `archived` | `completed`, `archived` | — |
+| entity | `current`, `stale`, `superseded`, `archived` | `superseded`, `archived` | `active` → `current`; `draft` → use `maturity: draft` |
+| concept | `current`, `stale`, `superseded`, `archived` | `superseded`, `archived` | `active` → `current`; `draft` → use `maturity: draft` |
+| person | `current`, `archived` | `archived` | — |
+| project | `current`, `stale`, `superseded`, `archived` | `superseded`, `archived` | `active` → `current`; `draft` → use `maturity: draft` |
+| practice | `current`, `stale`, `superseded`, `archived` | `superseded`, `archived` | `active` → `current`; `draft` → use `maturity: draft` |
 
 Notes on the vocabulary:
 
@@ -236,6 +241,12 @@ within that shape.
     planning/
       active/
       completed/
+    entity/<kind>/          # the memory homes (#200 §2): one level per kind
+    concept/<kind>/
+    project/<kind>/
+    practice/<kind>/
+  _personal/                # the operator's personal tier
+    person/<kind>/          #   person notes live only here; person/me.md is always injected
   projects/<repo>/          # per-repo tier
   <fleet>/                  # fleet overlay (marked by fleet.yaml)
     shared/{knowledge,decisions,runbooks,planning/{active,completed}}
@@ -300,6 +311,7 @@ Additions are minor-version events recorded in this file's changelog.
 | W106 | status outside vocabulary (lenient form of E003) | warning | n/a |
 | W107 | malformed date (lenient form of E005) | warning | n/a |
 | W108 | note written but not committed by the write door (non-git vault is silent; a wedged tree or a failed `git add`/`commit` warns) | warning | warning |
+| W109 | a `person` note outside `_personal/person/`, or another type inside it (§Memory homes) | warning | warning |
 
 Date semantics: YAML already parses valid ISO dates into date objects —
 those pass. Strings must satisfy `date.fromisoformat`. Anything else
@@ -311,6 +323,52 @@ containing `allowed-tools`, `argument-hint`, or `user-invocable`, or a first
 body heading of `Usage`/`Invocation`, on a `knowledge`/`runbook` note.
 Imperative steps alone never trigger it — runbooks are supposed to contain
 those.
+
+## Memory homes
+
+A note has two axes ([#200](https://github.com/Claudfather/Claudron/issues/200) §2). The **memory axis**
+is what it is *about*: six homes, each with its own time semantics and
+sections. The **document axis** (`plan`, `audit`, `review`) is what form it
+takes, unchanged. Every home is a type.
+
+| home | kind examples | time semantics | sections |
+|---|---|---|---|
+| `entity` | system, dataset, vendor, api, repo, org | true until it changes; contradictions supersede | Summary · Facts · Behavior & gotchas · Operating it · History · Open questions |
+| `concept` | pattern, term, method | refined slowly | Definition · Why it matters · Examples · Related |
+| `person` | colleague, contact | reinforced over time | Role · Preferences · Working style · Notes |
+| `project` | — | latest-wins, with history | Goal · Status · Current state · Timeline · Open threads · Decisions |
+| `decision` | architecture, process, business | immutable; superseded, never rewritten | Context · Decision · Rationale · Alternatives · Supersedes |
+| `practice` | convention, operational norm | reinforced over time | When · What · Why · Exceptions |
+
+- **Additive.** `knowledge` and `runbook` stay valid and nothing migrates;
+  new writers file what they held under `entity`/`concept` and `practice`.
+- **`kind`** (optional, open, a string) narrows a home, `decision` included,
+  and only a home. In a shared tier a home files one folder level per kind
+  (`_shared/entity/api/<slug>.md`, `_shared/decisions/architecture/…`), never
+  deeper: paths are stable addresses; a kind matches by its slug.
+  `claudron new` scaffolds the home's sections.
+- **Relations, not directories.** A sub-concept names its parent; the
+  relation set is closed: `part_of`, `instance_of`, `depends_on`,
+  `owned_by`, `supersedes`, `related` — each a frontmatter list of
+  wikilinks, indexed. The generated `INDEX.md` nests a note under the note it
+  is `part_of` (within one directory).
+- **`person` is stricter, enforced at every door:** a person note lives only
+  in the personal tier `_personal/person/` (never `_shared/` or a fleet; W109
+  flags one placed by hand anywhere else, or another type placed there);
+  `capture` writes one only with `asserted_by: user`, and every edit of one
+  (`capture --update`, `amend`'s facts and aliases), by type or by place, needs
+  the user's assertion too. `new` writes only the empty skeleton. Person notes
+  are never `lookup`/`recall` results: the index knows them (so `subjects`
+  sees them), search does not. `_personal/person/me.md` is
+  injected into the operator's session briefs (`## About me`, budgeted like
+  `CONVENTIONS.md`, quoted line by line so nothing in it can open or swallow a section of the brief, its sections as bold labels) only when it is **trusted** —
+  a captured draft speaks for nobody until a person promotes it — must be
+  typed `person`, and is never injected into a bot's session (`BOT_NAME` set:
+  a bot deployment must set it). No evaluative claims about a person is a rule
+  for the writer: the engine runs no model to judge it.
+- A vault extends kinds freely (they are open); extending homes waits for
+  `pack.yaml` v1 (§pack.yaml). A new home is justified only by different
+  time semantics, sections or policy; otherwise it is a kind.
 
 ## Tags and the tag registry
 

@@ -21,6 +21,7 @@ from typing import NamedTuple
 from .locking import atomic_write_text, vault_write_lock
 from .schema import (
     LOOKUP_EXCLUDED,
+    RELATIONS,
     _as_str_list,
     content_fingerprint,
     has_conflict_markers,
@@ -185,9 +186,28 @@ def index_entry(fm: dict, body: str, md: Path, tier: str, vault_root: Path) -> d
         "type": str(fm.get("type", "") or ""),
         "sections": note_sections(body),
         "source_type": str(fm.get("source_type", "") or ""),
+        # #200 §2: a memory home's kind, and its relations (wikilink targets, brackets stripped).
+        "kind": str(fm.get("kind", "") or ""),
+        "relations": {rel: targets for rel in RELATIONS if (targets := _relation_targets(fm.get(rel)))},
         "path": str(md.relative_to(vault_root)),
         "tier": tier,
     }
+
+
+def _relation_targets(value: object) -> list[str]:
+    """A relation field's targets. An unquoted ``[[Target]]`` (the Obsidian habit) parses as a nested
+    list: one level is flattened, so it indexes as ``Target``, never as ``"['Target']"``."""
+    items = value if isinstance(value, list) else ([value] if value else [])
+    flat = [x for item in items for x in (item if isinstance(item, list) else [item])]
+    return [t for t in (_link_target(str(x)) for x in flat if x is not None) if t]
+
+
+def _link_target(value: str) -> str:
+    """``[[Target|label]]`` or ``Target`` → ``Target``."""
+    text = value.strip()
+    if text.startswith("[[") and text.endswith("]]"):
+        text = text[2:-2]
+    return text.split("|", 1)[0].strip()
 
 
 _SECTION_RE = re.compile(r"^##[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -572,6 +592,8 @@ def lookup(
     for entry in index.get("entries", []):
         if _is_excluded(entry, include_archived, include_expired):
             continue
+        if entry.get("tier") == "personal" or entry.get("type") == "person":
+            continue  # person notes are never search results (#200 §2), wherever one was put by hand
         if not include_external and trust_class(entry.get("maturity", ""), entry.get("source_type", "")) \
                 == "external":
             continue  # decided from the index, before the note is opened
@@ -589,7 +611,7 @@ def lookup(
     if tier_b and best_a_score < TIER_A_THRESHOLD:
         result_by_path = {r.doc.source_path: r for r in results}
         for doc in _collect_all_docs(vault, project=project, fleet=fleet):
-            if _is_doc_excluded(doc, include_archived, include_expired):
+            if _is_doc_excluded(doc, include_archived, include_expired) or doc.note_type == "person":
                 continue
             score, match_type = _score_body(query, doc)
             if score > 0:

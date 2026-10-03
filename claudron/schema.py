@@ -39,7 +39,47 @@ def _lenient_timestamp(loader, node):
 
 _SchemaLoader.add_constructor("tag:yaml.org,2002:timestamp", _lenient_timestamp)
 
-TYPES = ("knowledge", "decision", "runbook", "plan", "audit", "review")
+# The memory homes (#200 §2) are types too: what a note is ABOUT, each with its own time semantics and
+# sections (HOMES). `decision` was already one. `knowledge`/`runbook` stay valid (no migration):
+# `entity`/`concept` and `practice` are where new writers file what they used to hold.
+#: Each memory home's sections, in order (#200 §2): what `new` scaffolds and harvest files facts under.
+#: The one source of the home set: every home files one folder level per `kind` (`decision` included).
+HOMES: dict[str, tuple[str, ...]] = {
+    "entity": ("Summary", "Facts", "Behavior & gotchas", "Operating it", "History", "Open questions"),
+    "concept": ("Definition", "Why it matters", "Examples", "Related"),
+    "person": ("Role", "Preferences", "Working style", "Notes"),
+    "project": ("Goal", "Status", "Current state", "Timeline", "Open threads", "Decisions"),
+    "decision": ("Context", "Decision", "Rationale", "Alternatives", "Supersedes"),
+    "practice": ("When", "What", "Why", "Exceptions"),
+}
+#: The homes that are new types (`decision` already was one).
+HOME_TYPES = tuple(h for h in HOMES if h != "decision")
+TYPES = ("knowledge", "decision", "runbook", "plan", "audit", "review", *HOME_TYPES)
+#: Where a person note must live (#200 §2): the personal tier's `person/` (vault.PERSONAL_HUB).
+PERSON_DIR = "_personal/person/"
+PERSON_PARTS = ("_personal", "person")
+
+
+def in_person_dir(path: str | Path) -> bool:
+    """Is ``path`` inside the personal tier's ``person/``?
+
+    A vault-relative path is anchored at the vault root (``projects/x/_personal/person/`` is not the
+    personal tier, and W109 must flag a person note there). An absolute path, which a lint run
+    without a resolvable vault root hands over, is matched by its segments.
+    """
+    p = Path(str(path).replace("\\", "/"))
+    if not p.is_absolute():
+        return p.parts[:2] == PERSON_PARTS
+    return any(p.parts[i:i + 2] == PERSON_PARTS for i in range(len(p.parts) - 1))
+
+
+def is_person_note(fm: dict | None, path: str | Path) -> bool:
+    """The one person predicate (#200 §2): typed ``person``, or sitting where person notes live."""
+    return bool(fm) and fm.get("type") == "person" or in_person_dir(path)
+
+#: The closed relation set (#200 §2): sub-concepts are relations, never directories. Each is a
+#: frontmatter list of wikilinks; `supersedes` was already a field.
+RELATIONS = ("part_of", "instance_of", "depends_on", "owned_by", "supersedes", "related")
 
 # Per-type status vocabulary (SCHEMA.md §Status vocabulary).
 # canonical: what writers emit. terminal: activity-done values (drives
@@ -82,6 +122,20 @@ STATUS_VOCAB: dict[str, dict] = {
         "legacy": {},
         "default": "draft",
     },
+    # The memory homes: true until it changes (entity), refined slowly (concept), latest-wins with
+    # history (project), reinforced (practice, person). Contradictions supersede; nothing is rewritten.
+    **{home: {
+        "canonical": ("current", "stale", "superseded", "archived"),
+        "terminal": ("superseded", "archived"),
+        "legacy": {"active": "current", "draft": "use maturity: draft"},
+        "default": "current",
+    } for home in ("entity", "concept", "project", "practice")},
+    "person": {
+        "canonical": ("current", "archived"),
+        "terminal": ("archived",),
+        "legacy": {},
+        "default": "current",
+    },
 }
 
 # Structural files that are never notes (skipped by walks AND validation).
@@ -99,6 +153,12 @@ TYPE_DIRS = {
     "plan": "planning/active",
     "audit": "planning/active",
     "review": "planning/active",
+    # Memory homes file one level per kind under their home (`entity/apis/<slug>.md`), never deeper.
+    "entity": "entity",
+    "concept": "concept",
+    "project": "project",
+    "practice": "practice",
+    "person": "person",  # in the personal tier, never a shared one (PERSONAL_HUB)
 }
 
 
@@ -340,6 +400,9 @@ CATALOG: dict[str, dict[str, str | None]] = {
     # only catalog member that describes the note's SURROUNDINGS rather than its
     # content -- which is why both tiers read the same.
     "W108": {"lenient": "warning", "strict": "warning"},
+    # #200 §2: a person note outside `_personal/person/`, or a non-person note inside it. A WARNING:
+    # the write doors never produce one (they file by type), so it flags a hand-placed file.
+    "W109": {"lenient": "warning", "strict": "warning"},
 }
 
 
@@ -545,6 +608,10 @@ def validate_note(
 
     if strict and not fm.get("owner"):
         emit("E007", "missing 'owner' (required on the authoring/engine tier)", field="owner")
+
+    if path and (note_type == "person") != in_person_dir(path):
+        emit("W109", "a person note lives only in the personal tier (_personal/person/), and only a person note "
+                     "lives there (SCHEMA.md §Memory homes)", field="type")
 
     if note_type in ("knowledge", "runbook"):
         marker = _SKILL_MARKER_KEYS.intersection(fm)
