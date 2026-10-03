@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.0 — 2026-10-03
+
+Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory homes (§2), the tag registry (§3) and the operations log (§5) join 0.7's trust-aware reads (§1) and harvest pipes (§4). Run `claudron doctor --fix` if you haven't since 0.7.0; indexes rebuild once (index schema 7).
+
 ### Added
 - **Memory homes ([#200](https://github.com/Claudfather/Claudron/issues/200) §2).** What a note is about is now a type: `entity`, `concept`, `person`, `project` and `practice` join `decision` as homes, each with its time semantics and sections (SCHEMA.md §Memory homes). Additive: `knowledge` and `runbook` stay valid and nothing migrates.
   - **`kind`** narrows a home and files it one level down (`_shared/entity/api/<slug>.md`); `new` scaffolds the home's sections; `subjects`/`resolve` take `--home` and `--kind`.
