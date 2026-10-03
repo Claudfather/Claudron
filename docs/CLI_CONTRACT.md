@@ -740,12 +740,15 @@ stdout, and never to stderr where a host might surface them as a session error.
     `--stdin` carries arbitrary content safely.
 - `contract [--json]` — **the machine-readable contract**, for a consumer to keep a copy of and
   check its own mirrors against in its own CI, with no engine installed (a rendered copy with a
-  drift gate). Needs no vault. `data` is `{contract_version, engine_version, capabilities, types,
-  homes, relations, maturity, source_types, trust_classes, person_dir}`: `homes` maps each memory
-  home to its sections in order, and every other list is the vocabulary SCHEMA.md defines.
-  `contract_version` (now `1`) changes only when the payload's shape does (a key removed, renamed
-  or retyped); a new key or a new value in a list is additive. Without `--json` it prints the
-  same payload, unwrapped. Gate on
-  `"contract" in status --json → data.capabilities`.
+  drift gate). Needs no vault. `data` is `{contract_version, capabilities, types, type_dirs,
+  statuses, homes, relations, maturity, source_types, trust_classes, person_dir}`. `capabilities` is
+  `claudron.CAPABILITIES` (§Capability probe); the rest is SCHEMA.md's: `type_dirs` maps each type to
+  its folder, `statuses` each type to `{canonical, terminal, legacy, default}`, and `homes` each
+  memory home to its sections, in order. The payload carries no engine version, so a consumer's
+  copy changes when the contract does, not on every release. `contract_version` (now `1`) changes
+  only when the payload's shape does (a key removed, renamed or retyped); a new key or a new value
+  in a list is additive. Without `--json` it prints the same payload, unwrapped. Probe with the
+  command itself, which needs no vault: an engine without it exits 2 (an unknown verb). With a
+  vault at hand, `"contract" in status --json → data.capabilities` says the same.
 - `init --adopt` — additionally backfills missing `updated` from file mtime
   (the one sanctioned mutation, at adoption time only).
