@@ -673,6 +673,17 @@ def cmd_index(args) -> int:
     return 0
 
 
+def cmd_contract(args) -> int:
+    """The machine-readable contract (``claudron.contract``): text mode prints the same JSON, unwrapped."""
+    from .contract import contract
+
+    if args.json:
+        _emit_json("contract", contract())
+    else:
+        print(json.dumps(contract(), indent=2))
+    return 0
+
+
 def cmd_version(args) -> int:
     if args.json:
         _emit_json("version", {"version": __version__})
@@ -1856,6 +1867,10 @@ def main(argv=None) -> int:
     # version
     sub.add_parser("version", help="Print version", parents=[json_parent])
 
+    # contract
+    sub.add_parser("contract", help="Print the machine-readable contract consumers mirror "
+                   "(capabilities, types, homes, relations, vocabularies)", parents=[json_parent])
+
     # plug
     p_plug = sub.add_parser(
         "plug", help="Register vault with claudlobby", parents=[claudlobby_parent]
@@ -1940,6 +1955,7 @@ def main(argv=None) -> int:
         "graph": cmd_graph,
         "index": cmd_index,
         "version": cmd_version,
+        "contract": cmd_contract,
         "plug": cmd_plug,
         "unplug": cmd_unplug,
         "config": cmd_config,
