@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Added
+- **CI runs each consumer's contract suite against every change.** A new `consumers` job checks out each consumer's default branch and runs its live contract suite against the engine under test. It starts with clauDNA's `tests/test_claudron_live.py` in compat mode: the engine must keep everything clauDNA's copy of `claudron contract --json` promises, and clauDNA's harvest must work end to end through it. An addition passes; a removal or rename that would break clauDNA fails here, before it ships. The engine still never names a consumer: only this job does, and a consumer joins by adding a matrix row.
+
 ## 0.9.0 — 2026-10-03
 
 Adds `claudron contract --json`, the contract as data, so a consumer can check its mirrors of the schema in its own CI without installing the engine.

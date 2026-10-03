@@ -31,3 +31,37 @@ jobs:
           git config --global user.email "ci@claudron.invalid"
           git config --global user.name "Claudron CI"
       - run: pytest -q
+
+  consumers:
+    # Consumer-driven contract tests: each consumer's live contract suite, from
+    # its default branch, run against this change. A change that would break a
+    # consumer fails here, in this PR, before it ships; an addition passes.
+    # The engine never names a consumer (CLAUDE.md): only this job does, and a
+    # consumer joins by adding a matrix row. Each suite runs in compat mode:
+    # the engine must keep everything the consumer's copy of `claudron
+    # contract --json` promises, and the consumer's own flows must work.
+    name: consumer contract (${{ matrix.consumer.repo }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer:
+          - repo: Claudfather/clauDNA
+            requirements: requirements-dev.txt
+            run: python -m pytest -q tests/test_claudron_live.py
+            env: CLAUDNA_CONTRACT=compat
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.consumer.repo }}
+          path: consumer
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The consumer's toolchain first, then this checkout of the engine, so
+      # nothing the consumer pins can replace the engine under test.
+      - run: pip install -r consumer/${{ matrix.consumer.requirements }} && pip install -e .
+      - name: Run the consumer's contract suite against this change
+        working-directory: consumer
+        run: env ${{ matrix.consumer.env }} ${{ matrix.consumer.run }}
