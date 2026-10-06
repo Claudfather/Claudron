@@ -773,8 +773,8 @@ from them.**
    fields land in their owners' repos under their own plans.
 
 *The standing rule (00-overview.md, A1) runs the right way here: the decision is amended before the code
-(P2, P4) exists.* *Ratifier:* the operator — by approving the Claudron PR that carries this section (number and
-date filled before merge).
+(P2, P4) exists.* *Ratifier:* the operator — by approving the Claudron PR that carries this section
+([Claudfather/Claudron#224](https://github.com/Claudfather/Claudron/pull/224), opened 2026-10-06).
 
 ---
 
