@@ -5,6 +5,16 @@
 ### Added
 - **CI runs each consumer's contract suite against every change.** A new `consumers` job checks out each consumer's default branch and runs its live contract suite against the engine under test. It starts with clauDNA's `tests/test_claudron_live.py` in compat mode: the engine must keep everything clauDNA's copy of `claudron contract --json` promises, and clauDNA's harvest must work end to end through it. An addition passes; a removal or rename that would break clauDNA fails here, before it ships. The engine still never names a consumer: only this job does, and a consumer joins by adding a matrix row.
 
+### Changed
+- **`hooks install` merges by the one event map.** `merge_settings` carried a private copy of the
+  event→verb map `SNIPPET_EVENTS` already holds; an event added to the map alone raised `KeyError` on
+  install. One map now serves the snippet, the merge and doctor's hook checks (#204). No change for the
+  three events the loop installs. Tests: `claudron/tests/test_hooks.py`.
+- **Boundary spec amended for the agent runtimes** (`documentation/plans/2026-07-20-claudfather-boundary-separation.md`
+  §Amendment — 2026-10-04, for Claudfather/Claudlobby#2145): Claudlobby owns the bought telemetry layer;
+  register rule R8 (runtime-specific signals are enrichment only) and rows 10–12 (session join key,
+  clauDNA export additions, Codex session-loop snippet — planned, P4). Nothing shipped changes.
+
 ## 0.9.0 — 2026-10-03
 
 Adds `claudron contract --json`, the contract as data, so a consumer can check its mirrors of the schema in its own CI without installing the engine.
