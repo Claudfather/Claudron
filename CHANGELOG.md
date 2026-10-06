@@ -10,9 +10,9 @@
   event→verb map `SNIPPET_EVENTS` already holds; an event added to the map alone raised `KeyError` on
   install. One map now serves the snippet, the merge and doctor's hook checks (#204). No change for the
   three events the loop installs. Tests: `claudron/tests/test_hooks.py`.
-- **Boundary spec amended for the agent runtimes** (`documentation/plans/2026-07-20-claudfather-boundary-separation.md`
+- **Boundary spec amended for the agent CLIs** (`documentation/plans/2026-07-20-claudfather-boundary-separation.md`
   §Amendment — 2026-10-04, for Claudfather/Claudlobby#2145): Claudlobby owns the bought telemetry layer;
-  register rule R8 (runtime-specific signals are enrichment only) and rows 10–12 (session join key,
+  register rule R8 (agent-CLI-specific signals are enrichment only) and rows 10–12 (session join key,
   clauDNA export additions, Codex session-loop snippet — planned, P4). Nothing shipped changes.
 
 ## 0.9.0 — 2026-10-03

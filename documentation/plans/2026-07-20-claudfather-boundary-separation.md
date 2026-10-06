@@ -20,7 +20,7 @@ repos: [Claudfather/Claudron, Claudfather/clauDNA, Claudfather/Claudlobby]
 > here. **Status: §10 ratified 2026-07-20 (program gate 1,
 > `2026-07-20-boundary-rearchitecture/00-overview.md:56-58`); deliverable (b) lives in
 > `2026-07-20-boundary-rearchitecture/` (overview + 9 phase docs, this directory). Amended 2026-10-04 — the
-> agent runtimes enter the frame; see §Amendment — 2026-10-04 (after §10.8).**
+> agent CLIs enter the frame; see §Amendment — 2026-10-04 (after §10.8).**
 >
 > **How to use this spec — reason forward from purpose.** Do **not** ratify the thinking that
 > produced this brief. One prior-thinking section is **sealed at the end** (Appendix Z), marked
@@ -415,7 +415,7 @@ ABI, the vault-address contract, the write protocol, the session-loop protocol f
 `cli.py:146–157`, silent since #102 — the one open R5 item; §10.8 item 12)*. Consumers declare
 themselves to the engine (config/env per contract); the engine never goes looking. **Nor does it
 implement telemetry:** the engine emits no OpenTelemetry and takes no SDK (single dependency); what a
-session did inside its runtime is the bought layer, Claudlobby's (below; Claudlobby#2145 §2.1, §11).
+session did inside its agent CLI is the bought layer, Claudlobby's (below; Claudlobby#2145 §2.1, §11).
 
 **clauDNA — the behavior system.**
 *Owns:* the portable engineering genome — skills, agents, hooks-as-behavior — distributed
@@ -433,7 +433,7 @@ changes when the *world* changes rather than when its *procedures* change (§10.
 contracts, permission grants (#644), supervision, dispatch, fleet-operations commands (the 44
 `library/skills/` — format notwithstanding, they are runtime content); **policy** for what each bot
 may do, including writer topology (§10.5.3). *(Added 2026-10-04)* **And the bought layer:** the
-agent runtimes (Claude Code, Codex) export their own intra-session telemetry; Claudlobby owns **the
+agent CLIs (Claude Code, Codex) export their own intra-session telemetry; Claudlobby owns **the
 normalization layer** that turns it into the plane's vocabulary and **the normalized attribute names**
 that come out — the plane's registry names, which are the reader surface. The normalized session
 attribute carries the plane's house key (the join key, #10); the vendor→house mapping is the intake's —
@@ -461,8 +461,8 @@ fork, never a re-assertion. (Rules: §10.4.)
 hook behavior, prompt, rubric)
 → Behavior. Home = **the system whose surface it operates**: engineering workflow → clauDNA;
 fleet operations → Claudlobby; a host adapter for a contract → the contract's owner (Claudron's
-`hooks.py` is the engine's Claude Code adapter; *amended 2026-10-04:* one adapter per agent runtime, and
-nothing past the adapter is runtime-specific — R8). Embedded reference payload → apply **Q-closure**:
+`hooks.py` is the engine's Claude Code adapter; *amended 2026-10-04:* one adapter per agent CLI, and
+nothing past the adapter is agent-CLI-specific — R8). Embedded reference payload → apply **Q-closure**:
 does it change when the *procedure* changes (closure — stays with the skill) or when the *world or
 an SSOT* changes (library — it is referential; move it or render-with-gate)?
 
@@ -498,10 +498,10 @@ The institution §4 was missing. Rules first, then the v1 register.
   violation).
 - **R7 — every contract states its version window** (clauDNA's `requires: cli: claudron>=0.2`
   already does).
-- **R8 — runtime-specific signals are enrichment only** *(added 2026-10-04, Claudlobby#2145 §2.3).* Each
-  system meets an agent runtime (Claude Code, Codex) through one adapter — hook payloads, transcript
-  reader, launcher, telemetry mapping — and everything past the adapter consumes one runtime-neutral
-  model joined on `(runtime, session_id)` (#10). A signal only one runtime provides (Claude subagent span
+- **R8 — agent-CLI-specific signals are enrichment only** *(added 2026-10-04, Claudlobby#2145 §2.3).* Each
+  system meets an agent CLI (Claude Code, Codex) through one adapter — hook payloads, transcript
+  reader, launcher, telemetry mapping — and everything past the adapter consumes one agent-CLI-neutral
+  model joined on `(agent_cli, session_id)` (#10). A signal only one agent CLI provides (Claude subagent span
   nesting, `TRACEPARENT`, `CLAUDE_CODE_CHILD_SESSION`, `$CLAUDE_PID`, Codex `PostCompact`) may enrich a
   view; it is never load-bearing for liveness, task state, rollups, paging or summaries. It is a register
   rule rather than a §10.3 placement because it bounds what *any* system may build on a vendor surface no
@@ -518,8 +518,8 @@ The institution §4 was missing. Rules first, then the v1 register.
 | 7 | Plugin skill surface (`/claudna:*`, `SKILL_CONTRACT`, `session.md` handoff artifact) | clauDNA | its repo | `session.md` is consumed by Claudlobby (`start-bot.sh:296–322`, `lib-common.sh:1098` parses `last_updated:`) but never declared a stable surface — register it |
 | 8 | Fleet composition (fleet.yaml schema, bot env, grants, plugin defaults) | Claudlobby | its repo | ✓; `known_values.py:90–155` hand-tracks clauDNA's skill renames (R3 by hand — fragile, needs a gate or a feed) |
 | 9 | Consumption-door policy (CLI floor; MCP demand-gate, triggers, monitor) | Claudron | decision-C doc | trigger 1 needs re-scoping after #644 (§10.5.2); monitor should be a named check, not a human habit |
-| 10 | **Session join key** `(runtime, session_id)` — `runtime ∈ {claude, codex}`; `session_id` the id the runtime hands its hooks, in the class `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` — stated **here, once**: clauDNA `lib/claudna/session_store/paths.py:32` (`_SID_RE`) and Claudron `ops.py:33` (`_ID_RE`) are its two copies; neither test cites this row yet — the Claudron ops-log follow-up, which waits on canary C1 (a recorded Codex `session_id`), and its clauDNA mirror pin each copy to it, and if C1 widens the class both move together; plane uid `sess_` + sha256(`session_alias(id, runtime)`)[:32], where `session_alias(platform_session_id, runtime="claude")` is the raw id for `claude` (the default) and `"<runtime>:" + id` otherwise (Claudlobby#2145 F2) | Claudlobby | **planned** (P1 Claudlobby Task 4; P1 Claudlobby Task 10, Half A, opens the Claudron PR that flips this cell): `ids.session_alias(platform_session_id, runtime="claude")` composed into `derive_session_uid(platform_session_id, runtime="claude")` in `claudlobby/plane/ids.py` (today `:79-89`, Claude-only) — the F2 material rule exists in that one function and nowhere else; its text in `documentation/architecture/observable-plane.md`; until then Claudlobby#2145 §2.2 | consumers conform: clauDNA keys sessions by `session_id` and records `runtime` at open (P1 clauDNA); P2's intake sets its session `subject = session_alias(id, runtime)` and its test pins the composition, not a coincidence; Claudron treats provenance — `session:<sid>:<seg>` for `claude`, `session:<runtime>/<sid>:<seg>` otherwise (F9) — as an opaque string in both channels (`engine.py:160-161`, `amend.py:37,63,84`) — no engine change; the normalized session attribute carries the same key (§10.2) |
-| 11 | **clauDNA export contract** — `claudna.export/1` and its planned additions: item `session.runtime` (P1), `--include-skipped` status items and `segment{sealed_at,sealed_by,counts}` (P3), and the `entrypoint.json` record (`claudna.entrypoint/1`, F16, P3) | clauDNA | `documentation/specs/2026-09-28-session-store-design.md` §8 (the envelope: shipped in v0.23.0); the additions **planned** there (P1/P3 clauDNA; P3 clauDNA Task 9 opens the Claudron PR that flips this cell) | consumer: Claudlobby's `session-export` job (P3) conforms to §8 and reads `entrypoint.json` for the door's path — never Claude Code's `installed_plugins.json` (F16); R6: Claudlobby asserts no field before the clauDNA release that ships it |
+| 10 | **Session join key** `(agent_cli, session_id)` — `agent_cli ∈ {claude, codex}`; `session_id` the id the agent CLI hands its hooks, in the class `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` — stated **here, once**: clauDNA `lib/claudna/session_store/paths.py:32` (`_SID_RE`) and Claudron `ops.py:33` (`_ID_RE`) are its two copies; neither test cites this row yet — the Claudron ops-log follow-up, which waits on canary C1 (a recorded Codex `session_id`), and its clauDNA mirror pin each copy to it, and if C1 widens the class both move together; plane uid `sess_` + sha256(`session_alias(id, agent_cli)`)[:32], where `session_alias(platform_session_id, agent_cli="claude")` is the raw id for `claude` (the default) and `"<agent_cli>:" + id` otherwise (Claudlobby#2145 F2) | Claudlobby | **planned** (P1 Claudlobby Task 4; P1 Claudlobby Task 10, Half A, opens the Claudron PR that flips this cell): `ids.session_alias(platform_session_id, agent_cli="claude")` composed into `derive_session_uid(platform_session_id, agent_cli="claude")` in `claudlobby/plane/ids.py` (today `:79-89`, Claude-only) — the F2 material rule exists in that one function and nowhere else; its text in `documentation/architecture/observable-plane.md`; until then Claudlobby#2145 §2.2 | consumers conform: clauDNA keys sessions by `session_id` and records `agent_cli` at open (P1 clauDNA); P2's intake sets its session `subject = session_alias(id, agent_cli)` and its test pins the composition, not a coincidence; Claudron treats provenance — `session:<sid>:<seg>` for `claude`, `session:<agent_cli>/<sid>:<seg>` otherwise (F9) — as an opaque string in both channels (`engine.py:160-161`, `amend.py:37,63,84`) — no engine change; the normalized session attribute carries the same key (§10.2) |
+| 11 | **clauDNA export contract** — `claudna.export/1` and its planned additions: item `session.agent_cli` (P1), `--include-skipped` status items and `segment{sealed_at,sealed_by,counts}` (P3), and the `entrypoint.json` record (`claudna.entrypoint/1`, F16, P3) | clauDNA | `documentation/specs/2026-09-28-session-store-design.md` §8 (the envelope: shipped in v0.23.0); the additions **planned** there (P1/P3 clauDNA; P3 clauDNA Task 9 opens the Claudron PR that flips this cell) | consumer: Claudlobby's `session-export` job (P3) conforms to §8 and reads `entrypoint.json` for the door's path — never Claude Code's `installed_plugins.json` (F16); R6: Claudlobby asserts no field before the clauDNA release that ships it |
 | 12 | **Codex session-loop snippet** — the normative Codex `hooks.json` shape for the engine's roles; same `<executable> --vault <root> hook <event>` command form and `hook <event>` identity suffix (`CLI_CONTRACT.md:320-323,366-370`) | Claudron | **planned** (P4 Claudron, after C1/C3 — P4 itself flips this cell): its own `##` section in `docs/CLI_CONTRACT.md` with a parity test (`doc_parity.fenced_block` reads one fence per `##` section) and a capability (e.g. `codex-session-loop`) gated per §Capability probe | R6: no composer renders it before the release that ships it; the companion (Claudlobby#2149) bumps the pin afterwards. If C3 shows Codex cannot block at PreCompact, the P4 text records R-capture-prompt as not held on Codex |
 
 ### 10.5 The hard cases, resolved
@@ -747,15 +747,15 @@ protocol, one address table, one write path, one door.
     `hooks.py` row describe the pre-C2 state and stay as history; the tree-shape walk is now
     `cli.py:146–157` (silent since #102). Row 5 and §10.2 were refreshed by the 2026-10-04 amendment.
 
-## Amendment — 2026-10-04: the agent runtimes enter the frame
+## Amendment — 2026-10-04: the agent CLIs enter the frame
 
 Recorded for Claudlobby#2145 (`2026-10-04-runtime-neutral-observability-plan.md`, Claudlobby repo; forks
 F1–F17 ratified 2026-10-04, F18 — Claudlobby composes Codex by name — locked 2026-10-05); grounds in its §2.1
 (layers and owners), §2.2 (the join key) and §2.3 (enrichment only). **The triad stands; the frame gains a
-fourth participant that owns nothing here — the agent runtimes — and the register names who owns what we buy
+fourth participant that owns nothing here — the agent CLIs — and the register names who owns what we buy
 from them.**
 
-1. **§10.2 — the bought layer is Claudlobby's.** Both runtimes export OpenTelemetry natively; the fleet's
+1. **§10.2 — the bought layer is Claudlobby's.** Both agent CLIs export OpenTelemetry natively; the fleet's
    own per-tool-call events duplicated it (~84% of system-event volume, read by nothing — #2145 §1). So
    the layer that normalizes the export gets its owner now (R1), before P2 writes its text (R2) and before
    any consumer gates on it (R3); §10.2 states what is owned and where the mapping lives.
@@ -763,9 +763,11 @@ from them.**
    surface no sibling owns.
 3. **§10.4 rows 10–12** — the join key (Claudlobby), the export-contract additions (clauDNA), the Codex
    snippet (Claudron, P4). Named now so owners precede text and text precedes consumers; every unshipped
-   surface is worded *planned* (R6), with the phase that ships it.
+   surface is worded *planned* (R6), with the phase that ships it. The field, parameter and join-key
+   component are spelled `agent_cli` (operator, 2026-10-06), matching Claudlobby's `fleet.yaml` key
+   (Claudlobby#2203); the F2 rule is unchanged.
 4. **Stale lines fixed where touched** (§10.2 Claudron *Never*, row 5), and §10.3 Q1 extended to one
-   adapter per runtime; §10.8 item 12 ledgers the fact. §1–§9 stay as written — this file's own convention
+   adapter per agent CLI; §10.8 item 12 ledgers the fact. §1–§9 stay as written — this file's own convention
    (§10 preamble: facts that amend §1–§9 are ledgered in §10.8, not edited) — and the other pre-C2 §10
    mentions are ledgered the same way (item 12).
 5. **What this does not do.** No fork of #2145 changes; nothing unshipped is asserted as shipped; no
