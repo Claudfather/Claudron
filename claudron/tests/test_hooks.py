@@ -218,6 +218,20 @@ class TestGauntletPins:
         assert len(starts) == 1  # replaced, not appended
         assert starts[0]["hooks"][0]["command"].startswith("/new/venv/")
 
+    def test_merge_keys_on_the_one_event_map(self, monkeypatch):
+        """`merge_settings` keys on SNIPPET_EVENTS, not a private copy of it:
+        an event added to the map alone used to raise KeyError on install."""
+        from claudron.hooks import merge_settings
+
+        monkeypatch.setitem(hooks_mod.SNIPPET_EVENTS, "Probe", "probe")   # a synthetic event, not a real host's
+        snippet = settings_snippet("/EXE", "/VAULT")
+        assert "Probe" in snippet["hooks"]  # the renderer already follows the map (settings_snippet)
+        stale = {"hooks": {"Probe": [{"matcher": "", "hooks": [
+            {"type": "command", "command": "/old/venv/claudron --vault /VAULT hook probe"}]}]}}
+        merged = merge_settings(stale, snippet)
+        assert merged["hooks"]["Probe"] == snippet["hooks"]["Probe"]  # replaced by the identity rule, not appended
+        assert set(merged["hooks"]) == set(hooks_mod.SNIPPET_EVENTS)
+
 
 class TestSessionProtocolDocParity:
     """CLI_CONTRACT §Session-loop protocol is the ONE normative statement of
