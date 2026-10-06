@@ -275,9 +275,9 @@ def settings_shape_error(data: object) -> str | None:
     """Why `merge_settings` cannot merge into *data*, or None when it can.
 
     It checks only what the merge reads: a JSON object, its `hooks` (when
-    present) an object, and each event in `SNIPPET_EVENTS` (when
-    present) a list of objects whose own `hooks` is a list of objects. Other
-    events are never touched, so their shape is not the install's to refuse."""
+    present) an object, and each event in `SNIPPET_EVENTS` (when present) a
+    list of objects whose own `hooks` is a list of objects. Other events are
+    never touched, so their shape is not the install's to refuse."""
     if not isinstance(data, dict):
         return "not a JSON object"
     if "hooks" not in data:
