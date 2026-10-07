@@ -230,8 +230,9 @@ HOOK_EVENTS = tuple(sorted(_HOOK_HANDLERS))
 
 
 #: Claude Code event -> the engine's `hook <event>` dispatch verb, in the
-#: snippet's order. `settings_snippet` renders from it and doctor's hook checks
-#: (#204) walk it, so the two agree on which events the loop needs.
+#: snippet's order. `settings_snippet` renders from it, `merge_settings` keys
+#: its replace-not-append rule on it, and doctor's hook checks (#204) walk it,
+#: so all three agree on which events the loop needs.
 SNIPPET_EVENTS = {
     "SessionStart": "session-start",
     "PreCompact": "pre-compact",
@@ -274,9 +275,9 @@ def settings_shape_error(data: object) -> str | None:
     """Why `merge_settings` cannot merge into *data*, or None when it can.
 
     It checks only what the merge reads: a JSON object, its `hooks` (when
-    present) an object, and each of the three events the install writes (when
-    present) a list of objects whose own `hooks` is a list of objects. Other
-    events are never touched, so their shape is not the install's to refuse."""
+    present) an object, and each event in `SNIPPET_EVENTS` (when present) a
+    list of objects whose own `hooks` is a list of objects. Other events are
+    never touched, so their shape is not the install's to refuse."""
     if not isinstance(data, dict):
         return "not a JSON object"
     if "hooks" not in data:
@@ -385,13 +386,8 @@ def merge_settings(settings: dict, snippet: dict) -> dict:
     paths don't accumulate); foreign entries are never touched."""
     merged = dict(settings)
     hooks = dict(merged.get("hooks") or {})
-    event_cmds = {
-        "SessionStart": "session-start",
-        "PreCompact": "pre-compact",
-        "SessionEnd": "session-end",
-    }
     for event, entries in snippet["hooks"].items():
-        event_cmd = event_cmds[event]
+        event_cmd = SNIPPET_EVENTS[event]  # the one event map: the snippet was rendered from it
         kept = [
             e for e in (hooks.get(event) or [])
             if not _is_claudron_hook(e, event_cmd)
