@@ -41,7 +41,7 @@ The "drift" was a category error. A vault commingles three things:
    `*-memories/` trees (Claude Code auto-memory format: `name`/`description`/
    `originSessionId`, `**Why/How to apply**` bodies). Never meant to be notes.
 3. **Imported ballast** — corpora carried for provenance/harvest (e.g. the
-   Artemis `*-memories/` import), not the ecosystem's own knowledge.
+   external `*-memories/` import), not the ecosystem's own knowledge.
 
 The 320 errors were Claudron validating (2) and (3) as if they were (1). The fix
 is not schema convergence — it is *recognizing the classes*.
