@@ -44,6 +44,7 @@ except PackageNotFoundError:
 CAPABILITIES: tuple[str, ...] = (
     "navigation",   # `index --navigation` regenerates INDEX.md from the index
     "doctor",       # `doctor [--fix]` diagnoses a vault + applies migrations (#190)
+    "codex-session-loop",  # --agent-cli codex lifecycle snippet/install/doctor; compact-start capture
     "doctor-settings",  # `doctor --settings PATH` checks those files' claudron hooks (#204)
     "trust-aware-reads",  # lookup/recall rank trusted first, withhold external drafts (#200 §1)
     "subjects",     # `subjects` and `resolve`: the derived subject registry and its ranking (#200 §4)

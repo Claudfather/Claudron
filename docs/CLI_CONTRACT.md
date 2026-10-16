@@ -231,7 +231,7 @@ them onto a bot, or co-inhabits the same events builds against this section.
 |---|---|---|---|
 | `R-continuity` — the workspace brief: git state, tickets, a handoff artifact | behavior | **The front-end.** The engine ships no handler for it and never will. | — |
 | `R-recall` — the knowledge brief: durable notes, ranked and budgeted | engine op | **Claudron** | `session-start` |
-| `R-capture-prompt` — the distill nudge at compaction | engine protocol | **Claudron** defines it; exactly one participant *holds* it per session | `pre-compact` |
+| `R-capture-prompt` — the distill nudge at compaction | engine protocol | **Claudron** defines it; exactly one participant *holds* it per session | `session-start`, `pre-compact` (noninjecting ownership claim) |
 | `R-sync` — pull at session start, push at session end | engine op | **Claudron** | `session-start`, `session-end` |
 
 **The briefs co-inject by design — do not merge them.** A workspace brief and
@@ -251,8 +251,9 @@ contended: `R-capture-prompt`.
 - **`sync --push` happens at session end, bounded** (below). An expired push is
   not an error — the commits travel on the next session's push.
 - **The recall brief is capped** at `session.BRIEF_TOKEN_BUDGET`, which covers
-  everything the engine injects: the conventions block, the recalled notes, and
-  the discovery hint. It degrades by *dropping notes*, never by truncating one
+  the recall role: the conventions block, the recalled notes, and
+  the discovery hint. The fixed capture instruction is a separate role and
+  is appended after the recall brief on the first compact start only. It degrades by *dropping notes*, never by truncating one
   mid-thought. The constant is the contract; its value is tuning and may change
   without a breaking-change entry.
   - **Stated limit.** The cap holds given a `CONVENTIONS.md` within its own
@@ -275,12 +276,22 @@ participant to police another's context, which no participant is entitled to do.
 
 ### The single-prompt rule, and how the prompt is claimed
 
-**Exactly one `R-capture-prompt` holder per session.** Two block-prompts on one
-compaction is a defect.
+**Exactly one `R-capture-prompt` holder per session.** Two capture instructions
+on one compaction are a defect. The engine emits its instruction once per
+valid `(vault root, agent_cli, session_id)` on **SessionStart(source=compact)
+stdout**, after the recall brief. Startup, resume and clear do not prompt;
+missing or invalid session IDs do not prompt. The instruction asks for durable
+findings supported by the retained context after compaction, never invented
+discarded details. An atomic private temporary marker prevents concurrent or
+repeated hooks from duplicating it; unavailable marker storage skips the
+instruction and preserves the brief. Temporary-state removal can reset this
+once-per-session guard, as with the previous temporary marker.
 
 The claim is **structural** — nobody registers, nobody configures:
 
-1. **The engine always prompts** wherever its `pre-compact` hook is installed,
+1. **The engine holds the prompt** wherever its complete hook pack is installed.
+   `pre-compact` is retained as a **noninjecting ownership claim**; it no longer
+   blocks compaction. `session-start` delivers the instruction after compact,
    in text that names no front-end: it routes the agent to *its own* capture
    door, falling back to `claudron capture --stdin`. The engine does not sniff
    for consumers, and no environment variable, marker file, or holder field
@@ -292,6 +303,17 @@ The claim is **structural** — nobody registers, nobody configures:
    the host's hook-settings files (for Claude Code: the user, project, and local
    `settings.json`). Detect it there and nowhere else; an engine-install probe
    is not the same question and gets the standalone cases wrong.
+
+**Compatibility window.** This release corrects the delivery mechanism without
+removing `hook pre-compact` or changing the Claude snippet. Released consumers
+that defer on that suffix continue to defer; consumers must not remove that
+check or add a second compact-start prompt. A future removal of the identity
+requires its own breaking-change window. Install the complete hook pack: a
+standalone legacy PreCompact entry now claims ownership but cannot deliver an
+instruction without SessionStart. The measured unattended Claude path did not
+reliably deliver a PreCompact block reason; successful compact-start stdout
+was observed on both supported agent CLIs. This is a delivery correction, not
+a guarantee that a model follows the instruction or recovers discarded text.
 
 Both standalone modes fall out for free: with no engine entry the front-end
 prompts; with no front-end the engine prompts.
@@ -318,7 +340,7 @@ gate against this block** (register rule R3).
 ```
 
 - **Three events, one command form:** `<executable> --vault <vault-root> hook
-  <event>`. `hook` is the runtime dispatch verb Claude Code invokes; `hooks
+  <event>`. `hook` is the runtime dispatch verb the agent CLI invokes; `hooks
   install` is the installer verb a human or composer runs. Both spellings are
   contract.
 - **The command names its vault (#183).** Walk-up ascends from the working
@@ -382,7 +404,7 @@ gate against this block** (register rule R3).
 git, a stalled network, an exception class nobody anticipated — the hook emits
 nothing on stdout, appends a line to `.claudron/hooks.log`, and exits **0**.
 This is why hook stdout can be injected verbatim: the only thing that ever
-reaches it is a brief.
+reaches it is a brief or the compact-start capture instruction.
 
 Fail-open alone does not save a *stalled* call, so the two hooks that touch the
 network are hard-bounded:
@@ -391,12 +413,50 @@ network are hard-bounded:
 | Event | Bounded operation | Budget | On expiry |
 |---|---|---|---|
 | `session-start` | `sync --pull` | `2.0s` | Pull abandoned; the brief renders from local state. |
-| `pre-compact` | none — no I/O | — | — |
+| `pre-compact` | none — noninjecting ownership claim | — | — |
 | `session-end` | `sync --push` | `10.0s` | Push abandoned; the commits travel on the next session's push. |
 
 These budgets are contract: a fleet composer sizes session startup against
 them. Diagnostics from a degraded hook go to `.claudron/hooks.log` — never to
 stdout, and never to stderr where a host might surface them as a session error.
+
+## Codex session-loop snippet
+
+Gate this surface on `"codex-session-loop" in status --json → data.capabilities`.
+`claudron hooks install --agent-cli codex` emits exactly this Codex `hooks.json`
+block. A composer renders this owned surface only after installing a release
+that declares that capability (R6), and carries parity against this fence (R3).
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --agent-cli codex --vault <absolute-vault-root> hook session-start"}]}],
+    "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --agent-cli codex --vault <absolute-vault-root> hook pre-compact"}]}],
+    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --agent-cli codex --vault <absolute-vault-root> hook session-end", "timeout": 15}]}]
+  }
+}
+```
+
+The same roles, pull-before-recall ordering, fail-open behavior, structural
+claim, identity suffix and engine operation budgets in §Session-loop protocol
+apply. Codex receives the capture instruction on SessionStart(source=compact)
+stdout; PreCompact is noninjecting. Explicit `--agent-cli codex` selects this
+adapter without inferring it from environment or consumer installation trees.
+The command keeps `hook <event>` at its end. SessionEnd explicitly allows 15
+seconds to accommodate the 10-second push operation and process overhead;
+Codex's measured default one-second hook timeout cannot cover that budget.
+The engine still bounds the push at 10 seconds.
+
+`--write` merges into `$CODEX_HOME/hooks.json`, or `~/.codex/hooks.json` when
+CODEX_HOME is unset/empty. `--settings PATH` selects another file. Claude
+remains the default, with `~/.claude/settings.json`; the flags do not write
+other front ends' files. JSON shape refusal, unrelated-entry preservation and
+idempotent replacement use the same rules as the Claude installer. Installation
+and `doctor --agent-cli codex [--settings PATH]` prove configuration shape and
+addresses only: **native hook hash trust remains an explicit host action**,
+separate from installation. No trust settings are written here. The event and
+stdin premises were captured on Codex 0.162.0-alpha.17.2, not inferred from
+vendor source; support for unobserved events is not promised by this snippet.
 
 ## Flags
 
@@ -473,7 +533,10 @@ stdout, and never to stderr where a host might surface them as a session error.
     Claude Code settings file on each host, outside the vault, so doctor checks
     the files it is given and never goes looking: `--settings PATH`
     (repeatable), or by default the file `hooks install --write` writes,
-    `~/.claude/settings.json`. A consumer that composes the hooks into its own
+    `~/.claude/settings.json`. With `--agent-cli codex`, the selected default is
+    `$CODEX_HOME/hooks.json` (fallback `~/.codex/hooks.json`) and the comparison
+    uses §Codex session-loop snippet, including its timeout and selector.
+    Here “host” continues to mean machine/settings file, not agent CLI. A consumer that composes the hooks into its own
     files passes those. Entries are found by the identity rule (§Session-loop
     protocol), compared with `settings_snippet` as this engine renders it, and
     each recorded address is resolved as the hook resolves it (§Environment).
@@ -483,7 +546,8 @@ stdout, and never to stderr where a host might surface them as a session error.
     ran `hooks install`, so it has no loop to check. A partial install is a
     finding, and so is a declared file either way, since a consumer said the
     hooks live there. Each finding names its remedy: for an entry,
-    `claudron --vault <vault> hooks install --write` with that file's
+    `claudron --vault <vault> hooks install --write` (adding `--agent-cli codex`
+    for that selected front end) with that file's
     `--settings` (or re-rendering the file, when a composer manages it); for a
     declared file that is missing, the same command with its path; for hooks
     that sync another vault, the same command with another settings file; and

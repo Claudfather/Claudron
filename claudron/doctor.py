@@ -295,10 +295,11 @@ def _git_health(vault: Vault) -> dict | None:
 
 def diagnose(vault: Vault, *,
              migrations: tuple[Migration, ...] | None = None,
-             settings: list[Path] | None = None) -> DoctorReport:
+             settings: list[Path] | None = None,
+        agent_cli: str = "claude") -> DoctorReport:
     """Read-only diagnosis against this engine's rules. Never writes.
 
-    *settings* names the Claude Code settings files whose hooks to check
+    *settings* names the selected agent CLI settings files whose hooks to check
     (D009, D010); None means the file `hooks install --write` writes."""
     report = DoctorReport(vault_format=vault_format(vault))
     ident = _read_identity(vault)
@@ -368,12 +369,12 @@ def diagnose(vault: Vault, *,
             f"git health: {state}" + (f" — {detail}" if detail else "")
             + " (see: claudron sync --check)"))
 
-    report.hooks, found = _check_hooks(vault, settings)
+    report.hooks, found = _check_hooks(vault, settings, agent_cli=agent_cli)
     report.findings += found
     return report
 
 
-def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict], list[Finding]]:
+def _check_hooks(vault: Vault, settings: list[Path] | None, *, agent_cli: str = "claude") -> tuple[list[dict], list[Finding]]:
     """The per-host checks (#204, #190's last two rows), read-only.
 
     D009: each settings file's claudron entries against the current snippet
@@ -383,7 +384,8 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
     writes; doctor never goes looking for others, and never executes anything
     it reads in them."""
     files = ([(Path(p), True) for p in settings] if settings
-             else [(default_settings_path(), False)])
+             else [(default_settings_path(agent_cli), False)])
+    selector = " --agent-cli codex" if agent_cli == "codex" else ""
     root = str(vault.root.resolve())
     checked: list[dict] = []
     found: list[Finding] = []
@@ -398,7 +400,7 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
                     "D009", "warning",
                     f"settings file {path} not found — nothing to check: pass the file the "
                     "hooks live in, or install them there with claudron --vault "
-                    f"{shlex.quote(root)} hooks install --write --settings {shlex.quote(where)}",
+                    f"{shlex.quote(root)} hooks install{selector} --write --settings {shlex.quote(where)}",
                     where))
             continue
         # The installer's own reader (#205): what doctor calls unparseable is
@@ -412,7 +414,7 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
                 "`hooks install` refuses the file too: repair the file (or re-render it, "
                 "if a composer manages it)", where))
             continue
-        hint = ("re-install: claudron --vault " + shlex.quote(root) + " hooks install --write"
+        hint = ("re-install: claudron --vault " + shlex.quote(root) + f" hooks install{selector} --write"
                 + (f" --settings {shlex.quote(where)}, or re-render the file if a composer "
                    "manages it" if declared else ""))
         hooks = data.get("hooks") or {}
@@ -455,13 +457,13 @@ def _check_hooks(vault: Vault, settings: list[Path] | None) -> tuple[list[dict],
                         "#183), so it finds one only through CLAUDRON_VAULT_PATH or walk-up "
                         f"from where the session starts — {hint}", where))
                 else:
-                    expected = settings_snippet(parsed.prefix, parsed.vault)["hooks"][event][0]
+                    expected = settings_snippet(parsed.prefix, parsed.vault, agent_cli=agent_cli)["hooks"][event][0]
                     if group != expected:
                         found.append(_finding(
                             "D009", "warning",
                             f"{event}'s claudron hook differs from the current snippet "
                             f"({_drift(group, hook, expected)}) — {hint}", where))
-                found += _resolution(event, command, parsed.vault, root, hint, where, entry)
+                found += _resolution(event, command, parsed.vault, root, hint, where, entry, agent_cli=agent_cli)
     return checked, found
 
 
@@ -492,7 +494,7 @@ def _drift(group: dict, hook: dict, expected: dict) -> str:
 
 
 def _resolution(event: str, command: str, address: str | None, root: str, hint: str,
-                where: str, entry: dict) -> list[Finding]:
+                where: str, entry: dict, *, agent_cli: str = "claude") -> list[Finding]:
     """D010 for one entry: does it reach a vault from where it runs?"""
     out: list[Finding] = []
     try:
@@ -546,7 +548,9 @@ def _resolution(event: str, command: str, address: str | None, root: str, hint: 
             "D010", "warning",
             f"{event}'s claudron hook syncs {bound_root}, not this vault ({root}); to give "
             "this vault hooks of its own, install them into another settings file: "
-            f"claudron --vault {shlex.quote(root)} hooks install --write --settings <file>",
+            f"claudron --vault {shlex.quote(root)} hooks install"
+            + (" --agent-cli codex" if agent_cli == "codex" else "")
+            + " --write --settings <file>",
             where))
     return out
 
@@ -574,7 +578,8 @@ def _rel(vault: Vault, p: Path) -> Path:
 
 def fix(vault: Vault, *,
         migrations: tuple[Migration, ...] | None = None,
-        settings: list[Path] | None = None) -> DoctorReport:
+        settings: list[Path] | None = None,
+        agent_cli: str = "claude") -> DoctorReport:
     """Apply structure repairs and pending migrations; commit what was written
     as one ``migrate(<ids>): …`` commit; return a FRESH diagnosis of the result.
 
@@ -632,7 +637,7 @@ def fix(vault: Vault, *,
 
         commit = _commit(vault, written, ids, repairs) if written else None
 
-    report = diagnose(vault, migrations=migrations, settings=settings)
+    report = diagnose(vault, migrations=migrations, settings=settings, agent_cli=agent_cli)
     report.findings = refusals + report.findings
     report.fixed = True
     report.applied = applied

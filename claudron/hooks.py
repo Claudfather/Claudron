@@ -1,4 +1,4 @@
-"""The hook pack: Claude Code lifecycle glue for the session loop (E2).
+"""The hook pack: agent CLI lifecycle glue for the session loop (E2).
 
 The adapter, not the protocol. What the loop promises — the four roles and
 their owners, the pull-before-recall ordering, the single-prompt rule, the
@@ -15,15 +15,15 @@ user's temp dir when no vault resolves), and exits 0.
 - SessionStart → ``sync --pull`` (hard timeout, offline fail-open) then
   the recall brief on stdout. Pull precedes recall or machine B briefs
   stale.
-- PreCompact → block-and-instruct once per session: route the agent to its
-  own capture door. Front-end-neutral by construction — the engine never
-  asks *who else is here*; a front-end shipping its own prompt defers by
-  detecting the engine's registered ``hook pre-compact`` entry.
+- SessionStart(source=compact) → the capture instruction once per session.
+  PreCompact remains installed as a noninjecting structural ownership claim,
+  so released front ends continue to defer on ``hook pre-compact``.
 - SessionEnd → ``sync --push`` (fail open; nothing to inject).
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import os
@@ -71,13 +71,14 @@ def _session_id(payload: dict) -> str | None:
     return sid if isinstance(sid, str) and sid else None
 
 
-def _stdin_payload() -> dict:
-    """Claude Code hook input (JSON on stdin); tolerate anything."""
+def _stdin_payload() -> dict | None:
+    """Agent CLI hook input (JSON on stdin); tolerate anything."""
     try:
         raw = sys.stdin.read()
-        return json.loads(raw) if raw.strip() else {}
+        value = json.loads(raw) if raw.strip() else {}
+        return value if isinstance(value, dict) else None
     except (OSError, json.JSONDecodeError):
-        return {}
+        return None
 
 
 def session_start_brief(vault: Vault, session_id: str | None = None) -> str:
@@ -139,51 +140,58 @@ def session_start_brief(vault: Vault, session_id: str | None = None) -> str:
     return brief
 
 
-def hook_session_start(vault: Vault, payload: dict) -> int:
+def hook_session_start(vault: Vault, payload: dict, *, agent_cli: str = "claude") -> int:
     """Emit the session brief on stdout (fail-open, like every hook)."""
     brief = session_start_brief(vault, _session_id(payload))
+    prompt = capture_prompt(vault, payload, agent_cli)
     if brief:
         print(brief)
+    if prompt:
+        print(prompt)
     return 0
 
 
-def hook_pre_compact(vault: Vault, payload: dict) -> int:
-    """Block the first compaction with the capture prompt; pass afterwards.
+def capture_prompt(vault: Vault, payload: dict, agent_cli: str) -> str:
+    """Claim one compact-start prompt atomically; no claim means no injection.
 
-    The prompt names no front-end: it routes the agent to *its own* capture
-    door, whichever that is, and falls back to the engine's CLI. Which
-    participant holds the prompt is settled structurally by the contract's
-    claim mechanism, not by this handler looking around: the engine always
-    prompts where its hook is installed, and a front-end shipping its own
-    prompt defers when it finds that registered ``hook pre-compact`` entry.
+    A hashed key avoids path traversal and namespaces the same native SID by
+    vault and agent CLI. Markers remain temporary, like the earlier hook's
+    once-per-session state; this adds no vault layout requirement.
     """
-    session_id = str(payload.get("session_id") or "unknown")
-    marker = Path(tempfile.gettempdir()) / f"claudron-precompact-{session_id}"
-    if marker.exists():
-        return 0
+    sid = _session_id(payload)
+    if (payload.get("source") != "compact" or sid is None
+            or ops._ID_RE.fullmatch(sid) is None):
+        return ""
+    key = json.dumps([str(vault.root.resolve()), agent_cli, sid]).encode()
+    marker = Path(tempfile.gettempdir()) / ("claudron-capture-" + hashlib.sha256(key).hexdigest())
     try:
-        marker.touch()
-    except OSError:
-        pass
-    print(
-        json.dumps(
-            {
-                "decision": "block",
-                "reason": (
-                    "Before compacting: distill this session's durable findings "
-                    "through your capture door — your capture skill if you have "
-                    "one, otherwise `claudron capture --stdin` (the finding as "
-                    "JSON on stdin, never interpolated into --body). Dedup routes "
-                    "a near-duplicate to the note that already covers it rather "
-                    "than twinning it. Then retry the compaction."
-                ),
-            }
-        )
+        fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(fd)
+    except FileExistsError:
+        return ""
+    except OSError as exc:
+        _log(vault, "session-start", f"capture prompt claim skipped: {exc}")
+        return ""
+    return (
+        "After compaction: distill the durable findings retained from this session "
+        "through your capture door — your capture skill if you have one, otherwise "
+        "`claudron capture --stdin` (the finding as JSON on stdin, never interpolated "
+        "into --body). Capture only what the retained context supports; do not invent "
+        "discarded details. Dedup routes a near-duplicate to the note that already "
+        "covers it rather than twinning it."
     )
+
+
+def hook_pre_compact(vault: Vault, payload: dict, *, agent_cli: str = "claude") -> int:
+    """Noninjecting ownership identity retained for structural consumer deferral.
+
+    Capture instructions are delivered on SessionStart(source=compact), whose
+    stdout reaches the post-compaction model request on both measured hosts.
+    """
     return 0
 
 
-def hook_session_end(vault: Vault, payload: dict) -> int:
+def hook_session_end(vault: Vault, payload: dict, *, agent_cli: str = "claude") -> int:
     """Push the session's vault changes; fail open (nothing to inject)."""
     try:
         result = sync(vault, pull=False, push=True, timeout=SESSION_END_PUSH_TIMEOUT)
@@ -200,7 +208,7 @@ def hook_session_end(vault: Vault, payload: dict) -> int:
     return 0
 
 
-def run_hook(event: str, vault: Vault | None) -> int:
+def run_hook(event: str, vault: Vault | None, *, agent_cli: str = "claude") -> int:
     """THE fail-open boundary: whatever goes wrong inside a handler —
     including exception classes the inner guards never anticipated — a
     hook exits 0 with nothing on stdout. One guard at the boundary
@@ -211,10 +219,13 @@ def run_hook(event: str, vault: Vault | None) -> int:
     when no vault resolved."""
     try:
         payload = _stdin_payload()
+        if payload is None:
+            _log(vault, event, "invalid hook input — nothing to do")
+            return 0
         if vault is None:
             _log(None, event, "no vault resolvable — nothing to do")
             return 0
-        return _HOOK_HANDLERS[event](vault, payload)
+        return _HOOK_HANDLERS[event](vault, payload, agent_cli=agent_cli)
     except Exception as exc:
         _log(vault, event, f"hook failed open: {exc!r}")
         return 0
@@ -240,8 +251,8 @@ SNIPPET_EVENTS = {
 }
 
 
-def settings_snippet(executable: str, vault_root: str) -> dict:
-    """The Claude Code settings.json hooks block.
+def settings_snippet(executable: str, vault_root: str, *, agent_cli: str = "claude") -> dict:
+    """The selected agent CLI hooks block (Claude remains the default).
 
     Absolute-path commands (venv/pipx installs survive hook context, where
     PATH may not), each naming its vault with the global ``--vault`` (#183):
@@ -252,22 +263,30 @@ def settings_snippet(executable: str, vault_root: str) -> dict:
     the command through a shell. The executable is NOT quoted: it is a command
     prefix, and :func:`resolve_executable` falls back to the multi-word
     ``<python> -m claudron.cli``, which quoting would turn into one word."""
-    prefix = f"{executable} --vault {shlex.quote(vault_root)}"
+    if agent_cli not in ("claude", "codex"):
+        raise ValueError(f"unsupported agent CLI: {agent_cli}")
+    selector = " --agent-cli codex" if agent_cli == "codex" else ""
+    prefix = f"{executable}{selector} --vault {shlex.quote(vault_root)}"
 
     def entry(event_cmd: str) -> list[dict]:
+        command = {"type": "command", "command": f"{prefix} hook {event_cmd}"}
+        if agent_cli == "codex" and event_cmd == "session-end":
+            command["timeout"] = 15
         return [
             {
                 "matcher": "",
-                "hooks": [{"type": "command", "command": f"{prefix} hook {event_cmd}"}],
+                "hooks": [command],
             }
         ]
 
     return {"hooks": {event: entry(cmd) for event, cmd in SNIPPET_EVENTS.items()}}
 
 
-def default_settings_path() -> Path:
+def default_settings_path(agent_cli: str = "claude") -> Path:
     """The settings file `hooks install --write` writes when not given
     `--settings`, and so the one `doctor` checks by default (#204)."""
+    if agent_cli == "codex":
+        return Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "hooks.json"
     return Path.home() / ".claude" / "settings.json"
 
 
@@ -326,6 +345,7 @@ class HookCommand:
     prefix: str  # the executable, as written: a command prefix
     vault: str | None  # the recorded `--vault` address, or None if it names none
     canonical: bool  # `settings_snippet` renders exactly this command from them
+    agent_cli: str = "claude"
 
 
 def parse_hook_command(command: str, event_cmd: str) -> HookCommand | None:
@@ -352,7 +372,10 @@ def parse_hook_command(command: str, event_cmd: str) -> HookCommand | None:
             continue
         if (len(words) == 1
                 and f"{prefix} --vault {shlex.quote(words[0])} {suffix}" == command):
-            return HookCommand(prefix, words[0], True)
+            agent_cli = "codex" if prefix.endswith(" --agent-cli codex") else "claude"
+            if agent_cli == "codex":
+                prefix = prefix[:-len(" --agent-cli codex")]
+            return HookCommand(prefix, words[0], True, agent_cli)
     try:
         words = shlex.split(command)
     except ValueError:
