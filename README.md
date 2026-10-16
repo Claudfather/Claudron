@@ -30,7 +30,12 @@ git clone <private-repo-url> ~/vault && claudron --vault ~/vault hooks install -
 
 The loop, end to end: `SessionStart → sync --pull → recall brief injected →
 work → compact → SessionStart prompts claudron capture → SessionEnd → sync --push` —
-and the next machine's SessionStart picks it up.
+and the next machine's SessionStart picks it up. For Codex, select
+`hooks install --agent-cli codex`; native hook trust remains a separate action.
+Its SessionEnd allows three seconds with a two-second per-Git-operation
+budget; Claude keeps ten seconds. If teardown does not finish, local commits
+remain for a later successful end push or a configured scheduled/manual sync.
+SessionStart pulls and recalls; it does not retry a push.
 
 ## Install
 

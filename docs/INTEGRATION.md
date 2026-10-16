@@ -343,7 +343,11 @@ before recalling and push at session end. `claudron hooks install --write` is
 the supported Claude wiring; add `--agent-cli codex` for Codex hooks.json
 ([owned Codex snippet](CLI_CONTRACT.md#codex-session-loop-snippet)).
 `claudron hook <event>` is what the host then invokes. Installation does not
-grant native hook trust.
+grant native hook trust. Codex SessionEnd uses a three-second native cap and
+a two-second per-Git-operation push timeout, while Claude retains ten seconds.
+A timed-out teardown leaves local commits for a later successful SessionEnd or
+an explicitly scheduled/manual sync. SessionStart only pulls/recalls; this
+adapter adds no retry queue.
 The install writes the vault it resolved into each hook command (`--vault`,
 #183), so run it with `--vault` or from inside the vault. A session started
 anywhere then finds that vault, even inside another vault's tree: the recorded

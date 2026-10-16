@@ -94,7 +94,8 @@ def test_codex_install_preserves_foreign_hooks_and_replaces_old_install(vault_di
     assert installed['kept'] is True
     assert installed['hooks']['SessionStart'][0] == foreign
     assert len(installed['hooks']['SessionStart']) == 2
-    assert installed['hooks']['SessionEnd'][0]['hooks'][0]['timeout'] > hooks.SESSION_END_PUSH_TIMEOUT
+    assert installed['hooks']['SessionEnd'][0]['hooks'][0]['timeout'] == 3
+    assert hooks.CODEX_SESSION_END_PUSH_TIMEOUT < 3
     assert main(args) == 0
     assert json.loads(path.read_text()) == installed
     assert 'already installed' in capsys.readouterr().err
@@ -173,3 +174,30 @@ def test_codex_doctor_other_vault_remedy_keeps_agent_cli(vault_dir, tmp_path):
     findings = [f for f in report.findings if f.code == 'D010']
     assert len(findings) == 3
     assert all('--agent-cli codex' in f.message for f in findings)
+
+
+@pytest.mark.parametrize('agent_cli,expected', [('claude', 10.0), ('codex', 2.0)])
+@pytest.mark.parametrize('degraded', [False, True])
+def test_actual_session_end_dispatch_selects_budget_and_fails_open(vault_dir, monkeypatch, capsys, agent_cli, expected, degraded):
+    """Exercise the CLI -> dispatch -> real handler seam, not renderer self-parity."""
+    from types import SimpleNamespace
+    from claudron.sync import SyncError
+    calls = []
+    def checked_sync(vault, *, pull, push, timeout):
+        calls.append((vault.root, pull, push, timeout))
+        if degraded:
+            raise SyncError('synthetic push timeout')
+        return SimpleNamespace(ok=True, detail='')
+    monkeypatch.setattr(hooks, 'sync', checked_sync)
+    monkeypatch.setattr('sys.stdin', io.StringIO('{"session_id":"budget-session","reason":"other"}'))
+    assert main(['--vault', str(vault_dir), '--agent-cli', agent_cli, 'hook', 'session-end']) == 0
+    assert calls == [(vault_dir, False, True, expected)]
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+    if degraded:
+        assert 'synthetic push timeout' in (vault_dir / '.claudron/hooks.log').read_text()
+
+
+def test_codex_session_end_uses_supported_native_timeout():
+    native = hooks.settings_snippet('/EXE', '/VAULT', agent_cli='codex')['hooks']['SessionEnd'][0]['hooks'][0]['timeout']
+    assert native == 3  # Native SessionEnd supports at most3s; this is not a mirrored local constant.

@@ -19,6 +19,7 @@ from claudron.cli import VAULT_ENV_VARS, main
 from claudron.hooks import (
     HOOK_EVENTS,
     SESSION_END_PUSH_TIMEOUT,
+    CODEX_SESSION_END_PUSH_TIMEOUT,
     SESSION_START_PULL_TIMEOUT,
     settings_snippet,
 )
@@ -226,6 +227,11 @@ class TestSessionProtocolDocParity:
             "session-start": f"{SESSION_START_PULL_TIMEOUT}s",
             "session-end": f"{SESSION_END_PUSH_TIMEOUT}s",
         }
+
+    def test_codex_timeout_budget_matches_selected_constant(self):
+        rows = doc_table(CONTRACT, "CODEX_HOOK_TIMEOUTS")
+        assert [(row[0], code_values(row[2])) for row in rows] == [
+            ("`session-end`", (f"{CODEX_SESSION_END_PUSH_TIMEOUT}s",))]
 
     def test_identity_rule_is_the_one_the_installer_applies(self):
         """`merge_settings` replaces a prior entry by matching the command's

@@ -40,7 +40,8 @@ from .sync import SyncError, pull_ff_only, sync
 from .vault import Vault, detect
 
 SESSION_START_PULL_TIMEOUT = 2.0  # seconds — the SessionStart latency budget
-SESSION_END_PUSH_TIMEOUT = 10.0  # bounded teardown — a hang isn't an error,
+CODEX_SESSION_END_PUSH_TIMEOUT = 2.0  # per Git operation, inside the native 3 s teardown cap
+SESSION_END_PUSH_TIMEOUT = 10.0  # Claude default bounded teardown — a hang isn't an error,
 # so fail-open alone can't save a stalled push
 
 
@@ -194,7 +195,8 @@ def hook_pre_compact(vault: Vault, payload: dict, *, agent_cli: str = "claude") 
 def hook_session_end(vault: Vault, payload: dict, *, agent_cli: str = "claude") -> int:
     """Push the session's vault changes; fail open (nothing to inject)."""
     try:
-        result = sync(vault, pull=False, push=True, timeout=SESSION_END_PUSH_TIMEOUT)
+        timeout = CODEX_SESSION_END_PUSH_TIMEOUT if agent_cli == "codex" else SESSION_END_PUSH_TIMEOUT
+        result = sync(vault, pull=False, push=True, timeout=timeout)
         ops.record(vault, "sync.push", session_id=_session_id(payload), ok=result.ok, detail=str(result.detail or ""))
         if not result.ok:
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
@@ -271,7 +273,7 @@ def settings_snippet(executable: str, vault_root: str, *, agent_cli: str = "clau
     def entry(event_cmd: str) -> list[dict]:
         command = {"type": "command", "command": f"{prefix} hook {event_cmd}"}
         if agent_cli == "codex" and event_cmd == "session-end":
-            command["timeout"] = 15
+            command["timeout"] = 3
         return [
             {
                 "matcher": "",

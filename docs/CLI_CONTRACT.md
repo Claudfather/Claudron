@@ -249,7 +249,8 @@ contended: `R-capture-prompt`.
 - **Recall abstains.** A match below the relevance floor injects nothing.
   Empty stdout is a valid brief; padding one is worse than skipping it.
 - **`sync --push` happens at session end, bounded** (below). An expired push is
-  not an error — the commits travel on the next session's push.
+  not an error — local commits remain for a later successful SessionEnd push
+  or an explicitly configured scheduled/manual sync; there is no retry queue.
 - **The recall brief is capped** at `session.BRIEF_TOKEN_BUDGET`, which covers
   the recall role: the conventions block, the recalled notes, and
   the discovery hint. The fixed capture instruction is a separate role and
@@ -407,17 +408,19 @@ This is why hook stdout can be injected verbatim: the only thing that ever
 reaches it is a brief or the compact-start capture instruction.
 
 Fail-open alone does not save a *stalled* call, so the two hooks that touch the
-network are hard-bounded:
+network use bounded Git subprocesses (Claude defaults below; Codex
+SessionEnd has the shorter budget in its own section):
 
 <!-- doc-parity: HOOK_TIMEOUTS -->
 | Event | Bounded operation | Budget | On expiry |
 |---|---|---|---|
 | `session-start` | `sync --pull` | `2.0s` | Pull abandoned; the brief renders from local state. |
 | `pre-compact` | none — noninjecting ownership claim | — | — |
-| `session-end` | `sync --push` | `10.0s` | Push abandoned; the commits travel on the next session's push. |
+| `session-end` | Claude `sync --push` | `10.0s` | Push abandoned; local commits remain for a later successful push or scheduled/manual sync. |
 
-These budgets are contract: a fleet composer sizes session startup against
-them. Diagnostics from a degraded hook go to `.claudron/hooks.log` — never to
+These per-Git-operation budgets are contract: a fleet composer sizes session
+startup against them. `sync` can run several sequential Git operations, so
+these are not a total wall-clock guarantee for the complete hook. Diagnostics from a degraded hook go to `.claudron/hooks.log` — never to
 stdout, and never to stderr where a host might surface them as a session error.
 
 ## Codex session-loop snippet
@@ -432,20 +435,37 @@ that declares that capability (R6), and carries parity against this fence (R3).
   "hooks": {
     "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --agent-cli codex --vault <absolute-vault-root> hook session-start"}]}],
     "PreCompact": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --agent-cli codex --vault <absolute-vault-root> hook pre-compact"}]}],
-    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --agent-cli codex --vault <absolute-vault-root> hook session-end", "timeout": 15}]}]
+    "SessionEnd": [{"matcher": "", "hooks": [{"type": "command", "command": "<absolute-executable> --agent-cli codex --vault <absolute-vault-root> hook session-end", "timeout": 3}]}]
   }
 }
 ```
 
 The same roles, pull-before-recall ordering, fail-open behavior, structural
-claim, identity suffix and engine operation budgets in §Session-loop protocol
-apply. Codex receives the capture instruction on SessionStart(source=compact)
+claim and identity suffix in §Session-loop protocol apply. The start-pull
+budget stays the same; SessionEnd uses the shorter per-Git budget below. Codex receives the capture instruction on SessionStart(source=compact)
 stdout; PreCompact is noninjecting. Explicit `--agent-cli codex` selects this
 adapter without inferring it from environment or consumer installation trees.
-The command keeps `hook <event>` at its end. SessionEnd explicitly allows 15
-seconds to accommodate the 10-second push operation and process overhead;
-Codex's measured default one-second hook timeout cannot cover that budget.
-The engine still bounds the push at 10 seconds.
+The command keeps `hook <event>` at its end. Codex SessionEnd uses the supported
+three-second native hook timeout; its measured one-second default is too short.
+The [native configuration contract](https://learn.chatgpt.com/docs/hooks#config-shape)
+limits SessionEnd to three seconds, so this adapter selects a shorter Git
+subprocess timeout rather than assuming Claude's budget fits.
+
+<!-- doc-parity: CODEX_HOOK_TIMEOUTS -->
+| Event | Bounded operation | Budget | On expiry |
+|---|---|---|---|
+| `session-end` | Codex `sync --push`, per Git operation | `2.0s` | Fail open; local commits remain for a later successful push or scheduled/manual sync. |
+
+The native three-second cap covers the whole hook; the engine's two-second
+value bounds each Git operation, not the sum of all sequential operations.
+Native teardown can still end before the complete sync finishes. An engine
+error logs locally and exits 0 with empty stdout/stderr. A native kill can
+prevent that diagnostic from completing; this surface does not promise
+completion within the cap. Existing capture durability leaves local commits
+available. The next SessionStart pulls and recalls; it does **not** push them.
+A later successful SessionEnd or an explicitly configured scheduled/manual
+`claudron sync` can push/reconcile them. There is no new retry queue or
+scheduled job in this adapter.
 
 `--write` merges into `$CODEX_HOME/hooks.json`, or `~/.codex/hooks.json` when
 CODEX_HOME is unset/empty. `--settings PATH` selects another file. Claude
