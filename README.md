@@ -17,20 +17,25 @@ The substrate is plain markdown files in a git repo -- humans can browse with an
 # One-command bootstrap: vault + git repo + smoke-tested first note
 claudron init ~/vault --personal
 
-# Wire it into Claude Code (SessionStart pull+brief, PreCompact capture
+# Wire it into Claude Code (SessionStart pull+brief, compact-start capture
 # prompt, SessionEnd push) — prints the settings block; --write merges it
 claudron --vault ~/vault hooks install --write
 
 # That's it. Sessions now recall context at start and are prompted to
-# capture durable findings before compaction. To span machines:
+# capture retained durable findings after compaction. To span machines:
 git -C ~/vault remote add origin <private-repo-url> && git -C ~/vault push -u origin main
 # ...and on the other machine:
 git clone <private-repo-url> ~/vault && claudron --vault ~/vault hooks install --write
 ```
 
 The loop, end to end: `SessionStart → sync --pull → recall brief injected →
-work → PreCompact prompts claudron capture → SessionEnd → sync --push` —
-and the next machine's SessionStart picks it up.
+work → compact → SessionStart prompts claudron capture → SessionEnd → sync --push` —
+and the next machine's SessionStart picks it up. For Codex, select
+`hooks install --agent-cli codex`; native hook trust remains a separate action.
+Its SessionEnd allows three seconds with a two-second per-Git-operation
+budget; Claude keeps ten seconds. If teardown does not finish, local commits
+remain for a later successful end push or a configured scheduled/manual sync.
+SessionStart pulls and recalls; it does not retry a push.
 
 ## Install
 
@@ -83,7 +88,7 @@ Claudron works standalone as a knowledge engine. Commands marked with **(claudlo
 | `recall` | Session-start context brief: conventions + project notes + relevant shared notes (stdout is the injectable payload) |
 | `capture` | Write a finding through the guarded engine — validated, dedup-routed (`suggest_update`/`suggest_supersede`), never silently dropped |
 | `sync` | Commit vault changes, pull `--rebase`, push; conflicts quarantined until a human resolves |
-| `hook` / `hooks install` | Claude Code lifecycle glue (SessionStart/PreCompact/SessionEnd), fail-open by contract |
+| `hook` / `hooks install` | Agent CLI lifecycle glue (Claude default; `--agent-cli codex`), fail-open by contract |
 | `new` | Scaffold a schema-valid note in the right tier (passes `validate --strict`) |
 | `validate` | Lint notes against `SCHEMA.md` — lenient by default, `--strict` = the authoring/engine tier |
 | `status` | Vault contents and health summary (incl. conflict quarantine) |

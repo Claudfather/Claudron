@@ -340,7 +340,14 @@ parse the stderr bound; branch on the JSON.
 
 If your host has session lifecycle events, the engine ships adapters that pull
 before recalling and push at session end. `claudron hooks install --write` is
-the supported wiring; `claudron hook <event>` is what the host then invokes.
+the supported Claude wiring; add `--agent-cli codex` for Codex hooks.json
+([owned Codex snippet](CLI_CONTRACT.md#codex-session-loop-snippet)).
+`claudron hook <event>` is what the host then invokes. Installation does not
+grant native hook trust. Codex SessionEnd uses a three-second native cap and
+a two-second per-Git-operation push timeout, while Claude retains ten seconds.
+A timed-out teardown leaves local commits for a later successful SessionEnd or
+an explicitly scheduled/manual sync. SessionStart only pulls/recalls; this
+adapter adds no retry queue.
 The install writes the vault it resolved into each hook command (`--vault`,
 #183), so run it with `--vault` or from inside the vault. A session started
 anywhere then finds that vault, even inside another vault's tree: the recorded
@@ -362,8 +369,10 @@ bind an integration that ships its **own** capture prompt:
   compaction, you must defer when the engine's `pre-compact` entry is
   registered — detected by a hook command ending in `hook pre-compact` in the
   host's settings files. Both prompting is a defect; the protocol section
-  specifies the detection exactly. The engine now prompts unconditionally where
-  its hook is installed (the earlier R5 shim that yielded to a detected
+  specifies the detection exactly. The engine holds the instruction where
+  its complete hook pack is installed, delivers it on SessionStart(source=compact)
+  stdout once per valid session, and keeps PreCompact noninjecting as the
+  ownership identity (the earlier R5 shim that yielded to a detected
   front-end was removed in #85), so a front-end's defer keys on that
   shim-removal engine release: ship your defer at or after it. Deferring against
   an older engine that still carries the shim means both sides yield and

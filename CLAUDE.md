@@ -42,7 +42,7 @@ claudron/
   graph.py        # Wikilink graph: related, links, HTML render
   session.py      # Session loop: recall + the injectable brief
   sync.py         # Git leg: commit, off-tree integrate, push, quarantine
-  hooks.py        # Claude Code lifecycle adapters (fail-open)
+  hooks.py        # Agent CLI lifecycle adapters (fail-open)
   locking.py      # flock + atomic writes (the write-safety floor)
   promote.py      # Maturity promotion (E5)
   doctor.py       # Vault diagnosis + versioned migrations (`doctor [--fix]`)

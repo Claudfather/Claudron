@@ -10,7 +10,7 @@ seam — what belongs where inside the package, and what must never land here.
   `docs/CLI_CONTRACT.md` (§Channels is load-bearing: hooks inject stdout verbatim).
 - **Every note write goes through `engine.py`** — `new`, `capture`, and any future door share one
   validate/dedup/index path. A second write path is a boundary bug.
-- **`hooks.py` is the Claude Code adapter** of the session-loop contract: fail-open (exit 0,
+- **`hooks.py` holds the selected agent CLI adapters** of the session-loop contract: fail-open (exit 0,
   nothing on stdout, log to `.claudron/hooks.log`), budget-bounded, and **never consumer-naming** —
   deferral/claiming is declared config per the contract, not a sniff of a sibling's install tree.
 - **`cli.py` maps engine results to the contract** (exit codes, `--json` envelope) and owns all

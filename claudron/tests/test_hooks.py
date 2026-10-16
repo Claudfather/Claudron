@@ -19,6 +19,7 @@ from claudron.cli import VAULT_ENV_VARS, main
 from claudron.hooks import (
     HOOK_EVENTS,
     SESSION_END_PUSH_TIMEOUT,
+    CODEX_SESSION_END_PUSH_TIMEOUT,
     SESSION_START_PULL_TIMEOUT,
     settings_snippet,
 )
@@ -88,74 +89,19 @@ class TestSessionStartHook:
 
 
 class TestPreCompactHook:
-    """F1's end state (boundary program C2 wrote the matrix; the shim-removal
-    release, #85, reached it).
+    """The retained ownership identity must never block or inject context."""
 
-    The engine **always prompts** where its PreCompact hook is installed and
-    never sniffs a consumer — the plugin install tree no longer changes the
-    outcome. A front-end shipping its own prompt defers structurally by
-    detecting the engine's registered `hook pre-compact` entry
-    (`CLI_CONTRACT.md` §Session-loop protocol).
-    """
-
-    def _run(self, vault_dir: Path, capsys, monkeypatch, session=None) -> str:
-        """One PreCompact run; returns its stdout. The session id is unique
-        per call by default — the once-per-session marker lives in the
-        process-global tmp dir (tempfile caches gettempdir, so monkeypatching
-        TMPDIR is inert)."""
-        payload = json.dumps({"session_id": session or f"sess-{uuid.uuid4()}"})
-        monkeypatch.setattr("sys.stdin", io.StringIO(payload))
+    @pytest.mark.parametrize("trigger", ["manual", "auto"])
+    def test_registered_claim_does_not_inject(self, vault_dir, monkeypatch, capsys, trigger):
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "s", "trigger": trigger})))
         assert main(["--vault", str(vault_dir), "hook", "pre-compact"]) == 0
-        return capsys.readouterr().out
+        assert capsys.readouterr().out == ""
 
-    def test_prompts_when_no_front_end_is_installed(
-        self, vault_dir: Path, capsys, monkeypatch, fake_home
-    ):
-        """No plugin install tree present ⇒ the engine prompts. Bare-Claudron
-        install."""
-        out = json.loads(self._run(vault_dir, capsys, monkeypatch))
-        assert out["decision"] == "block"
-        assert "claudron capture --stdin" in out["reason"]
-        assert "/reflect" not in out["reason"]  # retired skill, never referenced
-
-    def test_prompt_names_no_front_end(
-        self, vault_dir: Path, capsys, monkeypatch
-    ):
-        """R5 at the surface that reaches an agent: the block reason routes
-        through *your* capture door, whichever it is. A front-end name here
-        would make the engine's own prompt the thing that knows a consumer."""
-        out = json.loads(self._run(vault_dir, capsys, monkeypatch))
-        assert "claudna" not in out["reason"].lower()
-        assert "capture door" in out["reason"]  # the neutral routing phrase
-
-    def test_end_state_prompts_in_both_cells(
-        self, vault_dir: Path, capsys, monkeypatch, fake_home
-    ):
-        """The F1 end state, now live (this is the removal release): with the
-        shim gone the engine prompts even with a plugin install tree present —
-        the tree stops mattering. Its dual (no tree ⇒ prompt) is
-        `test_prompts_when_no_front_end_is_installed`; together they pin both
-        cells."""
-        (fake_home / ".claude" / "plugins" / "marketplace" / "claudna").mkdir(
-            parents=True
-        )
-        out = json.loads(self._run(vault_dir, capsys, monkeypatch))
-        assert out["decision"] == "block"
-
-    def test_second_compaction_passes(
-        self, vault_dir: Path, capsys, monkeypatch
-    ):
-        session = f"sess-{uuid.uuid4()}"
-        assert "block" in self._run(vault_dir, capsys, monkeypatch, session)
-        assert self._run(vault_dir, capsys, monkeypatch, session) == ""
-
-    def test_fail_open_without_vault(
-        self, tmp_path: Path, capsys, monkeypatch, no_vault_env
-    ):
+    def test_fail_open_without_vault(self, tmp_path, monkeypatch, capsys, no_vault_env):
         monkeypatch.chdir(tmp_path)
         monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
-        rc = main(["hook", "pre-compact"])
-        assert rc == 0
+        assert main(["hook", "pre-compact"]) == 0
+        assert capsys.readouterr().out == ""
 
 
 class TestSessionEndHook:
@@ -185,7 +131,7 @@ class TestGauntletPins:
         anticipated still exit 0 with clean stdout."""
         import claudron.hooks as hooks_mod
 
-        def _boom(vault, payload):
+        def _boom(vault, payload, **kwargs):
             raise PermissionError("git exists but is not executable")
 
         monkeypatch.setitem(hooks_mod._HOOK_HANDLERS, "session-start", _boom)
@@ -281,6 +227,11 @@ class TestSessionProtocolDocParity:
             "session-start": f"{SESSION_START_PULL_TIMEOUT}s",
             "session-end": f"{SESSION_END_PUSH_TIMEOUT}s",
         }
+
+    def test_codex_timeout_budget_matches_selected_constant(self):
+        rows = doc_table(CONTRACT, "CODEX_HOOK_TIMEOUTS")
+        assert [(row[0], code_values(row[2])) for row in rows] == [
+            ("`session-end`", (f"{CODEX_SESSION_END_PUSH_TIMEOUT}s",))]
 
     def test_identity_rule_is_the_one_the_installer_applies(self):
         """`merge_settings` replaces a prior entry by matching the command's

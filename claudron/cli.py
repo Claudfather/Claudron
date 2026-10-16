@@ -1070,7 +1070,7 @@ def cmd_hook(args) -> int:
     """Hook entry points: lenient vault resolution (None passes through —
     fail-open), then the guarded dispatch (run_hook owns the contract)."""
     vault = _detect_vault(args)
-    return run_hook(args.event, vault)
+    return run_hook(args.event, vault, agent_cli=args.agent_cli)
 
 
 def cmd_hooks_install(args) -> int:
@@ -1080,16 +1080,16 @@ def cmd_hooks_install(args) -> int:
     # write hooks that find no vault from outside it.
     vault = _resolve_vault(args)
     root = str(vault.root.resolve())
-    snippet = settings_snippet(resolve_executable(), root)
+    snippet = settings_snippet(resolve_executable(), root, agent_cli=args.agent_cli)
     if not args.write:
         print(json.dumps(snippet, indent=2))
         print(
-            "\nmerge into ~/.claude/settings.json (or rerun with --write)",
+            f"\nmerge into {default_settings_path(args.agent_cli)} (or rerun with --write)",
             file=sys.stderr,
         )
         return 0
 
-    settings_path = Path(args.settings or default_settings_path()).expanduser()
+    settings_path = Path(args.settings or default_settings_path(args.agent_cli)).expanduser()
     current, why = read_settings(settings_path)
     if current is None:
         # A file the merge cannot use is refused whole, never rewritten or
@@ -1201,12 +1201,12 @@ def cmd_doctor(args) -> int:
                 if args.settings else None)
     if args.fix:
         try:
-            report = doctor_fix(vault, settings=settings)
+            report = doctor_fix(vault, settings=settings, agent_cli=args.agent_cli)
         except StructureError as e:
             print(f"--fix aborted: {e}", file=sys.stderr)
             return 1
     else:
-        report = diagnose(vault, settings=settings)
+        report = diagnose(vault, settings=settings, agent_cli=args.agent_cli)
 
     findings = report.findings
     errors = [f for f in findings if f.severity == "error"]
@@ -1468,6 +1468,8 @@ def main(argv=None) -> int:
         description="Knowledge engine for Claude Code",
     )
     parser.add_argument("--vault", help="Vault path (default: detect from CWD)")
+    parser.add_argument("--agent-cli", choices=("claude", "codex"), default="claude",
+                        help="Agent CLI for lifecycle hooks (default: claude)")
     sub = parser.add_subparsers(dest="command")
 
     # Shared parents (docs/CLI_CONTRACT.md): --vault/--json on subcommands
@@ -1487,6 +1489,9 @@ def main(argv=None) -> int:
     json_parent.add_argument(
         "--json", action="store_true", help="Emit the standard JSON envelope"
     )
+    agent_parent = argparse.ArgumentParser(add_help=False)
+    agent_parent.add_argument("--agent-cli", choices=("claude", "codex"),
+                              default=argparse.SUPPRESS, help="Agent CLI for lifecycle hooks (default: claude)")
     # --claudlobby shared by plug/unplug/config. migrate keeps its own inline
     # copy: a parent injects its options ahead of directly-added ones, which
     # would move migrate's --claudlobby (currently last) to first in --help.
@@ -1555,7 +1560,7 @@ def main(argv=None) -> int:
     p_doctor = sub.add_parser(
         "doctor",
         help="Diagnose the vault against this engine's rules; --fix migrates it",
-        parents=[vault_parent, json_parent],
+        parents=[vault_parent, json_parent, agent_parent],
     )
     p_doctor.add_argument(
         "--fix",
@@ -1567,7 +1572,7 @@ def main(argv=None) -> int:
         "--settings",
         action="append",
         metavar="PATH",
-        help="A Claude Code settings file whose claudron hooks to check "
+        help="A selected agent CLI settings file whose claudron hooks to check "
         "(repeatable; default: the file `hooks install --write` writes, "
         "~/.claude/settings.json)",
     )
@@ -1708,11 +1713,11 @@ def main(argv=None) -> int:
         "--timeout", type=float, default=None, help="Seconds per git network op"
     )
 
-    # hook (plumbing — invoked by Claude Code, fail-open by contract)
+    # hook (plumbing — invoked by the selected agent CLI, fail-open by contract)
     p_hook = sub.add_parser(
         "hook",
         help="Hook entry points (SessionStart/PreCompact/SessionEnd plumbing)",
-        parents=[vault_parent],
+        parents=[vault_parent, agent_parent],
     )
     p_hook.add_argument("event", choices=HOOK_EVENTS)
 
@@ -1722,14 +1727,15 @@ def main(argv=None) -> int:
     )
     hooks_sub = p_hooks.add_subparsers(dest="hooks_command")
     p_hooks_install = hooks_sub.add_parser(
-        "install", help="Print (default) or --write the settings.json hooks block"
+        "install", help="Print (default) or --write the selected agent CLI hooks block",
+        parents=[agent_parent]
     )
     p_hooks_install.add_argument(
-        "--write", action="store_true", help="Merge into settings.json (shows target)"
+        "--write", action="store_true", help="Merge into the selected settings file (shows target)"
     )
     p_hooks_install.add_argument(
         "--settings", default=None,
-        help="Settings file to merge into (default: ~/.claude/settings.json)",
+        help="Settings file to merge into (default: Claude ~/.claude/settings.json; Codex $CODEX_HOME/hooks.json or ~/.codex/hooks.json)",
     )
 
     # lookup

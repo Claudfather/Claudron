@@ -3,9 +3,11 @@
 ## Unreleased
 
 ### Added
+- **Codex session-loop owner surface.** `hooks install --agent-cli codex` renders/merges `$CODEX_HOME/hooks.json` (fallback `~/.codex/hooks.json`); `doctor --agent-cli codex` applies D009/D010 to that declared front end. Capability `codex-session-loop`, its own normative snippet/parity gate, and an explicit supported three-second native SessionEnd timeout use a two-second per-Git-operation teardown budget. Claude retains its ten-second budget. Sync remains best effort: retained local commits wait for a later successful SessionEnd or an existing scheduled/manual sync, with no new retry queue. Native hook trust remains an operator action; installation grants none.
 - **CI runs each consumer's contract suite against every change.** A new `consumers` job checks out each consumer's default branch and runs its live contract suite against the engine under test. It starts with clauDNA's `tests/test_claudron_live.py` in compat mode: the engine must keep everything clauDNA's copy of `claudron contract --json` promises, and clauDNA's harvest must work end to end through it. An addition passes; a removal or rename that would break clauDNA fails here, before it ships. The engine still never names a consumer: only this job does, and a consumer joins by adding a matrix row.
 
 ### Changed
+- **Capture instructions are delivered after compaction.** `SessionStart(source=compact)` stdout appends one neutral capture instruction after recall per valid vault/agent/session. `hook pre-compact` remains installed and noninjecting as the structural ownership identity, so released consumers still defer. Consumers must install the complete pack and retain that deferral until a separately announced breaking window. Controlled native observations showed an unattended PreCompact block reason was not reliably delivered; compact-start stdout was delivered. This corrects delivery without promising model compliance or recovery of discarded details (#179; Claudfather/Claudlobby#2145 P4).
 - **`hooks install` merges by the one event map.** `merge_settings` carried a private copy of the
   event→verb map `SNIPPET_EVENTS` already holds; an event added to the map alone raised `KeyError` on
   install. One map now serves the snippet, the merge and doctor's hook checks (#204). No change for the

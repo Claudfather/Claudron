@@ -1,0 +1,47 @@
+{
+  "native_cli_version": "0.162.0-alpha.17.2",
+  "capture": "Actual native stdin transformed before write; raw payload never persisted",
+  "fixture_transform_sha256": "a0a09c36772d777ca150d4ea152ae52e9005624f2960ab88070291b912ee7a87",
+  "fixtures": [
+    {
+      "event": "SessionStart",
+      "qualifier": "startup",
+      "native_stdin_bytes": 372,
+      "native_stdin_sha256": "00b55673016a8e5dcc3a93aecaa8d4e5f2be2f86132faa4fa2ffefd57b540aca",
+      "sanitized_filename": "sessionstart-startup-34d84987.json",
+      "sanitized_sha256": "34d849879ff8f5f04513b80e54a05af91de3aa00690af0dc1c89e0f06d746c55"
+    },
+    {
+      "event": "SessionStart",
+      "qualifier": "resume",
+      "native_stdin_bytes": 371,
+      "native_stdin_sha256": "7f495e8f8ba4b3f54a4a401c00fe19983c4007b8180e2669f6022b6506391f0e",
+      "sanitized_filename": "sessionstart-resume-998ca396.json",
+      "sanitized_sha256": "998ca3967d2e3f6d5ebf12f476b7b177b189df70767512b6472414b3c15b380c"
+    },
+    {
+      "event": "SessionStart",
+      "qualifier": "compact",
+      "native_stdin_bytes": 372,
+      "native_stdin_sha256": "fcf0f45b43e652736fc05971fba98e2bbc49659092c345c9568cfced6a5e96d4",
+      "sanitized_filename": "sessionstart-compact-e97e2d45.json",
+      "sanitized_sha256": "e97e2d45f549775fe9ed8957a48652780c1fde8f0ef4b8ff06e921283418a8b8"
+    },
+    {
+      "event": "PreCompact",
+      "qualifier": "manual",
+      "native_stdin_bytes": 381,
+      "native_stdin_sha256": "fc9bb949bd02853b5d87c617f926c0210b8763743ef44cf2e7f4a8a9b982f243",
+      "sanitized_filename": "precompact-manual-2d623ede.json",
+      "sanitized_sha256": "2d623edef3841f17fa30524f166b3fd41ba43e0331c03da84b57fc45c40afa09"
+    },
+    {
+      "event": "SessionEnd",
+      "qualifier": "other",
+      "native_stdin_bytes": 308,
+      "native_stdin_sha256": "4f27c53a8f296b2f1da4018243ff59d2354972528bfad33762c5c2f2686129c8",
+      "sanitized_filename": "sessionend-other-270455e7.json",
+      "sanitized_sha256": "270455e711ff30bc27f84f66ac7f6906baa071b1efbeb91b57a521a4bef523bf"
+    }
+  ]
+}
