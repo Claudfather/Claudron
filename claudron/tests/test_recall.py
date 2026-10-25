@@ -94,7 +94,7 @@ class TestBrief:
 
     def test_abstention_no_weak_shared_matches(self, vault_dir: Path, capsys):
         """Blind top-k injection harms; below-threshold shared matches
-        inject nothing (02-session-loop.md deliverable 1)."""
+        inject nothing (02_session-loop.md deliverable 1)."""
         _conventions(vault_dir)
         rc = main(["--vault", str(vault_dir), "recall",
                    "--query", "zzz-nothing-matches-this"])

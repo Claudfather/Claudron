@@ -20,8 +20,8 @@ model: what note types exist, what belongs in each, and how they are tiered and
 promoted **within the vault**. It deliberately stays out of the cross-repo frame —
 *how* content reaches the vault (the write door, clauDNA conformance), the
 Claudron/clauDNA/Claudlobby boundary, and CLAUDE.md seam enforcement across repos
-are the **boundary program's** concern (`2026-07-20-claudfather-boundary-separation.md`
-+ `2026-07-20-boundary-rearchitecture/`). Where the two touch, this doc defers.
+are the **boundary program's** concern (`005-claudfather-boundary-separation.md`
++ `../archive/boundary-rearchitecture_2026-07-20/`). Where the two touch, this doc defers.
 
 ## The question
 
@@ -134,7 +134,7 @@ and the meatiest build ahead.
 *How* content gets routed into these domains at the write door — binding
 authoring operations to the right `(type, folder, tier)`, and conforming the
 clauDNA write path — is a **cross-repo** concern owned by the boundary program
-(`2026-07-20-boundary-rearchitecture/` D1 clauDNA-conformance, D2 closure-triage).
+(`../archive/boundary-rearchitecture_2026-07-20/` D1 clauDNA-conformance, D2 closure-triage).
 This doc defines only the Claudron-side **target** that enforcement routes into:
 the types, the sub-domain folders, and the tier/promotion rules below. Claudron's
 own contribution to enforcement is `validate` (strict at the write path) — the
@@ -155,16 +155,16 @@ rule specs follow).
 
 **Placement — the Claudron repo, not the vault.** This is a Claudron project
 design decision (how the engine classifies knowledge), so it lives in the repo's
-`documentation/plans/` (Claudron's design-doc home — decisions and plans alike
+`documentation/` (Claudron's design-doc home — decisions and plans alike
 sit there), versioned with the code it governs and PR-reviewed — the same plane
-placement as `2026-07-19-steady-state-retrieval-decision.md`. It is **not**
+placement as `003-steady-state-retrieval-decision.md`. It is **not**
 `_shared/` vault knowledge: it is the repo speaking about its own schema, not
 cross-project referential knowledge the fleet consumes. The fleet consumes the
 ratified *conclusions* via `SCHEMA.md` / `VAULT-STRUCTURE.md` — not a vault copy
 of this deliberation.
 
 **Relation to the boundary program.** This doc and the concurrent boundary
-program (`2026-07-20-claudfather-boundary-separation.md` + its
+program (`005-claudfather-boundary-separation.md` + its
 `boundary-rearchitecture/` phases) sit at different altitudes and nest: the
 program draws the **cross-repo** boundary (Claudron=referential vs
 clauDNA=procedural vs Claudlobby=runtime) and owns cross-repo placements; this doc

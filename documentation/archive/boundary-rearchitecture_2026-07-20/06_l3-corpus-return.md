@@ -38,7 +38,7 @@ re-opens only against post-wave-2 evidence of lessons not surfacing.
 - The false sentence: PROJECT_MISSION.md:35 *"Claudlobby does not define skills. clauDNA does."*
   vs 44 `SKILL.md` files under `library/skills/` (fleet-ops commands — staying, per §10.1).
 - The write door for migration: `claudron capture --stdin --json` (typed envelope, dedup routes —
-  `docs/CLI_CONTRACT.md` §capture); adoption tooling: `claudron init --adopt`, `migrate`.
+  `documentation/specs/CLI_CONTRACT.md` §capture); adoption tooling: `claudron init --adopt`, `migrate`.
 
 ## Implementation Plan
 

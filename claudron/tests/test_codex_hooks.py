@@ -107,7 +107,7 @@ def test_codex_default_and_normative_parity(tmp_path, monkeypatch):
     assert hooks.default_settings_path('codex') == Path.home() / '.codex/hooks.json'
     monkeypatch.setenv('CODEX_HOME', str(tmp_path))
     assert hooks.default_settings_path('codex') == tmp_path / 'hooks.json'
-    text = fenced_block('docs/CLI_CONTRACT.md', 'Codex session-loop snippet')
+    text = fenced_block('documentation/specs/CLI_CONTRACT.md', 'Codex session-loop snippet')
     body = text.split('\n', 1)[1] if text.lstrip().startswith('json') else text
     rendered = json.dumps(hooks.settings_snippet('/EXE', '/VAULT', agent_cli='codex'))
     rendered = rendered.replace('/EXE', '<absolute-executable>').replace('/VAULT', '<absolute-vault-root>')

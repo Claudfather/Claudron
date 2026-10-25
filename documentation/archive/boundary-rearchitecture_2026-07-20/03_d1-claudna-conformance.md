@@ -49,7 +49,7 @@ Nothing hard; L2 benefits (fleet bots resolve identically at both layers).
    would re-create the two-vaults hazard in reverse) in all three stating locations
    (`documentation-standard.md:142`, `index/SKILL.md:17`, `SETUP_GUIDE.md:554`) and any
    code-adjacent echo found by `grep -rn "CLAUDRON_VAULT" skills/ SETUP_GUIDE.md`.
-2. **Point, don't restate:** each of those locations cites Claudron `docs/CLI_CONTRACT.md`
+2. **Point, don't restate:** each of those locations cites Claudron `documentation/specs/CLI_CONTRACT.md`
    §Environment as the owner (R3), keeping only clauDNA-specific behavior (the mismatch notice,
    fallback-mode semantics) locally.
 3. **Declare `session.md` stable (F6 lean):** in the `session` skill's docs, a "Stable surface"

@@ -53,7 +53,7 @@ L2 (composer sets the claim env this phase defines), D1's provenance step.
 
 ### Steps
 
-1. **`docs/CLI_CONTRACT.md` — add §Session-loop protocol** (decided: a section of CLI_CONTRACT, not
+1. **`documentation/specs/CLI_CONTRACT.md` — add §Session-loop protocol** (decided: a section of CLI_CONTRACT, not
    a sibling doc — one normative home; INTEGRATION.md points at it). Contents:
    - The four roles and owners (table from §10.5.1), and that briefs *co-inject by design*.
    - Ordering: sync-pull precedes recall; recall injection is budgeted (`BRIEF_TOKEN_BUDGET`,
@@ -103,7 +103,7 @@ L2 (composer sets the claim env this phase defines), D1's provenance step.
    - **Scope of #44's closure: carry-through only.** #44's trailing clause — `find_duplicate`
      keying on `source_url` — is #55 step 4 and is **not** built here. The closing comment says so,
      so the residue stays tracked rather than silently dropped.
-4. **`docs/INTEGRATION.md`:** link the protocol section; add the "one capture prompt" conformance
+4. **`documentation/guides/INTEGRATION.md`:** link the protocol section; add the "one capture prompt" conformance
    line for front-ends that ship their own prompt.
 5. **Inherited C1 residue — Claudron #81** (folded in 2026-07-21; ratifier: chris). Three items,
    all living in files this phase already opens:
@@ -125,7 +125,7 @@ L2 (composer sets the claim env this phase defines), D1's provenance step.
      recording an unowned surprise. **The behavior is unchanged; only its ownership is.**
    - **`.gitignore`'s `AGENTS.md` rule.** Reviewed and **kept** — confirmed intentional, no diff.
      The file is a stale local fork of `CLAUDE.md`, never tracked on any branch.
-   - Also under this step: the phase-state row in `00-overview.md`'s status ledger, per the
+   - Also under this step: the phase-state row in `00_OVERVIEW.md`'s status ledger, per the
      ledger's own rule ("update it in the PR that changes a phase's state").
 
 ## Test Plan

@@ -15,7 +15,7 @@ vault is **not** "add hooks to clauDNA." clauDNA already runs a full,
 overlapping knowledge loop; the work is *reconciling two systems that already
 exist* so they compose instead of stepping on each other. This is the
 load-bearing seam **E3** (MCP server + Claudlobby socket) formalizes, and the
-thing the G1 fleet dogfood (`2026-07-09-g1-dogfood-protocol.md`) will force.
+thing the G1 fleet dogfood (`../planning/g1-dogfood-protocol_2026-07-09/00_OVERVIEW.md`) will force.
 Doubles as the clauDNA **#207** follow-through and de-risks E3's PR 0.
 
 > Observed 2026-07-09 in `~/Projects/clauDNA`. Verify file/hook/skill names

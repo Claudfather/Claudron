@@ -18,8 +18,8 @@ repos: [Claudfather/Claudron, Claudfather/clauDNA, Claudfather/Claudlobby]
 > umbrella and the evaluation arena as out of frame. §1–§9 are facts, questions, and constraints; the
 > target-state (deliverables **a** and **b** in §7) is authored by the visioning pass and folds back
 > here. **Status: §10 ratified 2026-07-20 (program gate 1,
-> `2026-07-20-boundary-rearchitecture/00-overview.md:56-58`); deliverable (b) lives in
-> `2026-07-20-boundary-rearchitecture/` (overview + 9 phase docs, this directory). Amended 2026-10-04 — the
+> `../archive/boundary-rearchitecture_2026-07-20/00_OVERVIEW.md:56-58`); deliverable (b) lives in
+> `../archive/boundary-rearchitecture_2026-07-20/` (overview + 9 phase docs, this directory). Amended 2026-10-04 — the
 > agent CLIs enter the frame; see §Amendment — 2026-10-04 (after §10.8).**
 >
 > **How to use this spec — reason forward from purpose.** Do **not** ratify the thinking that
@@ -182,7 +182,7 @@ These are the observed seams where "by purpose" has blurred. They are the materi
 2. **How a fleet bot consumes the hub is split by history, not design.** There are two doors. The
    **CLI-skill door** (clauDNA's `/claudron`/`/capture`/`/recall` over the `claudron` CLI) is the
    **shipped contract floor** that works on every bot today. The **MCP door** (Claudron's own MCP
-   server) is **unbuilt and demand-gated** ("decision C" — `documentation/plans/2026-07-18-decision-c-
+   server) is **unbuilt and demand-gated** ("decision C" — `documentation/decisions/001-decision-c-
    mcp-demand-gated.md`; triggers are per-tool permission gating or a non-clauDNA MCP consumer,
    neither of which exists yet). Net: the runtime consumption path is *entirely* clauDNA's CLI door,
    which makes **Claudron's fleet adoption depend on clauDNA** — Claudron has no vendor-neutral fleet
@@ -244,11 +244,11 @@ The ecosystem has already articulated boundary language. Extend it; don't reinve
   the interface pattern between a procedural consumer and the referential engine, already chosen.
 - **The trust ladder** (Claudron `SCHEMA.md`): `maturity: draft < verified < canonical`, orthogonal
   to per-type `status`. Agents capture as `draft`; **humans promote**. The curation model is settled.
-- **Predecessor docs — read first:** `documentation/plans/2026-07-09-claudna-claudron-
+- **Predecessor docs — read first:** `documentation/archive/2026-07-09-claudna-claudron-
   reconciliation.md` (the hook/index overlap and how to unify it), `VAULT-STRUCTURE.md` (tenancy +
-  consumption), `documentation/plans/2026-07-18-decision-c-mcp-demand-gated.md` (why the MCP door is
-  parked), and the Claudron roadmap overview (`documentation/plans/2026-07-07-claudron-roadmap/
-  00-overview.md`, locked decisions D1–D8). They set the direction this pass continues.
+  consumption), `documentation/decisions/001-decision-c-mcp-demand-gated.md` (why the MCP door is
+  parked), and the Claudron roadmap overview (`documentation/planning/claudron-roadmap_2026-07-07/
+  00_OVERVIEW.md`, locked decisions D1–D8). They set the direction this pass continues.
 
 ---
 
@@ -411,7 +411,7 @@ ABI, the vault-address contract, the write protocol, the session-loop protocol f
 *Never:* parses `fleet.yaml`; defines agent behavior; **knows a consumer by name** —
 *(amended 2026-10-04: at authoring it sniffed both siblings; the `hooks.py:62` plugin-cache glob for
 `claudna` was removed in 0.4.0 (#84, issue #85) and the capture-prompt claim is structural,
-`docs/CLI_CONTRACT.md` §Session-loop protocol; the `library/`+`lib/` tree-shape walk remains at
+`documentation/specs/CLI_CONTRACT.md` §Session-loop protocol; the `library/`+`lib/` tree-shape walk remains at
 `cli.py:146–157`, silent since #102 — the one open R5 item; §10.8 item 12)*. Consumers declare
 themselves to the engine (config/env per contract); the engine never goes looking. **Nor does it
 implement telemetry:** the engine emits no OpenTelemetry and takes no SDK (single dependency); what a
@@ -511,16 +511,16 @@ The institution §4 was missing. Rules first, then the v1 register.
 |---|---|---|---|---|
 | 1 | Note schema | Claudron | `SCHEMA.md` | ✓ ratified; consumers conformant |
 | 2 | Vault structure & tenancy | Claudron | `VAULT-STRUCTURE.md` | ✓ ratified; §Consumption(b) still implies an MCP consumer — amend |
-| 3 | CLI ABI (exit codes, channels, envelope, verbs) | Claudron | `docs/CLI_CONTRACT.md` | ✓ exists; missing §Environment and §Bridge-file; missing the any-agent `INTEGRATION.md` front door decision C already *cites as if it existed* |
+| 3 | CLI ABI (exit codes, channels, envelope, verbs) | Claudron | `documentation/specs/CLI_CONTRACT.md` | ✓ exists; missing §Environment and §Bridge-file; missing the any-agent `INTEGRATION.md` front door decision C already *cites as if it existed* |
 | 4 | **Vault address** (env names, precedence, `.claudron` bridge format) | Claudron | **none — scattered** | the live fracture: engine reads `CLAUDRON_VAULT_PATH` → `CLAUDRON_VAULT` (`cli.py:75–84`); clauDNA reads `CLAUDRON_VAULT` → `CLAUDRON_VAULT_PATH` → `SHARED_DOCS_PATH` (**inverted**); `init` prints the deprecated spelling (`cli.py:271`); Claudlobby works around a fixed bug (`dispatch-task.sh:103`) |
-| 5 | **Session-loop protocol** (roles, ordering, single-prompt rule, claim mechanism) | Claudron (knowledge roles) | `docs/CLI_CONTRACT.md` §Session-loop protocol *(amended 2026-10-04 — was "none — changelog lore"; C2 #84 landed it, 0.4.0)* | ✓ the claim is structural — a front-end defers on the registered `hook pre-compact` entry; the `hooks.py:62` sniff is gone (R5 met); Claudlobby composes the loop per bot behind an R3 gate (`tests/test_claudron_loop.py`); a second host's snippet is row 12 |
+| 5 | **Session-loop protocol** (roles, ordering, single-prompt rule, claim mechanism) | Claudron (knowledge roles) | `documentation/specs/CLI_CONTRACT.md` §Session-loop protocol *(amended 2026-10-04 — was "none — changelog lore"; C2 #84 landed it, 0.4.0)* | ✓ the claim is structural — a front-end defers on the registered `hook pre-compact` entry; the `hooks.py:62` sniff is gone (R5 met); Claudlobby composes the loop per bot behind an R3 gate (`tests/test_claudron_loop.py`); a second host's snippet is row 12 |
 | 6 | Write protocol (capture-only, `--stdin`, `written` signal, create-only, guarantee ladder) | Claudron | `CLI_CONTRACT.md` §capture (partial) | cross-host guarantee ladder undocumented; no `--source-url`, so clauDNA couples provenance to `session.py:_summary` behavior |
 | 7 | Plugin skill surface (`/claudna:*`, `SKILL_CONTRACT`, `session.md` handoff artifact) | clauDNA | its repo | `session.md` is consumed by Claudlobby (`start-bot.sh:296–322`, `lib-common.sh:1098` parses `last_updated:`) but never declared a stable surface — register it |
 | 8 | Fleet composition (fleet.yaml schema, bot env, grants, plugin defaults) | Claudlobby | its repo | ✓; `known_values.py:90–155` hand-tracks clauDNA's skill renames (R3 by hand — fragile, needs a gate or a feed) |
 | 9 | Consumption-door policy (CLI floor; MCP demand-gate, triggers, monitor) | Claudron | decision-C doc | trigger 1 needs re-scoping after #644 (§10.5.2); monitor should be a named check, not a human habit |
 | 10 | **Session join key** `(agent_cli, session_id)` — `agent_cli ∈ {claude, codex}`; `session_id` the id the agent CLI hands its hooks, in the class `[A-Za-z0-9][A-Za-z0-9._-]{0,127}` — stated **here, once**: clauDNA `lib/claudna/session_store/paths.py:32` (`_SID_RE`) and Claudron `ops.py:33` (`_ID_RE`) are its two copies; neither test cites this row yet — the Claudron ops-log follow-up, which waits on canary C1 (a recorded Codex `session_id`), and its clauDNA mirror pin each copy to it, and if C1 widens the class both move together; plane uid `sess_` + sha256(`session_alias(id, agent_cli)`)[:32], where `session_alias(platform_session_id, agent_cli="claude")` is the raw id for `claude` (the default) and `"<agent_cli>:" + id` otherwise (Claudlobby#2145 F2) | Claudlobby | `claudlobby/plane/ids.py:83-108`: `session_alias(platform_session_id, agent_cli="claude")` composed into `derive_session_uid(platform_session_id, agent_cli="claude")` — the F2 material rule exists in that one function and nowhere else; its text in `documentation/architecture/observable-plane.md:69` *(amended 2026-10-11 — was **planned**; P1 Claudlobby Half A shipped it, Claudlobby#2203, and its release was activated on the floor host 2026-10-11; P1 Claudlobby Task 10)* | consumers conform: clauDNA keys sessions by `session_id` and records `agent_cli` at open (P1 clauDNA); P2's intake sets its session `subject = session_alias(id, agent_cli)` and its test pins the composition, not a coincidence; Claudron treats provenance — `session:<sid>:<seg>` for `claude`, `session:<agent_cli>/<sid>:<seg>` otherwise (F9) — as an opaque string in both channels (`engine.py:160-161`, `amend.py:37,63,84`) — no engine change; the normalized session attribute carries the same key (§10.2) |
 | 11 | **clauDNA export contract** — `claudna.export/1`: item `session.agent_cli` (P1), `--include-skipped` status items, `segment{sealed_at,sealed_by,counts}` and the `entrypoint.json` record (`claudna.entrypoint/1`, F16, P3) | clauDNA | [`documentation/specs/2026-09-28-session-store-design.md` §8 at v0.28.0](https://github.com/Claudfather/clauDNA/blob/v0.28.0/documentation/specs/2026-09-28-session-store-design.md#8-readers-and-the-export-door): envelope shipped in v0.23.0; `session.agent_cli` in v0.27.0; P3 additions shipped in [v0.28.0](https://github.com/Claudfather/clauDNA/releases/tag/v0.28.0), commit `fe665ea6ce6cdaba95bc8692de09b1f1f6b87b77` (clauDNA#411/#412) | planned consumer: Claudlobby's `session-export` job (P3/6b) conforms to the owner's §8 and reads `entrypoint.json` for the door's path — never Claude Code's `installed_plugins.json` (F16); R6: the owner release exists; consumer integration and host activation are separate gates |
-| 12 | **Codex session-loop snippet** — the normative Codex `hooks.json` shape for the engine's roles, selected by `--agent-cli codex`; same `hook <event>` identity suffix | Claudron | Shipped source: [`docs/CLI_CONTRACT.md` §Codex session-loop snippet](../../docs/CLI_CONTRACT.md#codex-session-loop-snippet), renderer/install/doctor in `hooks.py`/`cli.py`/`doctor.py`, parity in `claudron/tests/test_codex_hooks.py`; gate on `"codex-session-loop" in status --json → data.capabilities` | R6: consumers compose only after a release declaring the capability. R-capture-prompt is held on SessionStart(source=compact) stdout; the noninjecting `hook pre-compact` identity remains for released structural deferral. Controlled native C1/C3 observations and limits are recorded in the 2026-10-16 P4 owner plan. |
+| 12 | **Codex session-loop snippet** — the normative Codex `hooks.json` shape for the engine's roles, selected by `--agent-cli codex`; same `hook <event>` identity suffix | Claudron | Shipped source: [`documentation/specs/CLI_CONTRACT.md` §Codex session-loop snippet](../specs/CLI_CONTRACT.md#codex-session-loop-snippet), renderer/install/doctor in `hooks.py`/`cli.py`/`doctor.py`, parity in `claudron/tests/test_codex_hooks.py`; gate on `"codex-session-loop" in status --json → data.capabilities` | R6: consumers compose only after a release declaring the capability. R-capture-prompt is held on SessionStart(source=compact) stdout; the noninjecting `hook pre-compact` identity remains for released structural deferral. Controlled native C1/C3 observations and limits are recorded in the 2026-10-16 P4 owner plan. |
 
 ### 10.5 The hard cases, resolved
 
@@ -570,7 +570,7 @@ the CLI **is** a vendor-neutral door (any agent that can run a subprocess can co
 `--json` is typed; the contract doc exists). What Claudron lacks is **ownership artifacts**, not a
 door:
 
-- **`docs/INTEGRATION.md`** — the any-agent quickstart decision C cites as its mitigation. **It
+- **`documentation/guides/INTEGRATION.md`** — the any-agent quickstart decision C cites as its mitigation. **It
   does not exist** (verified: `docs/` holds only `CLI_CONTRACT.md`). Write it: resolve the vault
   (contract #4), query before / write after (contract #6), envelope discipline, no-engine behavior.
 - **Discovery** — the honest residual of parking MCP is in-context discovery. For any host running
@@ -702,7 +702,7 @@ lore to register rules (R3, R6).
 | `output-guide.md §3` enum table | Q0 → rendered copy w/ gate | conformant — the model |
 | `session.md` handoff artifact | Q0 → contract #7 | clauDNA declares it; Claudlobby consumes it |
 | "which bot may capture" | Q3 → policy | Claudlobby grants (#644) |
-| `INTEGRATION.md` (missing) | Q0 → owner artifact of #3 | Claudron `docs/` |
+| `INTEGRATION.md` (missing) | Q0 → owner artifact of #3 | Claudron `documentation/guides/` |
 | PreCompact prompt text | Q0 → R-capture-prompt holder | Claudron defines; one holder per session |
 | a flaky-deploy gotcha about repo X | Q2 → outside view | vault `projects/X/` |
 | `fleet.yaml` schema | Q3/Q0 → contract #8 | Claudlobby |
@@ -726,7 +726,7 @@ protocol, one address table, one write path, one door.
    format-vs-ownership (§10.1), sentence to be reworded, files stay.
 5. **`library/lessons/` is a 25-note knowledge corpus in the runtime repo** — the clearest
    referential-content-in-runtime case (§10.5.5).
-6. **`docs/INTEGRATION.md` does not exist** though decision C cites it as the vendor-neutral
+6. **`documentation/guides/INTEGRATION.md` does not exist** though decision C cites it as the vendor-neutral
    mitigation; the prior ironclad (rescope record §E) flagged this and the #644 check — both were
    still open.
 7. **`claudron_compat.py`'s docstring claims a `doctor` check that was never built** (its only
@@ -741,7 +741,7 @@ protocol, one address table, one write path, one door.
     `session.py:_summary`'s behavior — a consumer coupled to an engine implementation detail
     (contract #6's gap).
 12. **The session-loop contract exists and the plugin sniff is gone** (found 2026-10-04): C2 (#84, 0.4.0)
-    landed `docs/CLI_CONTRACT.md` §Session-loop protocol and removed `_claudna_installed()`; the claim is
+    landed `documentation/specs/CLI_CONTRACT.md` §Session-loop protocol and removed `_claudna_installed()`; the claim is
     structural (a registered `hook pre-compact` entry), not the declared env or install marker §10.5.1
     envisaged. §4.1's "partly reconciled" sentence, §10.5.1's claim mechanism, §10.5.5 and §10.7's
     `hooks.py` row describe the pre-C2 state and stay as history; the tree-shape walk is now
@@ -771,10 +771,10 @@ from them.**
    (§10 preamble: facts that amend §1–§9 are ledgered in §10.8, not edited) — and the other pre-C2 §10
    mentions are ledgered the same way (item 12).
 5. **What this does not do.** No fork of #2145 changes; nothing unshipped is asserted as shipped; no
-   contract *text* lives here (`docs/CLAUDE.md`); the Codex adapter, the attribute names and the export
+   contract *text* lives here (`documentation/specs/CLAUDE.md`); the Codex adapter, the attribute names and the export
    fields land in their owners' repos under their own plans.
 
-*The standing rule (00-overview.md, A1) runs the right way here: the decision is amended before the code
+*The standing rule (../archive/boundary-rearchitecture_2026-07-20/00_OVERVIEW.md, A1) runs the right way here: the decision is amended before the code
 (P2, P4) exists.* *Ratifier:* the operator — by approving the Claudron PR that carries this section
 ([Claudfather/Claudron#224](https://github.com/Claudfather/Claudron/pull/224), opened 2026-10-06).
 

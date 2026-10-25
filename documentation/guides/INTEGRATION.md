@@ -1,7 +1,7 @@
 # Integrating any agent with Claudron
 
 Canonical URL:
-<https://github.com/Claudfather/Claudron/blob/main/docs/INTEGRATION.md>
+<https://github.com/Claudfather/Claudron/blob/main/documentation/guides/INTEGRATION.md>
 
 Claudron is a knowledge engine over a directory of markdown files with YAML
 frontmatter, kept in git. It answers two questions for an agent: *what does this
@@ -14,7 +14,7 @@ requirement that you use Claude Code or any particular plugin.
 This document is the front door for that integration. It is deliberately
 **vendor-neutral**: nothing here names a specific agent, harness, or plugin as a
 prerequisite. The normative surface it points at is
-[`CLI_CONTRACT.md`](CLI_CONTRACT.md); this doc is under that contract's change
+[`CLI_CONTRACT.md`](../specs/CLI_CONTRACT.md); this doc is under that contract's change
 discipline (breaking changes get CHANGELOG entries), and where the two disagree,
 `CLI_CONTRACT.md` wins.
 
@@ -42,7 +42,7 @@ reproducible — `@main` tracks head and will move under you.
 introduced the capability probe (`engine_version`) and removed the
 `CLAUDRON_VAULT` environment name. Confirm what you actually got by probing
 (next section) rather than trusting the pin. A consumer that must also support
-`0.2.x` should read [§Environment](CLI_CONTRACT.md#environment) first: on those
+`0.2.x` should read [§Environment](../specs/CLI_CONTRACT.md#environment) first: on those
 versions there is no `engine_version` field and both environment names are read.
 
 ---
@@ -58,7 +58,7 @@ claudron status --json
 
 Three outcomes, and exactly what each entitles you to assume. **Branch on the
 exit code, never on message text** — exit codes are contract
-([§Exit codes](CLI_CONTRACT.md#exit-codes)); the wording on stderr is not.
+([§Exit codes](../specs/CLI_CONTRACT.md#exit-codes)); the wording on stderr is not.
 
 | State | How you observe it | What you may assume |
 |---|---|---|
@@ -86,7 +86,7 @@ reporting its version; and the `2>/dev/null` above discards stderr, which is
 where the engine explains an exit 3 — drop the redirect while debugging.
 
 `engine_version` and the rest of the stable `status --json` field set are
-documented in [CLI_CONTRACT.md §Capability probe](CLI_CONTRACT.md#capability-probe).
+documented in [CLI_CONTRACT.md §Capability probe](../specs/CLI_CONTRACT.md#capability-probe).
 Read the engine's version from this probe and nowhere else — not from an
 installed package pin, not from a plugin manifest. A pin governs what you
 *import*; the probe reports what will actually *run*.
@@ -231,7 +231,7 @@ section.
 ## Resolve a vault
 
 One table governs this, and it lives in the contract:
-**[CLI_CONTRACT.md §Environment](CLI_CONTRACT.md#environment)**. The short form:
+**[CLI_CONTRACT.md §Environment](../specs/CLI_CONTRACT.md#environment)**. The short form:
 
 1. `--vault PATH` — explicit, wins over everything.
 2. `CLAUDRON_VAULT_PATH` — the canonical environment name. Set this.
@@ -241,7 +241,7 @@ One table governs this, and it lives in the contract:
 Emit and read **only** `CLAUDRON_VAULT_PATH`. Do not invent additional names; a
 new address source is a change to that table, PR'd against this repository
 first. If your integration keeps a per-checkout pointer file, see
-[§Bridge file](CLI_CONTRACT.md#bridge-file) — but note the engine never resolves
+[§Bridge file](../specs/CLI_CONTRACT.md#bridge-file) — but note the engine never resolves
 its own vault from one: read it yourself and pass `--vault`.
 
 ---
@@ -285,7 +285,7 @@ echo '{"type":"knowledge","title":"Neon pool exhaustion","body":"…","tags":["n
 
 Three rules, each of which has bitten a real consumer. The normative statement
 of all three is
-[CLI_CONTRACT.md §capture](CLI_CONTRACT.md#command-specific-contracts) — read it
+[CLI_CONTRACT.md §capture](../specs/CLI_CONTRACT.md#command-specific-contracts) — read it
 once; what follows is orientation, not a second copy.
 
 1. **Pass content via `--stdin` JSON, never `--body` string interpolation.**
@@ -304,7 +304,7 @@ all in §capture. Do not hard-code the list from memory.
 What the engine promises about durability across machines — per-host
 serialization, cross-host eventual consistency with conflict quarantine, and
 what is explicitly *not* guaranteed — is
-[CLI_CONTRACT.md §Write guarantees](CLI_CONTRACT.md#write-guarantees). Read it
+[CLI_CONTRACT.md §Write guarantees](../specs/CLI_CONTRACT.md#write-guarantees). Read it
 before you design a multi-writer topology.
 
 ### Never hand-append to `INDEX.md` — call the door
@@ -341,7 +341,7 @@ parse the stderr bound; branch on the JSON.
 If your host has session lifecycle events, the engine ships adapters that pull
 before recalling and push at session end. `claudron hooks install --write` is
 the supported Claude wiring; add `--agent-cli codex` for Codex hooks.json
-([owned Codex snippet](CLI_CONTRACT.md#codex-session-loop-snippet)).
+([owned Codex snippet](../specs/CLI_CONTRACT.md#codex-session-loop-snippet)).
 `claudron hook <event>` is what the host then invokes. Installation does not
 grant native hook trust. Codex SessionEnd uses a three-second native cap and
 a two-second per-Git-operation push timeout, while Claude retains ten seconds.
@@ -359,7 +359,7 @@ They fail open by design: a broken vault, a missing git binary, or a network
 stall must never break a session start.
 
 The normative protocol is
-**[CLI_CONTRACT.md §Session-loop protocol](CLI_CONTRACT.md#session-loop-protocol)** —
+**[CLI_CONTRACT.md §Session-loop protocol](../specs/CLI_CONTRACT.md#session-loop-protocol)** —
 the four roles and who owns each, the pull-before-recall ordering, the budgets,
 the hook-settings shape, and the fail-open contract. Read it before you install
 these hooks beside anything else that touches the same events. Two obligations
@@ -470,7 +470,7 @@ it can be checked without reading another document.
 
 *(For readers tracing the boundary spec: these correspond to register rules
 R3–R7 and contracts #3, #4 and #6 in
-`documentation/plans/2026-07-20-claudfather-boundary-separation.md` §10.4. The
+`documentation/decisions/005-claudfather-boundary-separation.md` §10.4. The
 checklist stands on its own; the cross-reference is for provenance.)*
 
 ---
@@ -479,6 +479,6 @@ checklist stands on its own; the cross-reference is for provenance.)*
 
 | You want… | Read |
 |---|---|
-| Exit codes, channels, the `--json` envelope, per-command contracts | [`CLI_CONTRACT.md`](CLI_CONTRACT.md) |
-| What a valid note looks like — types, required fields, status vocabularies | [`../SCHEMA.md`](../SCHEMA.md) |
-| The vault's directory contract and tenancy model | [`../VAULT-STRUCTURE.md`](../VAULT-STRUCTURE.md) |
+| Exit codes, channels, the `--json` envelope, per-command contracts | [`CLI_CONTRACT.md`](../specs/CLI_CONTRACT.md) |
+| What a valid note looks like — types, required fields, status vocabularies | [`../../SCHEMA.md`](../../SCHEMA.md) |
+| The vault's directory contract and tenancy model | [`../../VAULT-STRUCTURE.md`](../../VAULT-STRUCTURE.md) |

@@ -10,6 +10,8 @@ updated: 2026-07-18
 
 # Gate G1 — lightweight dogfood note
 
+**Status:** IN PROGRESS — the gate is open; `G1-verdict.md` is provisional.
+
 > **2026-07-18 — de-ceremonied.** The original version of this doc was a
 > two-week runbook with four pre-registered signals, thresholds, and tracking
 > tables. That was over-built for a solo operator dogfooding their own hub
@@ -17,7 +19,7 @@ updated: 2026-07-18
 > handwavey than that"*). The rigid protocol is retired; what a gate still needs
 > is below. The decision context — E3–E6 are evidence-gated options, the gate
 > emits a `G1-verdict.md`, the adopt-vs-build spike is a separate artifact,
-> multi-writer stays parked — lives in `2026-07-07-claudron-roadmap/00-overview.md`
+> multi-writer stays parked — lives in `../claudron-roadmap_2026-07-07/00_OVERVIEW.md`
 > §Gate G1.
 
 ## What the gate actually is now

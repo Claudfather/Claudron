@@ -26,7 +26,7 @@ from claudron.hooks import (
 from claudron import hooks as hooks_mod
 from claudron.tests.doc_parity import code_values, doc_table, fenced_block, section
 
-CONTRACT = "docs/CLI_CONTRACT.md"
+CONTRACT = "documentation/specs/CLI_CONTRACT.md"
 PROTOCOL = "Session-loop protocol"
 
 

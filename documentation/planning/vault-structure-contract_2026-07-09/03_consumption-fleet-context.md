@@ -10,6 +10,8 @@ updated: 2026-07-09
 
 # P3 — Fleet-scoped consumption (conditional)
 
+**Status:** PENDING — conditional: built only if the G1 dogfood shows fleet-blind recall hurts (F6).
+
 ## Summary
 
 Resolve the two consumption findings from the audit, with two different

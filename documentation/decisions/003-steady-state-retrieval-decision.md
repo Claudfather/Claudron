@@ -100,5 +100,5 @@ This is a **Claudron project design decision** (how the software retrieves), so
 it lives in the repo's `documentation/`, versioned with the code and
 PR-reviewed — per the ecosystem plane doctrine (repo-coupled records with the
 repo; the vault holds cross-project referential knowledge). It is *not* a
-`_shared/` vault decision. Related: `04-indexer.md` (E4/FTS5 + the `[vector]`
-tier design), `05-lifecycle.md` (E5 curation), `2026-07-18-adopt-vs-build-spike.md`.
+`_shared/` vault decision. Related: `04_indexer.md` (E4/FTS5 + the `[vector]`
+tier design), `05_lifecycle.md` (E5 curation), `002-adopt-vs-build-spike.md`.

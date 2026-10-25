@@ -10,6 +10,8 @@ updated: 2026-07-07
 
 # Claudron Roadmap — v0.2 → v0.6
 
+**Status:** IN PROGRESS — EPIC #14 is open: E1 and E2 shipped in 0.2.0, E3 is parked (decision C), E4 and E5 are partly shipped, E6 is not started.
+
 Six epics that take Claudron from a working-but-standalone CLI to the knowledge
 hub of the Claudfather ecosystem: the "SD card" powering local Claude Code
 sessions, the fleet memory Claudlobby is already wired for, the engine under
@@ -17,7 +19,7 @@ clauDNA's knowledge-lifecycle skills, and the scenario source Claudosseum's
 grounding loop expects.
 
 This overview carries the portfolio shape, the decisions already made, and the
-evidence they rest on. Each epic has its own plan doc (`01-` through `06-`).
+evidence they rest on. Each epic has its own plan doc (`01_` through `06_`).
 
 ## Where Claudron stands (2026-07-07)
 
@@ -40,7 +42,7 @@ specific plugs their already-built sockets are waiting for.
 Recon across the ecosystem (2026-07-06/07) found Claudron-shaped holes, not
 greenfield:
 
-One honesty note the ironclad panel added (08-ironclad-cycle1.md): all four
+One honesty note the ironclad panel added (08_ironclad-cycle1.md): all four
 repos share one author, so these sockets are **prior self-commitments, not
 independent demand** — real code seams, but inert today (the `.claudron`
 bridge file exists only as a parser; no sibling user is blocked on Claudron).
@@ -69,7 +71,7 @@ Claudron the single source of truth.
 | D5 | Roadmap shape | **SD-card ladder → DAG**: E1→E2 sequential, then E3/E4/E6 parallel, E5 after E4 | Fastest personal value; explicit DAG lets the fleet parallelize the rest |
 | D6 | Retrieval bet | **SQLite FTS5 (BM25) + wikilink graph as default; embeddings deferred** to an optional extra | stdlib-only, zero deps, index can't rot silently; mission principle "graph traversal over vector similarity". Field-evidence amendment (F2/F3): BM25-grade ranking is the floor, hybrid fusion is the designed upgrade path with named triggers (paraphrase misses in the dogfood eval, or vault >~1k notes) |
 | D7 | Deliverable format | Plan docs committed in-repo + umbrella EPIC issue + six `[plan]` children (clauDNA #165 house style). The children are separately-authored issue bodies linking these docs — the docs are companions, not the issue bodies | Survives model access windows; issues drive fleet execution |
-| D8 | Planning rigor | Docs informed by web research on the 2026 "AI brain" wave; hardened by an ironclad panel (cycle 1: 08-ironclad-cycle1.md) before filing | Stress-test the bets against field evidence, not just internal coherence |
+| D8 | Planning rigor | Docs informed by web research on the 2026 "AI brain" wave; hardened by an ironclad panel (cycle 1: 08_ironclad-cycle1.md) before filing | Stress-test the bets against field evidence, not just internal coherence |
 | D9 | Continuation gate | **Gate G1 after E2** (see below): E3–E6 are evidence-gated options, not scheduled commitments | Three panel lenses independently converged: an unproven wedge that can't reshape the plan is a preamble; base rate (solo maintainer, 7-week dormancy) predicts a stalled tail without a gate |
 | D10 | Minimum-success floor | **0.2.0 + 0.3.0 shipped = this roadmap succeeded.** E4–E6 are compounding upside, not obligations | Makes a partial climb read as a ladder climbed partway, not a broken promise; the release train already makes each rung independently valuable |
 | D11 | Trust vs activity axes | `status` (activity: type-aware union incl. sibling values) and `maturity` (trust: `draft→verified→canonical`) are **two fields, not one enum** | Panel caught the fused axes before the 0.2.0 schema freeze; a note can be `canonical` and `superseded` simultaneously — E4 ranks on both, E5 promotes on `maturity` |
@@ -101,16 +103,16 @@ whichever gated epic ships first takes 0.3.0.
 
 | Epic | Release | Effort | One-line goal |
 |---|---|---|---|
-| [E1 — Schema v1 + authoring tooling](01-schema.md) | 0.2.0 | M | The contract: unified frontmatter schema, `validate`, `new`, reference vault, CLI contract |
-| [E2 — Session loop v0: the SD card](02-session-loop.md) | 0.2.0 | M | `recall` / `capture` / `sync` + hook pack + quickstart; machine A's finding reaches machine B's next session |
-| [E3 — MCP server v0.1 + Claudlobby socket](03-mcp-server.md) | 0.3.0 | M | Five tools (lookup/read/write/related/status) + vault write-lock; `claudron.json` fragment PR; clauDNA skills handoff |
-| [E4 — Indexer v2: SQLite + graph + real search](04-indexer.md) | 0.4.0 | L | FTS5 BM25 + edges table + incremental reindex; implements `resolve_wikilinks`; addresses #10's scale/incremental half |
-| [E5 — Lifecycle & curation](05-lifecycle.md) | 0.5.0 | M | draft→verified→canonical on `maturity`, `promote`, `review` queue, librarian workflow; supersedes #11, partially closes #12 |
-| [E6 — Packs + Claudosseum grounding](06-packs.md) | 0.6.0 | M (S if subscribe-side stays gated) | pack.yaml v1, publish + scenario export; subscribe machinery behind a demand trigger |
+| [E1 — Schema v1 + authoring tooling](01_schema.md) | 0.2.0 | M | The contract: unified frontmatter schema, `validate`, `new`, reference vault, CLI contract |
+| [E2 — Session loop v0: the SD card](02_session-loop.md) | 0.2.0 | M | `recall` / `capture` / `sync` + hook pack + quickstart; machine A's finding reaches machine B's next session |
+| [E3 — MCP server v0.1 + Claudlobby socket](03_mcp-server.md) | 0.3.0 | M | Five tools (lookup/read/write/related/status) + vault write-lock; `claudron.json` fragment PR; clauDNA skills handoff |
+| [E4 — Indexer v2: SQLite + graph + real search](04_indexer.md) | 0.4.0 | L | FTS5 BM25 + edges table + incremental reindex; implements `resolve_wikilinks`; addresses #10's scale/incremental half |
+| [E5 — Lifecycle & curation](05_lifecycle.md) | 0.5.0 | M | draft→verified→canonical on `maturity`, `promote`, `review` queue, librarian workflow; supersedes #11, partially closes #12 |
+| [E6 — Packs + Claudosseum grounding](06_packs.md) | 0.6.0 | M (S if subscribe-side stays gated) | pack.yaml v1, publish + scenario export; subscribe machinery behind a demand trigger |
 
 **2026-07-18 — re-scope after the vault-structure layer.** A layer the original
 six-epic table didn't foresee landed between E2 and the gate: the **vault-structure
-contract** ([`2026-07-09-vault-structure-contract/`](../2026-07-09-vault-structure-contract/00-overview.md)),
+contract** ([`vault-structure-contract_2026-07-09/`](../vault-structure-contract_2026-07-09/00_OVERVIEW.md)),
 an **E1 extension, not a new gated epic**. P1 (`VAULT-STRUCTURE.md`) and P2
 (`structure.py` + `validate --fix`) shipped on a 0.2.x line; P3 (fleet-scoped
 recall) stays dogfood-gated (F6). It hardened the CLI+markdown wedge into a
@@ -127,7 +129,7 @@ conformance). Net effect on the roadmap:
   CLI is the contract floor; MCP is the same engine with equivalent semantics"*).
   So the MCP server is **parked** as an optional upgrade, built only on a named
   trigger — **per-tool permission gating** (Claudlobby #644) or a **non-clauDNA
-  MCP consumer**. See `03-mcp-server.md`'s banner. This is D3 (MCP optional)
+  MCP consumer**. See `03_mcp-server.md`'s banner. This is D3 (MCP optional)
   playing out; the demotion was drift, now a recorded decision.
 - **Sequence now:** *[0.2.x, pre-gate]* land the Claudlobby-conformance
   stragglers (#509 / #602 / Claudron #49) and P3-if-the-dogfood-needs-it →
@@ -177,7 +179,7 @@ is not a pre-registered experiment). Entry criteria, read from real use:
   2026-07-18 the wedge is largely validated in practice** — the structure
   contract shipped, clauDNA reconciled (#45), and the fleet consumes the vault
   via the interim query-before wedge (#528). Now-lightweight runbook:
-  [`2026-07-09-g1-dogfood-protocol.md`](../2026-07-09-g1-dogfood-protocol.md)
+  [`../g1-dogfood-protocol_2026-07-09/00_OVERVIEW.md`](../g1-dogfood-protocol_2026-07-09/00_OVERVIEW.md)
 - **Pulse:** notes/week > 0 and trending up; recall briefs referenced in-session
 - **Continue personal-first** (E4 next if the vault is growing fast toward the
   F3 knee, E3 next otherwise) when pulse passes
@@ -225,7 +227,7 @@ front-loaded: an SD-card demo recording ships with 0.2.0, the E4 eval numbers
 
 ## Field evidence (2026 "AI brain" wave)
 
-Full verified report: [07-field-research.md](07-field-research.md) (22 sources,
+Full verified report: [07_field-research.md](07_field-research.md) (22 sources,
 25 claims through 3-vote adversarial verification; findings cited as F1–F8).
 The wave converged on Claudron's shape — plain markdown + git as source of
 truth with a derived rebuildable SQLite index (F1), BM25-grade lexical

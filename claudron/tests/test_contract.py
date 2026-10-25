@@ -14,7 +14,7 @@ from .doc_parity import section
 
 def _entry() -> str:
     """CLI_CONTRACT's `contract` bullet, up to the next bullet."""
-    text = section("docs/CLI_CONTRACT.md", "Command-specific contracts")
+    text = section("documentation/specs/CLI_CONTRACT.md", "Command-specific contracts")
     start = text.index("- `contract [--json]`")
     end = text.find("\n- `", start + 1)
     return text[start:end if end != -1 else None]

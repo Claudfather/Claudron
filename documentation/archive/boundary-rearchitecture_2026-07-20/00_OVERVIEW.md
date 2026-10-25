@@ -13,7 +13,7 @@ updated: 2026-07-23
 ## Summary
 
 Implements the boundary ratified-for-review in
-[`../2026-07-20-claudfather-boundary-separation.md`](../2026-07-20-claudfather-boundary-separation.md) §10:
+[`../../decisions/005-claudfather-boundary-separation.md`](../../decisions/005-claudfather-boundary-separation.md) §10:
 the **contract register** gets owners and text, the five §4 drifts get their one-home resolutions, and
 the fleet gets the knowledge loop it currently lacks. Nine phases, one PR each, three repos, sequenced
 so every repo stays independently shippable at every point — no lockstep release, no identity
@@ -23,8 +23,8 @@ compromise (PyYAML-only / marketplace-only / local-first all preserved).
 
 Target state, in one paragraph per repo:
 
-- **Claudron** owns its consumption surface as a product: `docs/CLI_CONTRACT.md` grows §Environment
-  (the vault-address table) and §Write-guarantees (the cross-host ladder); a new `docs/INTEGRATION.md`
+- **Claudron** owns its consumption surface as a product: `documentation/specs/CLI_CONTRACT.md` grows §Environment
+  (the vault-address table) and §Write-guarantees (the cross-host ladder); a new `documentation/guides/INTEGRATION.md`
   is the any-agent front door; a new session-loop protocol section defines the four roles
   (continuity / recall / capture-prompt / sync), their ordering, and a **declared claim mechanism**
   for the capture prompt that retires the `hooks.py:62` plugin sniff. The engine stops knowing
@@ -73,12 +73,12 @@ ecosystem's first ≥2-writer field data on the F8 write-chokepoint bet).
 
 ## Companion plans
 
-- **Source of truth:** `../2026-07-20-claudfather-boundary-separation.md` §10 (the boundary this
+- **Source of truth:** `../../decisions/005-claudfather-boundary-separation.md` §10 (the boundary this
   implements). Do not re-litigate placements here; PR against that doc instead.
 - **Supersedes the open items of** `../2026-07-09-claudna-claudron-reconciliation.md` (its
   "Open decisions" — marker, brief ownership, index maintenance — are answered by §10.5.1 and
   phases C2/L2; its "one owner per hook" framing is revised to one-owner-per-role).
-- **Amends** `../2026-07-18-decision-c-mcp-demand-gated.md` (trigger 1 re-scoped after #644 —
+- **Amends** `../../decisions/001-decision-c-mcp-demand-gated.md` (trigger 1 re-scoped after #644 —
   the Claudron-side amendment lands in phase C1; L1 carries the Claudlobby-side pointer) and
   `VAULT-STRUCTURE.md` §Consumption(b) (approval-gated, phase C1).
 - **Consumes/dedups the issue-tracker layer:** Claudlobby EPIC #509 + children #511/#512/#513
@@ -86,7 +86,7 @@ ecosystem's first ≥2-writer field data on the F8 write-chokepoint bet).
   consumption work on the same surfaces), #251 (mooted by decision C); Claudron #30 (env drift —
   closed by C1), #44 + #55/EPIC #54 (provenance — cited by C2/F7), #43 (the F2 timer variant's
   tracked home), #46 (plugged-vault resolution default — answered by C1).
-- **Relation to the roadmap** (`../2026-07-07-claudron-roadmap/00-overview.md`): C2+L2 deliver the
+- **Relation to the roadmap** (`../../planning/claudron-roadmap_2026-07-07/00_OVERVIEW.md`): C2+L2 deliver the
   *socket half* of E3 (fleet session integration) with zero MCP surface; E4/E5/E6 are untouched.
 
 ## Phases
@@ -114,15 +114,15 @@ this table is authoritative). Update it in the PR that changes a phase's state.
 
 | # | Phase | Repo | Size | Delivers |
 |---|---|---|---|---|
-| C1 | [Own the door](01-c1-own-the-door.md) | Claudron | M | §Environment + §Bridge + §Write-guarantees + engine version surface in CLI_CONTRACT; `docs/INTEGRATION.md`; VAULT-STRUCTURE §Consumption(b) amendment; decision-C amendment; tree-walk deprecation; `init` text fix; recall-brief discovery hint |
-| C2 | [Session-loop protocol](02-c2-session-protocol.md) | Claudron | M | The four-role protocol + hook-snippet shape + consumer-defer rule as contract text (F1 locked: engine always prompts, generic text; sniff → transitional shim); `capture --source-url`/`--source-type` (per F7, cites #44/#54) |
-| D1 | [clauDNA conformance](03-d1-claudna-conformance.md) | clauDNA | S | Env ladder re-ordered to contract #4; `session.md` declared stable (minimal fields); provenance via `--source-url` (capability-probe-guarded) |
-| L1 | [Validate the real door](04-l1-validate-the-real-door.md) | Claudlobby | M | Validator inversion (CLI-door check via paths.py, phantom-MCP deleted); COMPAT_FLOOR amended (parked ≠ unmet) + doctor check wired incl. loop-execution evidence; `dispatch-task.sh` false comment removed; #511 dedup |
-| L2 | [Wire the fleet loop](05-l2-fleet-loop-wiring.md) | Claudlobby | L | vault-wired ⇒ engine hooks installed per bot (single prompt via F1's consumer-defer); narrow verb grants (no wildcard); N-bot contention test; snippet parity gate |
-| L3 | [Return the corpus](06-l3-corpus-return.md) | Claudlobby | M | lessons triage ledger → behavior-class re-homed in-context, referential subset to vault + CONVENTIONS.md promotions (no renderer, F4 locked); template stamps the door; mission sentences reworded |
-| D2 | [Closure triage](07-d2-closure-triage.md) | clauDNA | S | Q-closure rule in the authoring guide; spec §10.5.5 inventory adopted as the ledger; moves gated on the promotion signal |
-| L4 | [Conformance gates](08-l4-conformance-gates.md) | Claudlobby | S | rename-map drift gate (stale-live-values); hook-snippet parity gate; boundary invariants in CI (no direct vault reads) |
-| X1 | [CLAUDE.md seam enforcement](09-x1-claude-md-enforcement.md) | all three | M | Root refresh + internal-seam CLAUDE.md per repo (texts authored: Claudron working tree + `docs/boundary-claude-md-seams` branches in both siblings); mission-hygiene rider |
+| C1 | [Own the door](01_c1-own-the-door.md) | Claudron | M | §Environment + §Bridge + §Write-guarantees + engine version surface in CLI_CONTRACT; `documentation/guides/INTEGRATION.md`; VAULT-STRUCTURE §Consumption(b) amendment; decision-C amendment; tree-walk deprecation; `init` text fix; recall-brief discovery hint |
+| C2 | [Session-loop protocol](02_c2-session-protocol.md) | Claudron | M | The four-role protocol + hook-snippet shape + consumer-defer rule as contract text (F1 locked: engine always prompts, generic text; sniff → transitional shim); `capture --source-url`/`--source-type` (per F7, cites #44/#54) |
+| D1 | [clauDNA conformance](03_d1-claudna-conformance.md) | clauDNA | S | Env ladder re-ordered to contract #4; `session.md` declared stable (minimal fields); provenance via `--source-url` (capability-probe-guarded) |
+| L1 | [Validate the real door](04_l1-validate-the-real-door.md) | Claudlobby | M | Validator inversion (CLI-door check via paths.py, phantom-MCP deleted); COMPAT_FLOOR amended (parked ≠ unmet) + doctor check wired incl. loop-execution evidence; `dispatch-task.sh` false comment removed; #511 dedup |
+| L2 | [Wire the fleet loop](05_l2-fleet-loop-wiring.md) | Claudlobby | L | vault-wired ⇒ engine hooks installed per bot (single prompt via F1's consumer-defer); narrow verb grants (no wildcard); N-bot contention test; snippet parity gate |
+| L3 | [Return the corpus](06_l3-corpus-return.md) | Claudlobby | M | lessons triage ledger → behavior-class re-homed in-context, referential subset to vault + CONVENTIONS.md promotions (no renderer, F4 locked); template stamps the door; mission sentences reworded |
+| D2 | [Closure triage](07_d2-closure-triage.md) | clauDNA | S | Q-closure rule in the authoring guide; spec §10.5.5 inventory adopted as the ledger; moves gated on the promotion signal |
+| L4 | [Conformance gates](08_l4-conformance-gates.md) | Claudlobby | S | rename-map drift gate (stale-live-values); hook-snippet parity gate; boundary invariants in CI (no direct vault reads) |
+| X1 | [CLAUDE.md seam enforcement](09_x1-claude-md-enforcement.md) | all three | M | Root refresh + internal-seam CLAUDE.md per repo (texts authored: Claudron working tree + `docs/boundary-claude-md-seams` branches in both siblings); mission-hygiene rider |
 
 ## Complexity and Sequencing
 
@@ -202,7 +202,7 @@ ordered schedule).
     the *silent wrong-vault* case — a straggler dotfile exporting `CLAUDRON_VAULT` no longer errors,
     it silently resolves somewhere else, and an exit-3-only hint never fires. That is the more
     dangerous state and it deserves the diagnostic. **Recorded as an amendment because the process
-    was wrong:** the implementation exceeded a locked fork and `docs/CLI_CONTRACT.md:108–116` was
+    was wrong:** the implementation exceeded a locked fork and `documentation/specs/CLI_CONTRACT.md:108–116` was
     edited to describe the new behavior, i.e. the contract followed the code. Under R1–R4 the
     obligation runs the other way — a change that outgrows a locked decision amends the decision
     first. **Standing rule for every later phase:** if an implementation outgrows a locked fork,
@@ -226,7 +226,7 @@ ordered schedule).
   condition: the post-wave-2 checkpoint showing migrated lessons not surfacing via recall re-opens
   the renderer against evidence. *Ratifier:* chris (2026-07-20). *Status:* **locked**.
 - **F5 — INTEGRATION.md scope.** *Context:* decision C cites a vendor-neutral any-agent doc as its
-  mitigation, but `docs/INTEGRATION.md` does not exist — the scope must be fixed before writing it.
+  mitigation, but `documentation/guides/INTEGRATION.md` does not exist — the scope must be fixed before writing it.
   *Options:* (a) get-the-CLI install section + copy-paste hello-world (init scratch vault →
   `capture --stdin` → `recall`) + engine-detection step 0 (version/capability probe per C1's
   contract addition) + conformance checklist (self-contained testable sentences; R-numbers as

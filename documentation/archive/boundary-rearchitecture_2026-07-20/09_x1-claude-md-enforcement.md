@@ -18,7 +18,7 @@ refreshed roots carrying the two-register rule, plus one small CLAUDE.md at each
 contributor or agent chooses where something lives. Every seam file answers three questions: what
 belongs here, what must never land here, and the one-line placement test — pointing at the boundary
 spec §10.3 rather than restating it. **The texts exist — authored by the visioning pass
-(2026-07-20)**: Claudron's root refresh + `claudron/CLAUDE.md` + `docs/CLAUDE.md` live in the
+(2026-07-20)**: Claudron's root refresh + `claudron/CLAUDE.md` + `documentation/specs/CLAUDE.md` live in the
 Claudron working tree on this plan's branch; clauDNA's root edit + 2 seam files are committed on
 its `docs/boundary-claude-md-seams` branch (`49f13cf`); Claudlobby's root edit + 3 seam files on
 its `docs/boundary-claude-md-seams` branch (`f158ae1`). This phase is their landing (one PR per
@@ -58,7 +58,7 @@ CLAUDE.md."
    - `claudron/CLAUDE.md` — engine vs CLI vs hooks: engine modules never print (CLI owns
      stdout/stderr per CLI_CONTRACT); hooks fail open and never gain consumer names; every write
      goes through `engine.py`; contract changes touch docs + parity tests together.
-   - `docs/CLAUDE.md` — these files are owned contract text (R1–R7 summary); consumers PR here;
+   - `documentation/specs/CLAUDE.md` — these files are owned contract text (R1–R7 summary); consumers PR here;
      breaking changes need CHANGELOG entries + version-window notes.
 3. **clauDNA root CLAUDE.md refresh:** add the boundary paragraph the root currently lacks
    (procedural-by-coupling, not by format; referential payloads follow Q-closure; the engine is

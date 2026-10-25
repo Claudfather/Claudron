@@ -10,6 +10,8 @@ updated: 2026-07-07
 
 # E5 — Lifecycle & curation: the cauldron refines
 
+**Status:** IN PROGRESS — PR1 (the maturity ladder and `promote`, #68) shipped; PR2–4 are deferred (#19).
+
 **Release:** 0.5.0 · **Depends on:** E4 for PR2–4 (near-dup clusters, queue
 queries) — **PR1 (lifecycle verbs) needs only E1 and may pull forward to
 ≤0.3.0** so curation exists at or before the fleet write door opens (panel:
@@ -163,7 +165,7 @@ INDEX.md ADR, not its ladder doc — descriptor corrected.)
 
 ## Field evidence
 
-See [07-field-research.md](07-field-research.md). **F5 validates this epic's
+See [07_field-research.md](07_field-research.md). **F5 validates this epic's
 shape and amends one behavior.** Validated: maintenance-by-review as the
 curation mechanism (Karpathy's lint: contradictions, superseded claims,
 orphans, missing cross-references — our `review` queue is that list), cron

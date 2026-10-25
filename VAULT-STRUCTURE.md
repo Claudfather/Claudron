@@ -196,23 +196,23 @@ Two mechanisms resolve a vault; the contract governs both:
 - **(b) Bot-runtime** — the composed `CLAUDRON_VAULT_PATH` env var (emitted by
   Claudlobby's `composer.py`) points a running bot's **Claudron CLI** at the
   vault. The full precedence order, the canonical name, and the migration
-  record live in **docs/CLI_CONTRACT.md §Environment** — the one normative
+  record live in **documentation/specs/CLI_CONTRACT.md §Environment** — the one normative
   statement of the vault address; do not restate it here or downstream. The CLI
   is the fleet-consumption door and is **vendor-neutral**: any agent that can
   run a subprocess and parse `--json` consumes the vault through it
-  (docs/INTEGRATION.md), with no plugin required. Door *policy* — including
+  (documentation/guides/INTEGRATION.md), with no plugin required. Door *policy* — including
   whether a second door is ever built — is decision C
-  (`documentation/plans/2026-07-18-decision-c-mcp-demand-gated.md`).
+  (`documentation/decisions/001-decision-c-mcp-demand-gated.md`).
 
 ## Promotion
 
-Knowledge rises on the ladder E5 designs (`05-lifecycle.md`):
+Knowledge rises on the ladder E5 designs (`05_lifecycle.md`):
 
 ```
 bot memory/  ->  <fleet>/shared/  ->  _shared/  ->  pack (E6)
 ```
 
-Reproduced here as the *model*; `05-lifecycle.md` owns the *mechanism* and the
+Reproduced here as the *model*; `05_lifecycle.md` owns the *mechanism* and the
 ladder's canonical form. **Interim:** until E5's `claudron promote` ships,
 promotion is manual — `claudron capture --fleet <name>` to file at a tier, or
 `git mv` to move a note up.
@@ -221,7 +221,7 @@ promotion is manual — `claudron capture --fleet <name>` to file at a tier, or
 
 - **`SCHEMA.md`** — note frontmatter, types, status/maturity, and the note-filing
   taxonomy within each tier.
-- **`documentation/plans/2026-07-07-claudron-roadmap/05-lifecycle.md`** — the E5
+- **`documentation/planning/claudron-roadmap_2026-07-07/05_lifecycle.md`** — the E5
   promotion mechanism.
 - **Claudfather/Claudlobby #509** — the consumption epic: how Claudlobby conforms
   to this contract.

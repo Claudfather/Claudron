@@ -3,7 +3,7 @@
 The adapter, not the protocol. What the loop promises — the four roles and
 their owners, the pull-before-recall ordering, the single-prompt rule, the
 budgets, and the composed-settings shape — is normative in
-``docs/CLI_CONTRACT.md`` §Session-loop protocol. This module implements the
+``documentation/specs/CLI_CONTRACT.md`` §Session-loop protocol. This module implements the
 engine's three of those roles; changes to what they promise PR the contract
 first.
 

@@ -10,6 +10,8 @@ updated: 2026-07-09
 
 # P1 — VAULT-STRUCTURE.md (the SSOT doc)
 
+**Status:** ✅ COMPLETE — `VAULT-STRUCTURE.md` shipped.
+
 ## Summary
 
 Author `documentation/VAULT-STRUCTURE.md` — the single source of truth for the
@@ -31,14 +33,14 @@ conforms to a stated contract.
   the vault-wide hub is a first-class field, `Vault.shared` (`vault.py:117-124`).
   No doc states any of this.
 - **Personal topology is locked (D4):** `_shared/` + `projects/<repo>/`
-  (`00-overview.md:68`). The fleet topology adds `<fleet>/` siblings — a
+  (`00_OVERVIEW.md:68`). The fleet topology adds `<fleet>/` siblings — a
   superset, not a competitor.
 - **Content is scope-by-location today, with no contract.** The type taxonomy
   (`knowledge/decisions/runbooks/planning`, `schema.py:93-100`) is **identical**
   for the hub and every fleet; nothing defines *what kind* of knowledge belongs
   vault-wide vs per-fleet. Only real asymmetry: `CONVENTIONS.md` is hub-only
   and always-injected (`session.py:94`).
-- **The promotion ladder is already designed** (`05-lifecycle.md:69`):
+- **The promotion ladder is already designed** (`05_lifecycle.md:69`):
   `memory/ → <fleet>/shared/ → _shared/ → pack`. This doc *cites* it; it builds
   nothing.
 - **Consumers already read the hub through the abstraction, not the literal** —
@@ -79,7 +81,7 @@ Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
 
 1. **Directory contract + human on-ramp.** Open with a "start here"
    orientation for a human browsing the vault (where knowledge lives, where to
-   drop a note by hand), then the tree from `00-overview.md#architecture`.
+   drop a note by hand), then the tree from `00_OVERVIEW.md#architecture`.
    Normative statements: one git repo per tenant vault; `_shared/` (or legacy
    `shared/`) at root is the vault marker; fleets are **flat** root-level dirs
    with a `fleet.yaml`; `runtime/` and `.env` are gitignored within the vault.
@@ -124,7 +126,7 @@ Create `documentation/VAULT-STRUCTURE.md` (`type: convention`, wiki folder
    and belongs in the directory section.
 5. **Promotion model (prose only).** Reproduce the E5 ladder
    (`memory/ → <fleet>/shared/ → _shared/ → pack`) as the *model*, link
-   `05-lifecycle.md` for the *mechanism*, and state the **interim**: promotion
+   `05_lifecycle.md` for the *mechanism*, and state the **interim**: promotion
    is manual today (`capture --fleet` / `git mv`) until E5's `promote` ships.
 6. **Reciprocal cross-link.** VAULT-STRUCTURE.md links SCHEMA.md ("notes:
    frontmatter") and SCHEMA.md gains a one-line pointer back ("layout: see
@@ -138,7 +140,7 @@ Doc-only, but falsifiable:
 - The doc's user-facing reserved names are the subset `{_shared, shared,
   projects}` derived from `SKIP_DIRS` (P2 asserts the derivation, not verbatim
   equality — the constant also carries infra names).
-- The tier ladder matches E5's model (`05-lifecycle.md`) — asserted by meaning,
+- The tier ladder matches E5's model (`05_lifecycle.md`) — asserted by meaning,
   not pinned to a line number (which would couple this doc to E5's churn).
 - A reader following the doc scaffolds a vault that `_scan_vault` discovers
   without an `other:` surprise (validated once P2 lands).

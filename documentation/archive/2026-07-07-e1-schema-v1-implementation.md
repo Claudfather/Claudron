@@ -12,7 +12,7 @@ updated: 2026-07-07
 
 **Implements:** [EPIC #14](https://github.com/Claudfather/Claudron/issues/14)
 child [#15](https://github.com/Claudfather/Claudron/issues/15), per
-[`documentation/plans/2026-07-07-claudron-roadmap/01-schema.md`](2026-07-07-claudron-roadmap/01-schema.md).
+[`documentation/planning/claudron-roadmap_2026-07-07/01_schema.md`](../planning/claudron-roadmap_2026-07-07/01_schema.md).
 This doc makes the design decisions the epic plan deferred; where it decides,
 it cites the constraint that forced the choice. Effort M · 4 PRs + sibling PRs.
 
@@ -119,10 +119,10 @@ conventions + standing facts, ≤120 tokens of body (the F6 always-loaded
 budget). `validate` enforces the budget (error at >160 tokens — 33% grace).
 E2's recall injects it unconditionally.
 
-## CLI contract (ships as `docs/CLI_CONTRACT.md`, PR1)
+## CLI contract (ships as `documentation/specs/CLI_CONTRACT.md`, PR1)
 
 > **Ratified — the normative contract (exit codes, envelope, channels,
-> groups, per-command rules) now lives in `docs/CLI_CONTRACT.md`** (landed
+> groups, per-command rules) now lives in `documentation/specs/CLI_CONTRACT.md`** (landed
 > with E1 PR1, #22; this section's draft was collapsed to this pointer at
 > ratification — simplify pass, reuse finding). Implementation notes that
 > stay plan-side because they are *work items*, not contract:
@@ -243,7 +243,7 @@ commands must appear in the entry doc it ships with).
 
 | PR | Contents | Red-first gate |
 |---|---|---|
-| 1 | `SCHEMA.md` (incl. closed catalog + mapping tables) + `docs/CLI_CONTRACT.md` + reference vault (strict-clean) + `fixtures/{known-bad,legacy}/` + `SCAFFOLD_TREE`/`SHARED_SUBDIRS` change (incl. `init` switch) + CONVENTIONS template + #4 closing comment | known-bad fixtures committed with expected codes *and full JSON `Finding` elements* before the validator exists; **ratified-visibility red test** (a `status: ratified` decision must appear in default lookup) |
+| 1 | `SCHEMA.md` (incl. closed catalog + mapping tables) + `documentation/specs/CLI_CONTRACT.md` + reference vault (strict-clean) + `fixtures/{known-bad,legacy}/` + `SCAFFOLD_TREE`/`SHARED_SUBDIRS` change (incl. `init` switch) + CONVENTIONS template + #4 closing comment | known-bad fixtures committed with expected codes *and full JSON `Finding` elements* before the validator exists; **ratified-visibility red test** (a `status: ratified` decision must appear in default lookup) |
 | 2 | `claudron/schema.py` (constants, `parse_note`, `validate_note`, the two status sets) + `claudron validate` (both tiers, envelope, exit codes) + **envelope migration of `status`/`lookup`/`config`** + **channel-discipline test + stdout/stderr retrofit** + doc-parity test + **updates to the green tests the contract breaks** (`test_cli.py:36,53,67`, `test_plug.py:94` — exit 2→3 and envelope assertions change in the same PR as the behavior, red-first) | PR1's fixtures are the failing tests |
 | 3 | `claudron new` (owner derivation, collision/mutex/$EDITOR edges) + `init --adopt` mtime backfill + conftest `reference_vault` fixture + migrate touched tests + README golden-path update | `new → validate --strict` round-trip test (asserting `owner`) written first |
 | 4 | Sibling PRs: claudlobby `frontmatter-schema.md` SSOT pointer + mapping table (recording the `archived` superset addition); clauDNA `output-guide.md` reconciliation (their schema table points at SCHEMA.md, keeps their body-skeleton contract — we own frontmatter, they own body structure); both PRs link #15 | n/a (docs) |

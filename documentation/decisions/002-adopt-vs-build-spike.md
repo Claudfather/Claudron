@@ -10,19 +10,19 @@ updated: 2026-07-18
 
 # Adopt-vs-build spike — the E4 indexer
 
-**The G1 gate artifact** (per `2026-07-07-claudron-roadmap/00-overview.md` §Gate
+**The G1 gate artifact** (per `../planning/claudron-roadmap_2026-07-07/00_OVERVIEW.md` §Gate
 G1): a build-vs-adopt decision that merges **before any E4 build PR opens**, so a
 spike can't be bundled with — and rubber-stamp — the build it gates.
 
 **Scope note (decision C, 2026-07-18):** E3/MCP is now demand-gated, so the
 adopt targets are evaluated against **E4** — the SQLite FTS5 + wikilink-graph
-indexer (`04-indexer.md`) — not the MCP server. Both candidates happen to ship
+indexer (`04_indexer.md`) — not the MCP server. Both candidates happen to ship
 MCP servers; that is no longer the axis we're buying on.
 
 ## The question
 
 Build E4's indexer ourselves — stdlib `sqlite3` + FTS5 (BM25) + an `edges`
-table + `resolve_wikilinks`, ~4 small PRs per `04-indexer.md` — or **adopt Basic
+table + `resolve_wikilinks`, ~4 small PRs per `04_indexer.md` — or **adopt Basic
 Memory** / **consume Graphify**?
 
 ## Verdict (up front)
@@ -116,7 +116,7 @@ Claudron's value; neither candidate provides or preserves them.
 | License | stays MIT | **AGPL — viral** | MIT (but wrong problem) |
 | Schema SSOT | ours | theirs | theirs |
 | CLI `--json` contract | preserved | lost (daemon-first) | lost |
-| Effort | 4 small PRs (`04-indexer.md`) | integrate + relicense + reshape | integrate a mapper we don't need |
+| Effort | 4 small PRs (`04_indexer.md`) | integrate + relicense + reshape | integrate a mapper we don't need |
 | Embeddings | deferred by design | core, non-optional | n/a |
 
 The disposable-derived-index pattern is field consensus (both tools do it); we

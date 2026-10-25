@@ -10,6 +10,8 @@ updated: 2026-07-07
 
 # E1 — Note Schema v1 + authoring tooling
 
+**Status:** ✅ COMPLETE — shipped in 0.2.0 (E1+E2, EPIC #14).
+
 **Release:** 0.2.0 (with E2) · **Depends on:** nothing · **Blocks:** everything else
 
 ## Goal
@@ -198,7 +200,7 @@ just point at SCHEMA.md.
 
 ## Field evidence
 
-See [07-field-research.md](07-field-research.md). This epic absorbs: **F4**
+See [07_field-research.md](07_field-research.md). This epic absorbs: **F4**
 (write authority partitioned by layer; conventions in an always-loaded schema
 doc; write-time validation — `validate` is the same pattern
 obsidian-second-brain enforces with its validator hook), **F6** (per-claim

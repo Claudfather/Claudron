@@ -623,12 +623,12 @@ class TestSettingsCapability:
         assert "doctor-settings" in data["capabilities"], data.get("capabilities")
 
     def test_the_contract_names_the_gate(self):
-        contract = (Path(__file__).resolve().parents[2] / "docs" / "CLI_CONTRACT.md").read_text()
+        contract = (Path(__file__).resolve().parents[2] / "documentation" / "specs" / "CLI_CONTRACT.md").read_text()
         assert '"doctor-settings" in status --json' in contract
 
     def test_every_declared_capability_is_gated_by_name_in_the_contract(self):
         """A name nobody documents is a gate nobody can find."""
         from claudron import CAPABILITIES
-        contract = (Path(__file__).resolve().parents[2] / "docs" / "CLI_CONTRACT.md").read_text()
+        contract = (Path(__file__).resolve().parents[2] / "documentation" / "specs" / "CLI_CONTRACT.md").read_text()
         missing = [name for name in CAPABILITIES if f'"{name}" in ' not in contract]
         assert missing == []

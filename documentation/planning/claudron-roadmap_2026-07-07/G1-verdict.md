@@ -78,6 +78,6 @@ On PASS: the next build proceeds — the **graph slice** (`resolve_wikilinks` +
 `links`/`related`, scale-free — **shipped**) then **E5-lite** (maturity +
 `promote`); SQLite/FTS5 stays deferred behind the D6/F2 trigger (**measured
 above; not fired**) and the adopt-vs-build spike
-(`2026-07-18-adopt-vs-build-spike.md`, verdict BUILD). MCP/E3 stays demand-gated
-(`2026-07-18-decision-c-mcp-demand-gated.md`). On PIVOT: re-anchor per
-`00-overview.md` §Gate G1.
+(`002-adopt-vs-build-spike.md`, verdict BUILD). MCP/E3 stays demand-gated
+(`001-decision-c-mcp-demand-gated.md`). On PIVOT: re-anchor per
+`00_OVERVIEW.md` §Gate G1.

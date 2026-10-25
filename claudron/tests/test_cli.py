@@ -16,7 +16,7 @@ from claudron.cli import (
     main,
 )
 
-CONTRACT = "docs/CLI_CONTRACT.md"
+CONTRACT = "documentation/specs/CLI_CONTRACT.md"
 
 
 class TestInit:
@@ -30,7 +30,7 @@ class TestInit:
 
 
 class TestVaultResolution:
-    """The CLI resolution chain (docs/CLI_CONTRACT.md §Environment):
+    """The CLI resolution chain (documentation/specs/CLI_CONTRACT.md §Environment):
     --vault -> $CLAUDRON_VAULT_PATH -> walk-up. `CLAUDRON_VAULT` was removed
     in 0.3.0 (boundary program F3, hard cut) and is now fully inert -- never
     read, and no longer named on any path (the migration softener retired
@@ -108,7 +108,7 @@ class TestStatus:
         assert "tiers" in env["data"]
 
     def test_status_json_carries_engine_version(self, vault_dir: Path, capsys):
-        """The capability probe (docs/INTEGRATION.md step 0): consumers read
+        """The capability probe (documentation/guides/INTEGRATION.md step 0): consumers read
         the engine's version off the envelope they already parse, rather than
         each maintaining a private detection ladder."""
         from claudron import __version__
@@ -298,7 +298,7 @@ class TestValidateCommand:
 
 
 class TestChannelDiscipline:
-    """stdout = payload only (docs/CLI_CONTRACT.md) — session hooks inject
+    """stdout = payload only (documentation/specs/CLI_CONTRACT.md) — session hooks inject
     stdout verbatim, so a stray diagnostic there corrupts agent context."""
 
     def test_json_mode_stdout_is_single_envelope(self, vault_dir: Path, capsys):
@@ -457,7 +457,7 @@ class TestEnvironmentDocParity:
         form, so it *can* drift from the table. Gate it: every env name it
         spells there must be a live contract name. A removed name reappearing
         in the front door is the #30 failure re-created for integrators."""
-        resolve = section("docs/INTEGRATION.md", "Resolve a vault")
+        resolve = section("documentation/guides/INTEGRATION.md", "Resolve a vault")
         assert "§Environment" in resolve  # still points at the normative text
         spelled = {v for v in code_values(resolve) if v.startswith("CLAUDRON_")}
         assert spelled == set(VAULT_ENV_VARS)

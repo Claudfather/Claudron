@@ -31,18 +31,18 @@ G1 (evidence gate) → E3 MCP server + Claudlobby socket (0.3.0) ∥ E4
 SQLite/FTS5+graph indexer (0.4.0) → E5 curation lifecycle (0.5.0) ∥ E6 packs
 + Claudosseum grounding (0.6.0). Read these docs FIRST (branch
 plan/claudron-roadmap-v0.2-v0.6 until #13 merges, then main), under
-documentation/plans/2026-07-07-claudron-roadmap/:
-- 00-overview.md — decisions D1–D11, Gate G1, the sockets table, risk table
-- 03-mcp-server.md — the contract this epic consumes: five tools
+documentation/planning/claudron-roadmap_2026-07-07/:
+- 00_OVERVIEW.md — decisions D1–D11, Gate G1, the sockets table, risk table
+- 03_mcp-server.md — the contract this epic consumes: five tools
   (claudron_lookup/read/write/related/status), stdio subprocess, vault
   resolution --vault → CLAUDRON_VAULT_PATH → CLAUDRON_VAULT → walk-up,
   vault-level write lock (flock on .claudron/write.lock), write returns
   {action: created|updated|suggest_update|suggest_supersede, path, reason},
   .claudron/events.jsonl instrumentation
-- 01-schema.md — SCHEMA.md as tri-repo SSOT; two axes (status = activity,
+- 01_schema.md — SCHEMA.md as tri-repo SSOT; two axes (status = activity,
   type-aware union incl. current/stale/ratified with mappings; maturity =
   draft|verified|canonical trust axis); referential-only boundary
-- 05-lifecycle.md — corrected promotion ladder (memory/ → <fleet>/shared/ →
+- 05_lifecycle.md — corrected promotion ladder (memory/ → <fleet>/shared/ →
   vault _shared/ → packs) and the librarian review-queue contract
 
 YOUR MISSION: produce Claudlobby's receiving-side epic, in this repo's house
@@ -123,18 +123,18 @@ children #15–#20): E1 schema SSOT + E2 personal session loop (0.2.0) → Gate
 G1 → E3 MCP server + sibling handoffs (0.3.0) ∥ E4 indexer ∥ E6 packs, E5
 lifecycle. Read these docs FIRST (branch plan/claudron-roadmap-v0.2-v0.6
 until #13 merges, then main), under
-documentation/plans/2026-07-07-claudron-roadmap/:
-- 00-overview.md — D1–D11, Gate G1, the clauDNA socket row (your open issues
+documentation/planning/claudron-roadmap_2026-07-07/:
+- 00_OVERVIEW.md — D1–D11, Gate G1, the clauDNA socket row (your open issues
   are named there), risk table
-- 03-mcp-server.md — the tool surface your skills will call:
+- 03_mcp-server.md — the tool surface your skills will call:
   claudron_lookup/read/write/related/status; write returns {action, path,
   reason} and routes near-duplicates to update/supersede suggestions
-- 01-schema.md — SCHEMA.md as SSOT: two axes (status activity union incl.
+- 01_schema.md — SCHEMA.md as SSOT: two axes (status activity union incl.
   your ratified/current values with mappings; maturity draft|verified|
   canonical), referential-only boundary (type enum excludes skill BY DESIGN;
   validate warns on skill-shaped notes), your output-guide.md named as the
   reconciliation target
-- 02-session-loop.md — recall/capture hooks; PreCompact stacking with your
+- 02_session-loop.md — recall/capture hooks; PreCompact stacking with your
   precompact-reflect.sh is explicitly planned to defer/combine
 
 YOUR MISSION: produce clauDNA's integration epic in the house style you

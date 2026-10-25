@@ -10,6 +10,8 @@ updated: 2026-07-09
 
 # Vault Structure Contract + enforcing `init`
 
+**Status:** IN PROGRESS — P1 and P2 shipped; P3 waits on the G1 dogfood.
+
 Claudron already owns the *note* contract (SCHEMA.md — frontmatter, and a
 `## Vault directory taxonomy` section that already sketches the note-tier tree).
 What it does **not** yet own is the *tenancy* half of the directory contract:
@@ -46,7 +48,7 @@ release** — after E1's frontmatter `validate` (0.2.0), before the G1-gated 0.3
   *directory-structure* lens to the same command. VAULT-STRUCTURE.md is the
   directory sibling of SCHEMA.md (Fork F3).
 - **Formalizes what E5 already implies.** E5's promotion ladder
-  (`05-lifecycle.md:69`: `memory/ → <fleet>/shared/ → _shared/ → pack`) is the
+  (`05_lifecycle.md:69`: `memory/ → <fleet>/shared/ → _shared/ → pack`) is the
   content contract's backbone. This epic writes that tier model down as the
   *content* contract; it builds **no** promotion code — that stays E5.
 - **Respects G1 and the D-decisions.** No cross-tenant query surface
@@ -104,14 +106,14 @@ obvious to the author is not obvious to the next reader.
 | **F4** | Fleet layout | flat `<fleet>/` at root · nested `fleets/<fleet>/` | **Flat** | Claudlobby already lays fleets flat under `local/<fleet>/` (`paths.py:422`) and Claudron's `_scan_vault` already discovers fleets as root-level `fleet.yaml` dirs (`vault.py:178-183`) — the two agree on flat today; nested would break both plus ~14 un-centralized Claudlobby bash sites. |
 | **F5** | Hub name | pick a human name now · keep `_shared/`, defer | **Keep `_shared/`, defer** | Rename cost is flat (no config field either way — ~10 hardcoded sites, insulated by the `vault.shared` abstraction), so deferring costs nothing extra; the name stays cheap to change **because** bots consume by query, not hardcoded path. `knowledge/` is out — collides with the reserved per-tier subdir. |
 | **F6** | Fleet-scoped consumption | build isolation now · document + conditional | **Document; build only if dogfood needs it** | Tier-A cross-fleet pooling is the operator's *accepted* "one hub" behavior, not a bug; the real gap (fleet-blind `recall`) may not block a solo dogfood. |
-| **F7** | Promotion (memory→fleet→vault-wide) | author here · align to E5 | **Align to E5** | The full ladder is already designed (`05-lifecycle.md:61-73`); interim promotion is manual (`capture --fleet` / `git mv`), the wedge habit. Build no promotion code here. |
+| **F7** | Promotion (memory→fleet→vault-wide) | author here · align to E5 | **Align to E5** | The full ladder is already designed (`05_lifecycle.md:61-73`); interim promotion is manual (`capture --fleet` / `git mv`), the wedge habit. Build no promotion code here. |
 
 ## Companion Plans
 
-- **E1 — Schema v1** (`01-schema.md`): SCHEMA.md is the note-frontmatter SSOT;
+- **E1 — Schema v1** (`01_schema.md`): SCHEMA.md is the note-frontmatter SSOT;
   VAULT-STRUCTURE.md (P1 here) is its directory sibling. P2 extends E1's
   `validate`.
-- **E5 — Lifecycle & curation** (`05-lifecycle.md`): owns the promotion
+- **E5 — Lifecycle & curation** (`05_lifecycle.md`): owns the promotion
   mechanism. P1's content contract *documents* E5's tier ladder; it implements
   none of it.
 - **Claudfather/Claudlobby #509** (consumption epic): the conforming-consumer
@@ -137,9 +139,9 @@ obvious to the author is not obvious to the next reader.
 
 | Phase | Size | Depends on | Parallel with | Delivers |
 |---|---|---|---|---|
-| [P1 — VAULT-STRUCTURE.md (the SSOT)](01-vault-structure-ssot.md) | S–M | E1 (SCHEMA.md exists) | — | The directory + content + consumption contract, as a doc. Pure prose; no code. |
-| [P2 — Structure enforcement in `validate`/`init`](02-structure-enforcement.md) | M | P1 | P3 | `validate` gains a directory lens (audit-only); `--fix` opt-in; `init` scaffolds to the contract. |
-| [P3 — Fleet-scoped consumption (conditional)](03-consumption-fleet-context.md) | S–M | P1 | P2 | Documents the Tier-A/recall scoping gaps; `derive_fleet()` + fleet-scoped `recall` **only if** the dogfood needs it. |
+| [P1 — VAULT-STRUCTURE.md (the SSOT)](01_vault-structure-ssot.md) | S–M | E1 (SCHEMA.md exists) | — | The directory + content + consumption contract, as a doc. Pure prose; no code. |
+| [P2 — Structure enforcement in `validate`/`init`](02_structure-enforcement.md) | M | P1 | P3 | `validate` gains a directory lens (audit-only); `--fix` opt-in; `init` scaffolds to the contract. |
+| [P3 — Fleet-scoped consumption (conditional)](03_consumption-fleet-context.md) | S–M | P1 | P2 | Documents the Tier-A/recall scoping gaps; `derive_fleet()` + fleet-scoped `recall` **only if** the dogfood needs it. |
 
 **Critical path:** P1 → P2. P3 is dogfood-gated and may never build (F6).
 

@@ -10,13 +10,15 @@ updated: 2026-07-09
 
 # P2 — Structure enforcement in `validate` / `init`
 
+**Status:** ✅ COMPLETE — `structure.py` and `validate --fix` shipped.
+
 ## Summary
 
 Give `claudron validate` a **directory-structure lens** beside its existing
 frontmatter lens (today it only rglobs `*.md` and lints frontmatter —
 `schema.py:506`, `cli.py:598-637`). Structure findings flow through Claudron's
 **existing** `error`/`warning` severity model, so they honor the CLI contract
-(`docs/CLI_CONTRACT.md:11` — *"warnings do not change the exit code,"* `--strict`
+(`documentation/specs/CLI_CONTRACT.md:11` — *"warnings do not change the exit code,"* `--strict`
 gates warnings, `:16`): **errors gate exit; warnings gate only under `--strict`**.
 An opt-in `--fix` performs **creation-only** repairs inside a hard containment
 boundary — never moves, deletes, or escapes the vault root. `init` scaffolds
@@ -29,7 +31,7 @@ exactly the shape VAULT-STRUCTURE.md (P1) documents.
   `is_conventions()` (`schema.py:522`) is the closest thing, and it's a
   CONVENTIONS budget rule, not a structure check.
 - **The exit-code contract is normative.** `validate` returns `1 if errors else
-  0` (`cli.py:637`); `docs/CLI_CONTRACT.md:11` guarantees warnings don't change
+  0` (`cli.py:637`); `documentation/specs/CLI_CONTRACT.md:11` guarantees warnings don't change
   the exit code, and `:16` names `--strict` as the sanctioned warning-gate.
   Structure findings must obey this, not invent a third rule.
 - **A `Finding` type + `--json` envelope already exist** (`schema.py`;
@@ -105,7 +107,7 @@ exactly the shape VAULT-STRUCTURE.md (P1) documents.
    only if clean. **Never moves or deletes** — a stray dir/note is reported with
    a suggested destination, never relocated. Register `--fix` in `--help` and
    fix its help string, which currently promises "never mutates" (`cli.py:923`);
-   sync `docs/CLI_CONTRACT.md` + CHANGELOG.
+   sync `documentation/specs/CLI_CONTRACT.md` + CHANGELOG.
 4. **Extend `init`** to scaffold the full documented shape (it already does
    `_shared/` + `CONVENTIONS.md`; ensure `init` then `validate` is a clean
    no-op) and print a next-step pointer.

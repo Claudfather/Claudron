@@ -20,9 +20,9 @@ try:
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
-#: What this engine SHIPS, declared rather than inferred — `docs/CLI_CONTRACT.md`
+#: What this engine SHIPS, declared rather than inferred — `documentation/specs/CLI_CONTRACT.md`
 #: register rule R5, "capability is declared to the owner, never inferred", and
-#: `docs/CLAUDE.md`'s "capabilities are declared to the engine".
+#: `documentation/specs/CLAUDE.md`'s "capabilities are declared to the engine".
 #:
 #: It exists because the three obvious ways to infer this all fail, measured:
 #:

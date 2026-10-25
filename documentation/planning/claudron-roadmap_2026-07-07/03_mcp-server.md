@@ -10,6 +10,8 @@ updated: 2026-07-07
 
 # E3 — MCP server v0.1 + the Claudlobby socket
 
+**Status:** PENDING — parked and demand-gated by decision C (see the banner below).
+
 > **⛔ DEMAND-GATED — parked 2026-07-18 (decision C).** The fleet already
 > consumes the hub through clauDNA's **CLI-skill door** (`/claudron`
 > lookup/status, `/capture`, `/recall` over the `claudron` CLI — shipped in
@@ -19,13 +21,13 @@ updated: 2026-07-07
 > trigger:** per-tool permission gating (Claudlobby #644) or a non-clauDNA MCP
 > consumer. Until a trigger fires, the vault is fully fleet-consumable without
 > it. Everything below is the design, kept ready. Release "0.3.0" below is the
-> *original* ordinal placement, now void — see `00-overview.md` §2026-07-18
+> *original* ordinal placement, now void — see `00_OVERVIEW.md` §2026-07-18
 > re-scope.
 
 **Release:** 0.3.0 by default order (ordinal — see overview DAG legend) ·
 **Depends on:** E1, E2 (imports E2's `engine.py`; the overview DAG legend is
 the authoritative dependency statement) · **Parallel with:** E4, E6 ·
-**Gated by:** G1 (defined in `00-overview.md` §Gate G1), incl. the
+**Gated by:** G1 (defined in `00_OVERVIEW.md` §Gate G1), incl. the
 adopt-vs-build spike (PR 0)
 
 ## Goal
@@ -176,7 +178,7 @@ daemon. Ships as `pip install 'claudron[mcp]'`; the only new dependency (the
 
 ## Field evidence
 
-See [07-field-research.md](07-field-research.md). **F8: this epic carries the
+See [07_field-research.md](07_field-research.md). **F8: this epic carries the
 one bet the verified record neither validates nor contradicts.** Indirect
 support is real — Basic Memory ships as a local MCP server over the identical
 files+SQLite substrate (existence proof), and the published critiques of the

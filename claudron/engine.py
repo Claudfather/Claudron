@@ -87,7 +87,7 @@ class WriteResult:
         """True iff a note actually landed. The load-bearing signal every door
         reports: a ``suggest_*`` dedup route (and ``rejected``) *succeeds* having
         written nothing, so a consumer must branch on this, not on ok/exit
-        (docs/CLI_CONTRACT.md). Lives on the shared type so the CLI and a future
+        (documentation/specs/CLI_CONTRACT.md). Lives on the shared type so the CLI and a future
         MCP ``claudron_write`` can't drift on the string match."""
         return self.action in ("created", "updated")
 

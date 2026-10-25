@@ -10,7 +10,7 @@ updated: 2026-07-20
 
 # Decision C — the MCP server (E3) is demand-gated, not the next epic
 
-**Decision (2026-07-18):** Claudron's MCP server (E3, `03-mcp-server.md`) is
+**Decision (2026-07-18):** Claudron's MCP server (E3, `03_mcp-server.md`) is
 **parked as a demand-gated option**, not the fleet-consumption mechanism. The
 fleet consumes the hub through the **CLI door** — clauDNA's `/claudron`,
 `/capture`, `/recall` skills wrapping the `claudron` CLI (clauDNA #197), over
@@ -22,7 +22,7 @@ Juncture E); this doc is the dated record the drift previously lacked.
 
 - The role E3 was to fill (bots query-before / write-after) is **filled in
   practice** by the CLI skill door — shipped, working, vendor-neutral at the
-  `--json` contract layer (hardened in PR-H: `documentation/plans/…` / the
+  `--json` contract layer (hardened in PR-H: `documentation/…` / the
   CLI_CONTRACT typed write envelope). "The CLI is the contract floor; MCP would
   be the same engine with equivalent semantics" (clauDNA's own framing).
 - This is decision **D3** (MCP optional, `claudron[mcp]`, never a daemon)
@@ -52,16 +52,16 @@ phase L1's deliverable; until it lands the human check stands, and
 `validator.py:403–413` still carries the phantom-MCP warning described below.
 Trigger (1) fires when a fleet policy is filed that those checks cannot express;
 trigger (2) fires when such a consumer is named. Claudron's side of the probe is
-`status --json` → `engine_version` (docs/CLI_CONTRACT.md §Capability probe); the
+`status --json` → `engine_version` (documentation/specs/CLI_CONTRACT.md §Capability probe); the
 Claudlobby side lands in boundary phase L1. Until one of the triggers fires,
 C holds.
 
 ## Amendment — 2026-07-20: trigger 1 re-scoped, monitor named
 
 Recorded by boundary phase C1
-(`2026-07-20-boundary-rearchitecture/01-c1-own-the-door.md`); grounds in the
+(`../archive/boundary-rearchitecture_2026-07-20/01_c1-own-the-door.md`); grounds in the
 boundary spec §10.5.2
-(`2026-07-20-claudfather-boundary-separation.md`).
+(`005-claudfather-boundary-separation.md`).
 
 **The gate is affirmed; the framing is revised.** Verification found that
 trigger 1's original grounds no longer hold as stated. Claudlobby's #644 grant
@@ -85,7 +85,7 @@ Two related corrections from the same pass, for the record:
   inverting the check to the CLI door is phase L1's work. It was a recurring
   reason MCP kept being re-proposed, and it was never evidence of demand.
 - **The honest residual named in "what C gives up" is now mitigated on both
-  halves.** The vendor-neutral door has its front door: `docs/INTEGRATION.md`
+  halves.** The vendor-neutral door has its front door: `documentation/guides/INTEGRATION.md`
   exists (it was cited here as a mitigation before it was written). And for any
   host running the engine's hooks, the recall brief carries a one-line pointer
   at `claudron lookup` / `claudron capture` — in-context discovery for the
@@ -95,7 +95,7 @@ Two related corrections from the same pass, for the record:
 ## Accepted reversal cost
 
 Reversing C (build E3 after all) is bounded but real, paid later: re-derive E3's
-spec (kept ready in `03-mcp-server.md`), un-park Claudlobby's
+spec (kept ready in `03_mcp-server.md`), un-park Claudlobby's
 `library/mcp/claudron.json` fragment, revive the collapsed consumption children
 (#511/#512/#513), and cut fleet bots from the CLI door onto `mcp__claudron__*`.
 This deferral costs one paragraph now to preserve the option; it does **not**
@@ -119,6 +119,6 @@ pointer, not an MCP one (reconcile its doc). Both are phase L1's work.
 
 ## Related
 
-`03-mcp-server.md` (the parked E3 spec + banner) · `00-overview.md` §2026-07-18
+`03_mcp-server.md` (the parked E3 spec + banner) · `../planning/claudron-roadmap_2026-07-07/00_OVERVIEW.md` §2026-07-18
 re-scope · `2026-07-09-claudna-claudron-reconciliation.md` · VAULT-STRUCTURE.md
 §Consumption(b).

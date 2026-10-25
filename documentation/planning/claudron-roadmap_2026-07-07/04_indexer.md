@@ -10,10 +10,12 @@ updated: 2026-07-07
 
 # E4 — Indexer v2: SQLite mirror, wikilink graph, real search
 
+**Status:** IN PROGRESS — the graph half shipped (#65–#67); the SQLite/FTS5 half is deferred behind a measured trigger (#18).
+
 **Release:** 0.4.0 by default order (ordinal — see overview DAG legend) ·
 **Depends on:** E1 (+ E2's dogfood queries for the eval set) · **Parallel
 with:** E3, E6 · **Blocks:** E5 PR2–4 (E5 PR1 may pull forward) · **Gated
-by:** G1 (defined in `00-overview.md` §Gate G1), incl. the adopt-vs-build
+by:** G1 (defined in `00_OVERVIEW.md` §Gate G1), incl. the adopt-vs-build
 spike (E3 PR 0, shared)
 
 ## Goal
@@ -140,7 +142,7 @@ and incremental-reindex halves; the issue stays open, annotated — not closed.
 
 ## Field evidence
 
-See [07-field-research.md](07-field-research.md). This epic is where the
+See [07_field-research.md](07_field-research.md). This epic is where the
 research bites hardest:
 
 - **F2 makes ranking quality existential, with numbers:** naive keyword

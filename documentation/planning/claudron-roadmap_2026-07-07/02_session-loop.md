@@ -10,6 +10,8 @@ updated: 2026-07-07
 
 # E2 — Session loop v0: the SD card
 
+**Status:** ✅ COMPLETE — shipped in 0.2.0 (E1+E2, EPIC #14).
+
 **Release:** 0.2.0 (with E1) · **Depends on:** E1 · **Blocks:** E3 (which
 imports this epic's `engine.py`) — the overview DAG legend is the
 authoritative dependency statement (cycle-2 must-fix #4)
@@ -153,7 +155,7 @@ machine B session:  SessionStart → recall brief now includes A's finding
 
 ## Field evidence
 
-See [07-field-research.md](07-field-research.md). This epic's loop is the
+See [07_field-research.md](07_field-research.md). This epic's loop is the
 field's converged loop: capture at the compaction/session boundary via hooks
 (F5 — shipped as post-compaction background agents plus cron librarians in
 obsidian-second-brain), an always-loaded conventions/critical-facts layer
