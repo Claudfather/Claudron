@@ -1,11 +1,11 @@
 ---
 title: "L3 — Return the corpus: lessons → vault, compose-from-vault, door-stamped template"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, claudlobby, knowledge, vault, migration]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-10-25
 ---
 
 # L3 — Return the corpus (Claudlobby)

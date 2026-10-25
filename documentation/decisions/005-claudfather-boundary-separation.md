@@ -1,10 +1,10 @@
 ---
 title: "Separation of Systems by Purpose — Claudron · clauDNA · Claudlobby boundary program"
-type: plan
-status: active
+type: decision
+status: ratified
 owner: chris
 created: 2026-07-20
-updated: 2026-10-15
+updated: 2026-10-25
 tags: [system:claudron, system:claudna, system:claudlobby, boundaries, architecture, separation-of-concerns]
 repos: [Claudfather/Claudron, Claudfather/clauDNA, Claudfather/Claudlobby]
 ---

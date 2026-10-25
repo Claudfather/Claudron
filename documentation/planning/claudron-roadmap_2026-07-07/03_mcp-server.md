@@ -1,11 +1,11 @@
 ---
 title: "E3 — MCP server v0.1 + the Claudlobby socket"
 type: plan
-status: deferred
+status: draft
 owner: chris
 tags: [epic, mcp, claudlobby, claudna, claudron]
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-10-25
 ---
 
 # E3 — MCP server v0.1 + the Claudlobby socket

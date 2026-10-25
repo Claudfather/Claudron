@@ -3,6 +3,7 @@ title: Knowledge-layer deep dive — review record
 type: review
 status: completed
 created: 2026-09-28
+updated: 2026-10-25
 ---
 
 # Knowledge-layer deep dive — review record

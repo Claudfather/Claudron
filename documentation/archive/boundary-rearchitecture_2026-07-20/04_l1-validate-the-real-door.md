@@ -1,11 +1,11 @@
 ---
 title: "L1 — Validate the real door: validator inversion, compat floor, dispatch tail"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, claudlobby, validator, claudron]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-10-25
 ---
 
 # L1 — Validate the real door (Claudlobby)

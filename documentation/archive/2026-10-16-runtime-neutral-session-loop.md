@@ -1,9 +1,10 @@
 ---
 title: Runtime-neutral session-loop owner adapter
 type: plan
-status: active
+status: completed
 owner: Claudron maintainers
 created: 2026-10-16
+updated: 2026-10-25
 ---
 
 # Runtime-neutral session-loop owner adapter

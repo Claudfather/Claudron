@@ -1,11 +1,11 @@
 ---
 title: "Boundary re-architecture — implementing §10 across Claudron · clauDNA · Claudlobby"
 type: plan
-status: complete
+status: completed
 owner: chris
 tags: [plan, epic, boundaries, architecture, claudron, claudna, claudlobby]
 created: 2026-07-20
-updated: 2026-07-23
+updated: 2026-10-25
 ---
 
 # Boundary re-architecture — overview

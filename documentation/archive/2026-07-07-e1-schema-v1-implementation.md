@@ -1,11 +1,11 @@
 ---
 title: "E1 implementation plan — Note Schema v1 + authoring tooling"
 type: plan
-status: active
+status: completed
 owner: chris
 tags: [e1, schema, implementation, claudron]
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-10-25
 ---
 
 # E1 implementation plan — Note Schema v1 + authoring tooling

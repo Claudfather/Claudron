@@ -1,11 +1,11 @@
 ---
 title: "Ironclad record — re-scope stress test (decision C · E4 timing · lightened gate)"
 type: plan
-status: active
+status: completed
 owner: chris
 tags: [ironclad, review, rescope, e4, gate, claudron]
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-10-25
 ---
 
 # Ironclad record — the 2026-07-18 re-scope
