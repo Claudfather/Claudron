@@ -1,7 +1,7 @@
 ---
 title: "Vault Structure Contract + enforcing init — the folder SSOT"
 type: plan
-status: draft
+status: active
 owner: chris
 tags: [plan, epic, vault, structure, claudron, claudlobby]
 created: 2026-07-09
@@ -10,7 +10,7 @@ updated: 2026-07-09
 
 # Vault Structure Contract + enforcing `init`
 
-**Status:** IN PROGRESS — P1 and P2 shipped; P3 waits on the G1 dogfood.
+**Status:** IN PROGRESS — each phase doc carries its own status.
 
 Claudron already owns the *note* contract (SCHEMA.md — frontmatter, and a
 `## Vault directory taxonomy` section that already sketches the note-tier tree).

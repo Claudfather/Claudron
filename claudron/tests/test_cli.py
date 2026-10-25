@@ -9,14 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from .doc_parity import code_values, doc_table, section
+from .doc_parity import CLI_CONTRACT as CONTRACT, INTEGRATION, code_values, doc_table, section
 from claudron.cli import (
     VAULT_ENV_VARS,
     _detect_vault,
     main,
 )
-
-CONTRACT = "documentation/specs/CLI_CONTRACT.md"
 
 
 class TestInit:
@@ -457,7 +455,7 @@ class TestEnvironmentDocParity:
         form, so it *can* drift from the table. Gate it: every env name it
         spells there must be a live contract name. A removed name reappearing
         in the front door is the #30 failure re-created for integrators."""
-        resolve = section("documentation/guides/INTEGRATION.md", "Resolve a vault")
+        resolve = section(INTEGRATION, "Resolve a vault")
         assert "§Environment" in resolve  # still points at the normative text
         spelled = {v for v in code_values(resolve) if v.startswith("CLAUDRON_")}
         assert spelled == set(VAULT_ENV_VARS)

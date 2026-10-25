@@ -10,7 +10,7 @@ updated: 2026-07-07
 
 # Claudron Roadmap — v0.2 → v0.6
 
-**Status:** IN PROGRESS — EPIC #14 is open: E1 and E2 shipped in 0.2.0, E3 is parked (decision C), E4 and E5 are partly shipped, E6 is not started.
+**Status:** IN PROGRESS — EPIC #14 is open; each epic doc carries its own status.
 
 Six epics that take Claudron from a working-but-standalone CLI to the knowledge
 hub of the Claudfather ecosystem: the "SD card" powering local Claude Code

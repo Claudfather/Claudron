@@ -1,7 +1,7 @@
 ---
 title: "P2 — Structure enforcement in validate/init (audit-only + --fix)"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, vault, structure, validate, cli, claudron]
 created: 2026-07-09

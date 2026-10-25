@@ -1,7 +1,7 @@
 ---
 title: "P1 — VAULT-STRUCTURE.md: the directory + content + consumption contract"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, vault, structure, documentation, claudron]
 created: 2026-07-09

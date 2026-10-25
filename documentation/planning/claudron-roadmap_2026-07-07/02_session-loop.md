@@ -1,7 +1,7 @@
 ---
 title: "E2 — Session loop v0: the SD card"
 type: plan
-status: active
+status: completed
 owner: chris
 tags: [epic, hooks, session, claudron]
 created: 2026-07-07

@@ -1,7 +1,7 @@
 ---
 title: "E1 — Note Schema v1 + authoring tooling"
 type: plan
-status: active
+status: completed
 owner: chris
 tags: [epic, schema, claudron]
 created: 2026-07-07
