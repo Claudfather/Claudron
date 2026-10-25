@@ -1,11 +1,11 @@
 ---
 title: "D1 — clauDNA conformance: env ladder, session.md surface, provenance"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, claudna, conformance, contracts]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-10-25
 ---
 
 # D1 — clauDNA conformance (clauDNA)

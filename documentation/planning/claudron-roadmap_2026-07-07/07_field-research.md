@@ -1,11 +1,11 @@
 ---
 title: "Field research — the 2026 'AI brain' wave, verified do/don'ts"
 type: knowledge
-status: active
+status: current
 owner: chris
 tags: [research, memory, retrieval, curation, claudron]
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-10-25
 source_url: deep-research run wf_b14dde92-334 (22 sources, 109 claims extracted, 25 verified 3-vote adversarial)
 ---
 

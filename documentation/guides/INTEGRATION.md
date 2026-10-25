@@ -1,3 +1,13 @@
+---
+title: Integrating any agent with Claudron
+type: knowledge
+status: current
+owner: chris
+tags: [contracts, integration, claudron]
+created: 2026-07-21
+updated: 2026-10-25
+---
+
 # Integrating any agent with Claudron
 
 Canonical URL:

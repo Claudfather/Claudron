@@ -1,11 +1,11 @@
 ---
 title: "D2 — Closure triage: reference payloads inside clauDNA skills"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, claudna, knowledge, triage]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-10-25
 ---
 
 # D2 — Closure triage (clauDNA)

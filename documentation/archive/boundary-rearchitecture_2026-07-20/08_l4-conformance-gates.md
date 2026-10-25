@@ -1,11 +1,11 @@
 ---
 title: "L4 — Conformance gates: rename-map drift, boundary invariants in CI"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, claudlobby, ci, conformance]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-10-25
 ---
 
 # L4 — Conformance gates (Claudlobby)

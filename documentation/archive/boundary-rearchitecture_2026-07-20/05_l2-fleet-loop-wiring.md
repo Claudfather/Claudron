@@ -1,11 +1,11 @@
 ---
 title: "L2 — Wire the fleet loop: engine hooks per vault-wired bot"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, claudlobby, session, hooks, fleet]
 created: 2026-07-20
-updated: 2026-07-21
+updated: 2026-10-25
 ---
 
 # L2 — Wire the fleet loop (Claudlobby)

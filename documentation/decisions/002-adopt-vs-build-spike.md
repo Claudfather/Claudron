@@ -1,11 +1,11 @@
 ---
 title: "Adopt-vs-build spike — the E4 indexer (Basic Memory / Graphify)"
-type: plan
-status: active
+type: decision
+status: ratified
 owner: chris
 tags: [spike, gate, g1, e4, indexer, claudron]
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-10-25
 ---
 
 # Adopt-vs-build spike — the E4 indexer

@@ -1,11 +1,11 @@
 ---
 title: "C2 — Session-loop protocol: four roles, a declared claim, and --source-url"
 type: plan
-status: draft
+status: completed
 owner: chris
 tags: [plan, claudron, session, hooks, protocol]
 created: 2026-07-20
-updated: 2026-07-20
+updated: 2026-10-25
 ---
 
 # C2 — Session-loop protocol (Claudron)

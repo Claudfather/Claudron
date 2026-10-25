@@ -1,11 +1,11 @@
 ---
 title: "Sibling-session prompts — Claudlobby & clauDNA companion epics"
 type: runbook
-status: active
+status: current
 owner: chris
 tags: [handoff, claudlobby, claudna, forge, ironclad, claudron]
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-10-25
 ---
 
 # Sibling-session prompts

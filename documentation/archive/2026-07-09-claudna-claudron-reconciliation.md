@@ -1,11 +1,12 @@
 ---
 title: "clauDNA ↔ Claudron — hook & index reconciliation"
 type: plan
-status: active
+status: superseded
+superseded_by: "[[Boundary re-architecture — implementing §10 across Claudron · clauDNA · Claudlobby]]"
 owner: chris
 tags: [claudna, claudron, e3, integration, hooks, index]
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-10-25
 ---
 
 # clauDNA ↔ Claudron — hook & index reconciliation

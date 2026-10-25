@@ -1,3 +1,13 @@
+---
+title: Claudron CLI Contract
+type: knowledge
+status: current
+owner: chris
+tags: [contracts, cli, claudron]
+created: 2026-07-07
+updated: 2026-10-25
+---
+
 # Claudron CLI Contract
 
 Normative for every `claudron` command, current and future. Machine
