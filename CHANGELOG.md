@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-### Changed
+### Changed (breaking)
 - **Documentation moved onto the canonical `documentation/` layout ([Claudfather/.github#2](https://github.com/Claudfather/.github/issues/2)).** `documentation/plans/` is gone. Active plans are sessions under `documentation/planning/<topic>_<date>/` (`00_OVERVIEW.md` + `NN_<slug>.md`, with status markers), decisions are numbered under `documentation/decisions/`, and completed or superseded plans live in `documentation/archive/`. The contract docs left `docs/`: `docs/CLI_CONTRACT.md` → `documentation/specs/CLI_CONTRACT.md`, `docs/INTEGRATION.md` → `documentation/guides/INTEGRATION.md`, `docs/CLAUDE.md` → `documentation/specs/CLAUDE.md`. **Links to the old paths stop resolving:** the canonical integration URL is now `https://github.com/Claudfather/Claudron/blob/main/documentation/guides/INTEGRATION.md`, and the boundary spec is `documentation/decisions/005-claudfather-boundary-separation.md`. No engine or CLI behavior changes; the doc-parity tests read the new paths.
 
 ## [0.10.0] - 2026-10-16

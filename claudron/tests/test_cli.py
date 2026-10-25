@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from .doc_parity import CLI_CONTRACT as CONTRACT, INTEGRATION, code_values, doc_table, section
+from .doc_parity import CLI_CONTRACT, INTEGRATION, code_values, doc_table, section
 from claudron.cli import (
     VAULT_ENV_VARS,
     _detect_vault,
@@ -28,7 +28,7 @@ class TestInit:
 
 
 class TestVaultResolution:
-    """The CLI resolution chain (documentation/specs/CLI_CONTRACT.md §Environment):
+    """The CLI resolution chain (CLI_CONTRACT.md §Environment):
     --vault -> $CLAUDRON_VAULT_PATH -> walk-up. `CLAUDRON_VAULT` was removed
     in 0.3.0 (boundary program F3, hard cut) and is now fully inert -- never
     read, and no longer named on any path (the migration softener retired
@@ -106,7 +106,7 @@ class TestStatus:
         assert "tiers" in env["data"]
 
     def test_status_json_carries_engine_version(self, vault_dir: Path, capsys):
-        """The capability probe (documentation/guides/INTEGRATION.md step 0): consumers read
+        """The capability probe (INTEGRATION.md step 0): consumers read
         the engine's version off the envelope they already parse, rather than
         each maintaining a private detection ladder."""
         from claudron import __version__
@@ -296,7 +296,7 @@ class TestValidateCommand:
 
 
 class TestChannelDiscipline:
-    """stdout = payload only (documentation/specs/CLI_CONTRACT.md) — session hooks inject
+    """stdout = payload only (CLI_CONTRACT.md) — session hooks inject
     stdout verbatim, so a stray diagnostic there corrupts agent context."""
 
     def test_json_mode_stdout_is_single_envelope(self, vault_dir: Path, capsys):
@@ -343,7 +343,7 @@ class TestChannelDiscipline:
 
 
 def _env_table() -> list[list[str]]:
-    return doc_table(CONTRACT, "ENVIRONMENT")
+    return doc_table(CLI_CONTRACT, "ENVIRONMENT")
 
 
 class _RecordingEnv(dict):
@@ -446,7 +446,7 @@ class TestEnvironmentDocParity:
     def test_flags_section_defers_to_the_table(self):
         """§Flags must point at §Environment, never restate the order (R3
         applied at home — one normative statement, one parity gate)."""
-        flags = section(CONTRACT, "Flags")
+        flags = section(CLI_CONTRACT, "Flags")
         assert "§Environment" in flags
         assert "CLAUDRON_VAULT_PATH" not in flags
 

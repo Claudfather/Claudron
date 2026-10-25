@@ -5,7 +5,7 @@ status: completed
 owner: chris
 tags: [epic, hooks, session, claudron]
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-10-25
 ---
 
 # E2 — Session loop v0: the SD card

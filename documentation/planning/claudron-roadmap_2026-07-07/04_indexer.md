@@ -10,7 +10,7 @@ updated: 2026-07-07
 
 # E4 — Indexer v2: SQLite mirror, wikilink graph, real search
 
-**Status:** IN PROGRESS — the graph half shipped (#65–#67); the SQLite/FTS5 half is deferred behind a measured trigger (#18).
+**Status:** PENDING — the SQLite/FTS5 half is deferred behind a measured trigger (#18); the graph half shipped (#65–#67).
 
 **Release:** 0.4.0 by default order (ordinal — see overview DAG legend) ·
 **Depends on:** E1 (+ E2's dogfood queries for the eval set) · **Parallel

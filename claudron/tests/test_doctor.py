@@ -233,7 +233,7 @@ class TestRegistry:
         assert max(m.version for m in doctor_mod.MIGRATIONS) == VAULT_FORMAT
 
     def test_the_contract_d_table_matches_the_code(self):
-        """documentation/specs/CLI_CONTRACT.md's doctor table, code by code and severity by
+        """CLI_CONTRACT.md's doctor table, code by code and severity by
         severity, is the registry `_finding` enforces (#204)."""
         rows = doc_table(CLI_CONTRACT, "DOCTOR_CODES")
         doc = {code_values(r[0])[0]: frozenset(s.strip() for s in r[1].split("/"))

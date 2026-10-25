@@ -10,7 +10,7 @@ updated: 2026-07-07
 
 # E5 — Lifecycle & curation: the cauldron refines
 
-**Status:** IN PROGRESS — PR1 (the maturity ladder and `promote`, #68) shipped; PR2–4 are deferred (#19).
+**Status:** PENDING — PR2–4 are deferred (#19); PR1 (the maturity ladder and `promote`, #68) shipped.
 
 **Release:** 0.5.0 · **Depends on:** E4 for PR2–4 (near-dup clusters, queue
 queries) — **PR1 (lifecycle verbs) needs only E1 and may pull forward to

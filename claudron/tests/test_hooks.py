@@ -25,7 +25,7 @@ from claudron.hooks import (
 )
 from claudron import hooks as hooks_mod
 from claudron.tests.doc_parity import (
-    CLI_CONTRACT as CONTRACT,
+    CLI_CONTRACT,
     code_values,
     doc_table,
     fenced_block,
@@ -196,14 +196,14 @@ class TestSessionProtocolDocParity:
         """Every event the role table assigns is a real handler, and every
         handler is assigned a role. A role whose event nobody dispatches is a
         promise with no code behind it."""
-        rows = doc_table(CONTRACT, "SESSION_ROLES")
+        rows = doc_table(CLI_CONTRACT, "SESSION_ROLES")
         assigned = {ev for row in rows for ev in code_values(row[3])}
         assert assigned == set(HOOK_EVENTS)
 
     def test_front_end_role_claims_no_engine_event(self):
         """R-continuity is the front-end's whole job — the engine ships no
         handler for it, and the table must not imply one."""
-        rows = doc_table(CONTRACT, "SESSION_ROLES")
+        rows = doc_table(CLI_CONTRACT, "SESSION_ROLES")
         continuity = [r for r in rows if "R-continuity" in r[0]]
         assert len(continuity) == 1
         assert code_values(continuity[0][3]) == ()
@@ -212,7 +212,7 @@ class TestSessionProtocolDocParity:
         """The composed-hook shape, pinned structurally rather than by prose.
         A consumer emitting these entries is a rendered copy (R3); this is the
         text it renders against."""
-        raw = fenced_block(CONTRACT, PROTOCOL)
+        raw = fenced_block(CLI_CONTRACT, PROTOCOL)
         body = raw.split("\n", 1)[1] if raw.lstrip().startswith("json") else raw
         # Rendered with shell-safe stand-ins, then spelled as the doc's
         # placeholders: the installer quotes a path that needs it (#183).
@@ -222,7 +222,7 @@ class TestSessionProtocolDocParity:
         assert json.loads(body) == json.loads(rendered)
 
     def test_timeout_budgets_match_the_constants(self):
-        rows = doc_table(CONTRACT, "HOOK_TIMEOUTS")
+        rows = doc_table(CLI_CONTRACT, "HOOK_TIMEOUTS")
         budgets = {
             row[0].strip("`"): code_values(row[2])[0]
             for row in rows
@@ -234,7 +234,7 @@ class TestSessionProtocolDocParity:
         }
 
     def test_codex_timeout_budget_matches_selected_constant(self):
-        rows = doc_table(CONTRACT, "CODEX_HOOK_TIMEOUTS")
+        rows = doc_table(CLI_CONTRACT, "CODEX_HOOK_TIMEOUTS")
         assert [(row[0], code_values(row[2])) for row in rows] == [
             ("`session-end`", (f"{CODEX_SESSION_END_PUSH_TIMEOUT}s",))]
 
@@ -250,7 +250,7 @@ class TestSessionProtocolDocParity:
         """
         from claudron.hooks import _is_claudron_hook
 
-        body = section(CONTRACT, PROTOCOL)
+        body = section(CLI_CONTRACT, PROTOCOL)
         assert "hook <event>" in body and "merge_settings" in body
 
         def entry(command: str) -> dict:

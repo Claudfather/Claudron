@@ -19,7 +19,7 @@ repos: [Claudfather/Claudron, Claudfather/clauDNA, Claudfather/Claudlobby]
 > target-state (deliverables **a** and **b** in §7) is authored by the visioning pass and folds back
 > here. **Status: §10 ratified 2026-07-20 (program gate 1,
 > `../archive/boundary-rearchitecture_2026-07-20/00_OVERVIEW.md:56-58`); deliverable (b) lives in
-> `../archive/boundary-rearchitecture_2026-07-20/` (overview + 9 phase docs, this directory). Amended 2026-10-04 — the
+> `../archive/boundary-rearchitecture_2026-07-20/` (overview + 9 phase docs). Amended 2026-10-04 — the
 > agent CLIs enter the frame; see §Amendment — 2026-10-04 (after §10.8).**
 >
 > **How to use this spec — reason forward from purpose.** Do **not** ratify the thinking that
@@ -570,7 +570,7 @@ the CLI **is** a vendor-neutral door (any agent that can run a subprocess can co
 `--json` is typed; the contract doc exists). What Claudron lacks is **ownership artifacts**, not a
 door:
 
-- **`documentation/guides/INTEGRATION.md`** — the any-agent quickstart decision C cites as its mitigation. **It
+- **`docs/INTEGRATION.md`** — the any-agent quickstart decision C cites as its mitigation. **It
   does not exist** (verified: `docs/` holds only `CLI_CONTRACT.md`). Write it: resolve the vault
   (contract #4), query before / write after (contract #6), envelope discipline, no-engine behavior.
 - **Discovery** — the honest residual of parking MCP is in-context discovery. For any host running
@@ -726,7 +726,7 @@ protocol, one address table, one write path, one door.
    format-vs-ownership (§10.1), sentence to be reworded, files stay.
 5. **`library/lessons/` is a 25-note knowledge corpus in the runtime repo** — the clearest
    referential-content-in-runtime case (§10.5.5).
-6. **`documentation/guides/INTEGRATION.md` does not exist** though decision C cites it as the vendor-neutral
+6. **`docs/INTEGRATION.md` does not exist** though decision C cites it as the vendor-neutral
    mitigation; the prior ironclad (rescope record §E) flagged this and the #644 check — both were
    still open.
 7. **`claudron_compat.py`'s docstring claims a `doctor` check that was never built** (its only

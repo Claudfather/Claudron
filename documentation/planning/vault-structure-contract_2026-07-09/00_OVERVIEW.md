@@ -5,7 +5,7 @@ status: active
 owner: chris
 tags: [plan, epic, vault, structure, claudron, claudlobby]
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-10-25
 ---
 
 # Vault Structure Contract + enforcing `init`
@@ -48,7 +48,7 @@ release** — after E1's frontmatter `validate` (0.2.0), before the G1-gated 0.3
   *directory-structure* lens to the same command. VAULT-STRUCTURE.md is the
   directory sibling of SCHEMA.md (Fork F3).
 - **Formalizes what E5 already implies.** E5's promotion ladder
-  (`05_lifecycle.md:69`: `memory/ → <fleet>/shared/ → _shared/ → pack`) is the
+  (`05_lifecycle.md:71`: `memory/ → <fleet>/shared/ → _shared/ → pack`) is the
   content contract's backbone. This epic writes that tier model down as the
   *content* contract; it builds **no** promotion code — that stays E5.
 - **Respects G1 and the D-decisions.** No cross-tenant query surface
@@ -106,7 +106,7 @@ obvious to the author is not obvious to the next reader.
 | **F4** | Fleet layout | flat `<fleet>/` at root · nested `fleets/<fleet>/` | **Flat** | Claudlobby already lays fleets flat under `local/<fleet>/` (`paths.py:422`) and Claudron's `_scan_vault` already discovers fleets as root-level `fleet.yaml` dirs (`vault.py:178-183`) — the two agree on flat today; nested would break both plus ~14 un-centralized Claudlobby bash sites. |
 | **F5** | Hub name | pick a human name now · keep `_shared/`, defer | **Keep `_shared/`, defer** | Rename cost is flat (no config field either way — ~10 hardcoded sites, insulated by the `vault.shared` abstraction), so deferring costs nothing extra; the name stays cheap to change **because** bots consume by query, not hardcoded path. `knowledge/` is out — collides with the reserved per-tier subdir. |
 | **F6** | Fleet-scoped consumption | build isolation now · document + conditional | **Document; build only if dogfood needs it** | Tier-A cross-fleet pooling is the operator's *accepted* "one hub" behavior, not a bug; the real gap (fleet-blind `recall`) may not block a solo dogfood. |
-| **F7** | Promotion (memory→fleet→vault-wide) | author here · align to E5 | **Align to E5** | The full ladder is already designed (`05_lifecycle.md:61-73`); interim promotion is manual (`capture --fleet` / `git mv`), the wedge habit. Build no promotion code here. |
+| **F7** | Promotion (memory→fleet→vault-wide) | author here · align to E5 | **Align to E5** | The full ladder is already designed (`05_lifecycle.md:63-75`); interim promotion is manual (`capture --fleet` / `git mv`), the wedge habit. Build no promotion code here. |
 
 ## Companion Plans
 

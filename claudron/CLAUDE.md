@@ -26,6 +26,6 @@ seam — what belongs where inside the package, and what must never land here.
 - A new dependency — PyYAML-only is a ratified identity.
 
 **Placement test** (one line): a contract change (exit code, envelope, env name, hook event)
-touches `documentation/specs/` + the parity test in the same commit; engine logic that doesn't
-change a promise stays inside the module that owns the concern. Full algorithm:
-`documentation/decisions/005-claudfather-boundary-separation.md` §10.3.
+touches `documentation/specs/` or `documentation/guides/INTEGRATION.md` + the parity test in the
+same commit; engine logic that doesn't change a promise stays inside the module that owns the
+concern. Full algorithm: `documentation/decisions/005-claudfather-boundary-separation.md` §10.3.

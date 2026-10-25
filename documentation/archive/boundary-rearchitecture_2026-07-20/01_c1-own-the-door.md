@@ -45,7 +45,7 @@ updated: 2026-07-21
 
 Claudron's CLI is already the fleet's vendor-neutral door; this phase makes Claudron *own* it:
 the vault-address contract gets one table with one canonical name, the write path gets its honest
-cross-host guarantee ladder, and the any-agent front door (`documentation/guides/INTEGRATION.md`) that decision C
+cross-host guarantee ladder, and the any-agent front door (`docs/INTEGRATION.md`) that decision C
 cites — but which does not exist — is written. Closes contract-register gaps #3, #4, #6 (docs half)
 from the boundary spec §10.4.
 

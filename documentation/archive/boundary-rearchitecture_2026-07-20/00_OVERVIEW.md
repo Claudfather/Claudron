@@ -226,7 +226,7 @@ ordered schedule).
   condition: the post-wave-2 checkpoint showing migrated lessons not surfacing via recall re-opens
   the renderer against evidence. *Ratifier:* chris (2026-07-20). *Status:* **locked**.
 - **F5 — INTEGRATION.md scope.** *Context:* decision C cites a vendor-neutral any-agent doc as its
-  mitigation, but `documentation/guides/INTEGRATION.md` does not exist — the scope must be fixed before writing it.
+  mitigation, but `docs/INTEGRATION.md` does not exist — the scope must be fixed before writing it.
   *Options:* (a) get-the-CLI install section + copy-paste hello-world (init scratch vault →
   `capture --stdin` → `recall`) + engine-detection step 0 (version/capability probe per C1's
   contract addition) + conformance checklist (self-contained testable sentences; R-numbers as

@@ -5,7 +5,7 @@ status: completed
 owner: chris
 tags: [epic, schema, claudron]
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-10-25
 ---
 
 # E1 — Note Schema v1 + authoring tooling

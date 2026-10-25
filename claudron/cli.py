@@ -65,7 +65,7 @@ from .session import derive_project, recall, render_brief
 from .sync import SyncError, check, pull_ff_only, run_git, sync
 
 
-# ── output contract (documentation/specs/CLI_CONTRACT.md) ─────────────
+# ── output contract (CLI_CONTRACT.md) ─────────────────────────────────
 #
 # stdout carries payload only (session hooks inject it verbatim);
 # diagnostics go to stderr. --json emits exactly one envelope on stdout.
@@ -89,7 +89,7 @@ def _emit_json(command: str, data: dict, findings: list[Finding] | None = None) 
 
 # ── vault resolution ──────────────────────────────────────────────────
 #
-# The vault-address contract (documentation/specs/CLI_CONTRACT.md §Environment) is one
+# The vault-address contract (CLI_CONTRACT.md §Environment) is one
 # normative table; this tuple is its code half, pinned by a
 # doc-parity test. Add a name to the table and to VAULT_ENV_VARS in the
 # same commit — three repos build against that table, and the last time
@@ -102,7 +102,7 @@ the CLI the fleet's contract floor."""
 
 
 def _detect_vault(args) -> Vault | None:
-    """The resolution chain, policy-free (documentation/specs/CLI_CONTRACT.md §Environment):
+    """The resolution chain, policy-free (CLI_CONTRACT.md §Environment):
     --vault flag → the VAULT_ENV_VARS ladder → walk-up. _resolve_vault adds
     exit-3-on-None; hooks pass None through (fail-open contract)."""
     vault_hint = getattr(args, "vault", None)
@@ -136,7 +136,7 @@ def _resolve_vault(args) -> Vault:
             "  or specify:  claudron --vault <path> <command>",
             file=sys.stderr,
         )
-        sys.exit(3)  # environment error (documentation/specs/CLI_CONTRACT.md)
+        sys.exit(3)  # environment error (CLI_CONTRACT.md)
     return vault
 
 
@@ -167,7 +167,7 @@ def _require_claudlobby_root(args, command: str) -> Path:
             f"  specify with: claudron {command} --claudlobby <path>",
             file=sys.stderr,
         )
-        sys.exit(3)  # environment error (documentation/specs/CLI_CONTRACT.md)
+        sys.exit(3)  # environment error (CLI_CONTRACT.md)
     return cl_root
 
 
@@ -320,7 +320,7 @@ def cmd_status(args) -> int:
     info = status(vault, stale_days=getattr(args, "stale_days", 90))
 
     if args.json:
-        # The capability probe (documentation/guides/INTEGRATION.md step 0). Consumers read
+        # The capability probe (INTEGRATION.md step 0). Consumers read
         # the engine's version off the envelope they already parse for the
         # vault path, instead of each maintaining a private detection ladder.
         # Presentation-layer only: vault.status() stays a pure vault summary.
@@ -693,7 +693,7 @@ def cmd_version(args) -> int:
 
 
 def _derive_owner(args) -> str:
-    """--owner → git config user.name → $USER (documentation/specs/CLI_CONTRACT.md)."""
+    """--owner → git config user.name → $USER (CLI_CONTRACT.md)."""
     if getattr(args, "owner", None):
         return args.owner
     import subprocess
@@ -713,7 +713,7 @@ def _derive_owner(args) -> str:
 
 def _tags_arg(value) -> list[str] | None:
     """Normalize a tags input — the --tags flag or a --stdin key — to a tag
-    list (documentation/specs/CLI_CONTRACT.md: one grammar on both spellings). A string is
+    list (CLI_CONTRACT.md: one grammar on both spellings). A string is
     comma-separated (whitespace-stripped, empty segments dropped); an array
     is taken element-wise; any other scalar is one tag (schema._as_str_list
     totalizes it, matching the read side). Falsy → None, preserving
@@ -889,7 +889,7 @@ def _emit_write_result(args, result) -> int:
     command *succeeded*, not that a note landed — a ``suggest_*`` dedup route
     succeeds having written nothing. A programmatic caller (a clauDNA skill
     wrapping the CLI) must branch on ``written`` / ``action``, never on the exit
-    code, or it silently drops the deduped finding (documentation/specs/CLI_CONTRACT.md)."""
+    code, or it silently drops the deduped finding (CLI_CONTRACT.md)."""
     if result.action == "rejected":
         if args.json:
             _emit_json(
@@ -1472,7 +1472,7 @@ def main(argv=None) -> int:
                         help="Agent CLI for lifecycle hooks (default: claude)")
     sub = parser.add_subparsers(dest="command")
 
-    # Shared parents (documentation/specs/CLI_CONTRACT.md): --vault/--json on subcommands
+    # Shared parents (CLI_CONTRACT.md): --vault/--json on subcommands
     # too, so `claudron status --json` and `claudron status --vault X` both
     # parse. Argparse only applies a subparser default when the attribute
     # is absent, so the top-level --vault value survives.

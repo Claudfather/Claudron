@@ -5,7 +5,7 @@ status: completed
 owner: chris
 tags: [plan, vault, structure, validate, cli, claudron]
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-10-25
 ---
 
 # P2 — Structure enforcement in `validate` / `init`

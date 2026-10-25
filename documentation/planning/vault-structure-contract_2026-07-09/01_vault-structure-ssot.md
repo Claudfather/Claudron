@@ -5,7 +5,7 @@ status: completed
 owner: chris
 tags: [plan, vault, structure, documentation, claudron]
 created: 2026-07-09
-updated: 2026-07-09
+updated: 2026-10-25
 ---
 
 # P1 — VAULT-STRUCTURE.md (the SSOT doc)
@@ -33,14 +33,14 @@ conforms to a stated contract.
   the vault-wide hub is a first-class field, `Vault.shared` (`vault.py:117-124`).
   No doc states any of this.
 - **Personal topology is locked (D4):** `_shared/` + `projects/<repo>/`
-  (`00_OVERVIEW.md:68`). The fleet topology adds `<fleet>/` siblings — a
+  (`00_OVERVIEW.md:70`). The fleet topology adds `<fleet>/` siblings — a
   superset, not a competitor.
 - **Content is scope-by-location today, with no contract.** The type taxonomy
   (`knowledge/decisions/runbooks/planning`, `schema.py:93-100`) is **identical**
   for the hub and every fleet; nothing defines *what kind* of knowledge belongs
   vault-wide vs per-fleet. Only real asymmetry: `CONVENTIONS.md` is hub-only
   and always-injected (`session.py:94`).
-- **The promotion ladder is already designed** (`05_lifecycle.md:69`):
+- **The promotion ladder is already designed** (`05_lifecycle.md:71`):
   `memory/ → <fleet>/shared/ → _shared/ → pack`. This doc *cites* it; it builds
   nothing.
 - **Consumers already read the hub through the abstraction, not the literal** —

@@ -4,10 +4,10 @@ Owned contract text. Files here are **normative for consumers** (fleet bots, cla
 Claudlobby composition, any-agent integrations) — not repo commentary.
 
 **What belongs here.** Contracts Claudron owns and keeps: the CLI ABI (`CLI_CONTRACT.md` — exit
-codes, channels, `--json` envelope, vault resolution/environment), the any-agent integration front
-door (`../guides/INTEGRATION.md`, boundary plan C1), the session-loop protocol (boundary plan
-C2). Note schema and vault structure are the same register but live at the repo root
-(`SCHEMA.md`, `VAULT-STRUCTURE.md`) with their approval gates.
+codes, channels, `--json` envelope, vault resolution/environment) and the session-loop protocol
+(boundary plan C2). The same register also lives elsewhere: the any-agent integration front door
+in `../guides/INTEGRATION.md` (boundary plan C1), and note schema and vault structure at the repo
+root (`SCHEMA.md`, `VAULT-STRUCTURE.md`) with their approval gates.
 
 **The register rules (short form — full set: boundary spec §10.4):**
 
