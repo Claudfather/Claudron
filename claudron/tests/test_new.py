@@ -279,7 +279,7 @@ class TestReferenceVaultFixture:
 
 
 class TestNewTagsGrammar:
-    """`new --tags` uses the one tags grammar (docs/CLI_CONTRACT.md): comma
+    """`new --tags` uses the one tags grammar (CLI_CONTRACT.md): comma
     split, whitespace stripped, empty segments dropped — a padded flag value
     no longer lands a literal `" b"` tag in the note."""
 

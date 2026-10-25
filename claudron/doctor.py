@@ -10,7 +10,7 @@ trusting this paragraph. :func:`fix` is the one door that writes.
 **Why migrations, and why versioned.** Every change to what a vault must
 contain (an identity file, an ignore pattern, a directory rule) used to ship as
 a bespoke manual step, which is exactly how a vault silently falls behind its
-engine. The rule now (docs/CLAUDE.md): *a vault-shape change ships a migration
+engine. The rule now (specs/CLAUDE.md): *a vault-shape change ships a migration
 in the same PR*. A vault records the format it is at; an engine knows the
 format it writes (:data:`VAULT_FORMAT`); "is this vault current?" is then one
 comparison instead of a pile of heuristics, and `--fix` runs exactly the
@@ -62,7 +62,7 @@ __all__ = ["CODES", "VAULT_FORMAT", "Migration", "MigrationRefused", "MIGRATIONS
            "diagnose", "fix", "pending_migrations", "vault_format"]
 
 #: Every D code doctor emits, with the severities each may carry. The contract's
-#: doctor table (docs/CLI_CONTRACT.md, doc-parity DOCTOR_CODES) is pinned to it,
+#: doctor table (CLI_CONTRACT.md, doc-parity DOCTOR_CODES) is pinned to it,
 #: and `_finding` refuses anything it does not list (#204).
 CODES: dict[str, frozenset[str]] = {
     "D001": frozenset({"error"}),
@@ -77,7 +77,7 @@ CODES: dict[str, frozenset[str]] = {
     "D010": frozenset({"error", "warning"}),
 }
 
-#: Git verdicts (docs/CLI_CONTRACT.md, `sync --check`) that need no attention:
+#: Git verdicts (CLI_CONTRACT.md, `sync --check`) that need no attention:
 #: a clone that is merely ahead or behind is the ordinary between-syncs state.
 _GIT_FINE = frozenset({"clean", "ahead", "behind"})
 
@@ -176,7 +176,7 @@ def _m003_apply(vault: Vault) -> list[Path]:
 
 
 #: The registry, in application order. A vault-shape change adds its entry here
-#: and bumps VAULT_FORMAT in the same PR (docs/CLAUDE.md).
+#: and bumps VAULT_FORMAT in the same PR (specs/CLAUDE.md).
 MIGRATIONS: tuple[Migration, ...] = (
     Migration("m001", 1, "create the .claudron-vault identity file (#183)",
               _m001_needed, _m001_apply),

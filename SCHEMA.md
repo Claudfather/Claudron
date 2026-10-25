@@ -53,7 +53,7 @@ read class:
 | `external` | `maturity: draft` with `source_type` `url` or `session` |
 
 Promoting a note (`claudron promote`) makes it trusted whatever its origin.
-What each command does with each class is `docs/CLI_CONTRACT.md` (§lookup /
+What each command does with each class is `documentation/specs/CLI_CONTRACT.md` (§lookup /
 recall). Harvested drafts written before `source_type: session` existed carry
 the tag `origin:session-harvest` instead; `claudron doctor --fix` (migration
 m003) moves them to the field.

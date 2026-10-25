@@ -384,7 +384,7 @@ class TestContentAwareDedup:
 
 
 class TestCaptureStdinTags:
-    """`tags` takes one grammar on both spellings (docs/CLI_CONTRACT.md): the
+    """`tags` takes one grammar on both spellings (CLI_CONTRACT.md): the
     --stdin key normalizes exactly like the --tags flag — a comma string
     splits, an array passes element-wise, a scalar is one tag. Never a
     character sequence walked into the note."""

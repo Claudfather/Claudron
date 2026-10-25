@@ -9,12 +9,12 @@ from claudron.cli import main
 from claudron.contract import CONTRACT_VERSION, contract
 from claudron.schema import HOMES, STATUS_VOCAB, TYPE_DIRS
 
-from .doc_parity import section
+from .doc_parity import CLI_CONTRACT, section
 
 
 def _entry() -> str:
     """CLI_CONTRACT's `contract` bullet, up to the next bullet."""
-    text = section("docs/CLI_CONTRACT.md", "Command-specific contracts")
+    text = section(CLI_CONTRACT, "Command-specific contracts")
     start = text.index("- `contract [--json]`")
     end = text.find("\n- `", start + 1)
     return text[start:end if end != -1 else None]

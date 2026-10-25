@@ -411,7 +411,7 @@ class Finding:
     """One validation finding — the stable machine carrier of the catalog.
 
     Serialized verbatim into the --json envelope's errors/warnings arrays
-    (docs/CLI_CONTRACT.md); fields are API, additions only.
+    (CLI_CONTRACT.md); fields are API, additions only.
     """
 
     code: str
@@ -685,7 +685,7 @@ def check_collisions(notes: list[tuple[str, dict]]) -> list[Finding]:
 
 def validate_path(target: Path, *, strict: bool, vault_root: Path | None = None,
                   files: list[Path] | None = None) -> list[Finding]:
-    """Validate a file or directory tree (docs/CLI_CONTRACT.md trichotomy).
+    """Validate a file or directory tree (CLI_CONTRACT.md trichotomy).
 
     Cross-note checks (W104) and the CONVENTIONS budget run for directory
     scope; a single file gets per-note checks only (plus W105 when the file

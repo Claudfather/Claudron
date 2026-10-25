@@ -20,7 +20,7 @@ from claudron.doctor import (VAULT_FORMAT, Migration, MigrationRefused,
 # current) still have them pending.
 V1, V2 = VAULT_FORMAT + 1, VAULT_FORMAT + 2
 from claudron.structure import StructureError
-from claudron.tests.doc_parity import code_values, doc_table
+from claudron.tests.doc_parity import CLI_CONTRACT, code_values, doc_table
 from claudron.vault import detect
 
 
@@ -233,9 +233,9 @@ class TestRegistry:
         assert max(m.version for m in doctor_mod.MIGRATIONS) == VAULT_FORMAT
 
     def test_the_contract_d_table_matches_the_code(self):
-        """docs/CLI_CONTRACT.md's doctor table, code by code and severity by
+        """CLI_CONTRACT.md's doctor table, code by code and severity by
         severity, is the registry `_finding` enforces (#204)."""
-        rows = doc_table("docs/CLI_CONTRACT.md", "DOCTOR_CODES")
+        rows = doc_table(CLI_CONTRACT, "DOCTOR_CODES")
         doc = {code_values(r[0])[0]: frozenset(s.strip() for s in r[1].split("/"))
                for r in rows}
         assert doc == doctor_mod.CODES

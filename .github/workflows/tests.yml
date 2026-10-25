@@ -3,7 +3,7 @@ name: Tests
 # Runs the test suite on every PR to main and every push to main. This is the
 # gate that makes the boundary program's doc-parity drift tests — TestDocParity
 # (SCHEMA.md), TestEnvironmentDocParity + test_flags_section_defers_to_the_table
-# (docs/CLI_CONTRACT.md) — actually execute on a PR, so a doc-vs-code drift can
+# (CLI_CONTRACT.md) — actually execute on a PR, so a doc-vs-code drift can
 # no longer merge silently. See issue #83.
 on:
   pull_request:

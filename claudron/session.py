@@ -37,7 +37,7 @@ BRIEF_DISCOVERY_HINT = (
 )
 
 # The abstention floor: a shared/fleet match below this injects nothing
-# (02-session-loop.md deliverable 1). Session policy, deliberately NOT
+# (02_session-loop.md deliverable 1). Session policy, deliberately NOT
 # knowledge.TIER_A_THRESHOLD — that is a tier-escalation trigger that
 # retires with E4's ranking rework; this is a product relevance floor E4
 # must re-calibrate consciously against its new score scale. At today's

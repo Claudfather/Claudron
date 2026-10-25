@@ -7,7 +7,7 @@ seam — what belongs where inside the package, and what must never land here.
 
 - **Engine modules** (`engine`, `knowledge`, `schema`, `structure`, `vault`, `graph`, `session`,
   `sync`, `locking`, `promote`, `doctor`) never print — stdout/stderr belong to `cli.py` per
-  `docs/CLI_CONTRACT.md` (§Channels is load-bearing: hooks inject stdout verbatim).
+  `documentation/specs/CLI_CONTRACT.md` (§Channels is load-bearing: hooks inject stdout verbatim).
 - **Every note write goes through `engine.py`** — `new`, `capture`, and any future door share one
   validate/dedup/index path. A second write path is a boundary bug.
 - **`hooks.py` holds the selected agent CLI adapters** of the session-loop contract: fail-open (exit 0,
@@ -26,6 +26,6 @@ seam — what belongs where inside the package, and what must never land here.
 - A new dependency — PyYAML-only is a ratified identity.
 
 **Placement test** (one line): a contract change (exit code, envelope, env name, hook event)
-touches `docs/` + the parity test in the same commit; engine logic that doesn't change a promise
-stays inside the module that owns the concern. Full algorithm:
-`documentation/plans/2026-07-20-claudfather-boundary-separation.md` §10.3.
+touches `documentation/specs/` or `documentation/guides/INTEGRATION.md` + the parity test in the
+same commit; engine logic that doesn't change a promise stays inside the module that owns the
+concern. Full algorithm: `documentation/decisions/005-claudfather-boundary-separation.md` §10.3.

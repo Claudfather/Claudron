@@ -16,6 +16,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+#: The contract docs under documentation/ that the gates read, repo-root-
+#: relative. Named once here, so moving one is a single edit, not one per gate.
+CLI_CONTRACT = "documentation/specs/CLI_CONTRACT.md"
+INTEGRATION = "documentation/guides/INTEGRATION.md"
+
 
 def doc_table(doc: str, marker: str) -> list[list[str]]:
     """Rows of the markdown table following ``<!-- doc-parity: MARKER -->``.

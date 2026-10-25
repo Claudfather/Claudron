@@ -38,7 +38,7 @@ back. Refusal protects the file; being switched off protects nothing.
 
 DETECTION. A consumer asks for this door by NAME, never by version:
 `"navigation" in status --json -> data.capabilities` (`claudron.CAPABILITIES`;
-`docs/CLI_CONTRACT.md` "Capability probe"). That is register rule R5 --
+`CLI_CONTRACT.md` "Capability probe"). That is register rule R5 --
 capability is declared to the owner, never inferred -- and it is the only form
 that works here. There is deliberately no version constant in this file either:
 a private version beside the sanctioned one only makes a consumer guess which

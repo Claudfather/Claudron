@@ -156,10 +156,10 @@ All services use JWT with RS256...
 
 The door is the CLI, and it is vendor-neutral — any agent that can run a
 subprocess and parse JSON can consume the hub, with no plugin and no server.
-**[`docs/INTEGRATION.md`](docs/INTEGRATION.md)** is the front door: install
+**[`documentation/guides/INTEGRATION.md`](documentation/guides/INTEGRATION.md)** is the front door: install
 channels, the engine-detection probe, a copy-paste hello-world, the
 query-before / write-after loop, and a conformance checklist. The normative
-surface it points at is [`docs/CLI_CONTRACT.md`](docs/CLI_CONTRACT.md).
+surface it points at is [`documentation/specs/CLI_CONTRACT.md`](documentation/specs/CLI_CONTRACT.md).
 
 ## License
 

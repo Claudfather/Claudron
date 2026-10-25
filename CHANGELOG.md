@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Changed (breaking)
+- **Documentation moved onto the canonical `documentation/` layout ([Claudfather/.github#2](https://github.com/Claudfather/.github/issues/2)).** `documentation/plans/` is gone. Active plans are sessions under `documentation/planning/<topic>_<date>/` (`00_OVERVIEW.md` + `NN_<slug>.md`, with status markers), decisions are numbered under `documentation/decisions/`, and completed or superseded plans live in `documentation/archive/`. The contract docs left `docs/`: `docs/CLI_CONTRACT.md` → `documentation/specs/CLI_CONTRACT.md`, `docs/INTEGRATION.md` → `documentation/guides/INTEGRATION.md`, `docs/CLAUDE.md` → `documentation/specs/CLAUDE.md`. **Links to the old paths stop resolving:** the canonical integration URL is now `https://github.com/Claudfather/Claudron/blob/main/documentation/guides/INTEGRATION.md`, and the boundary spec is `documentation/decisions/005-claudfather-boundary-separation.md`. No engine or CLI behavior changes; the doc-parity tests read the new paths.
+
 ## [0.10.0] - 2026-10-16
 
 ### Added
@@ -14,7 +17,7 @@
   event→verb map `SNIPPET_EVENTS` already holds; an event added to the map alone raised `KeyError` on
   install. One map now serves the snippet, the merge and doctor's hook checks (#204). No change for the
   three events the loop installs. Tests: `claudron/tests/test_hooks.py`.
-- **Boundary spec amended for the agent CLIs** (`documentation/plans/2026-07-20-claudfather-boundary-separation.md`
+- **Boundary spec amended for the agent CLIs** (`documentation/decisions/005-claudfather-boundary-separation.md`
   §Amendment — 2026-10-04, for Claudfather/Claudlobby#2145): Claudlobby owns the bought telemetry layer;
   register rule R8 (agent-CLI-specific signals are enrichment only) and rows 10–12 (session join key,
   clauDNA export additions, Codex session-loop snippet — planned, P4). Nothing shipped changes.
@@ -24,7 +27,7 @@
 Adds `claudron contract --json`, the contract as data, so a consumer can check its mirrors of the schema in its own CI without installing the engine.
 
 ### Added
-- **`claudron contract --json`: the contract as data.** One payload with what a consumer writes against: `capabilities`, `types`, `type_dirs`, per-type `statuses`, `homes` (each home's sections, in order), `relations`, the `maturity`, `source_types` and `trust_classes` vocabularies, and `person_dir`. It needs no vault and carries no engine version, so a consumer's copy changes only when the contract does. A consumer keeps that copy and checks its own mirrors against it in its own CI, with no engine installed; until now that check had to import `claudron.schema`, so it skipped wherever the engine wasn't installed. `contract_version` (1) changes only when the shape does. Capability `contract`. Contract: `docs/CLI_CONTRACT.md`. Tests: `claudron/tests/test_contract.py`.
+- **`claudron contract --json`: the contract as data.** One payload with what a consumer writes against: `capabilities`, `types`, `type_dirs`, per-type `statuses`, `homes` (each home's sections, in order), `relations`, the `maturity`, `source_types` and `trust_classes` vocabularies, and `person_dir`. It needs no vault and carries no engine version, so a consumer's copy changes only when the contract does. A consumer keeps that copy and checks its own mirrors against it in its own CI, with no engine installed; until now that check had to import `claudron.schema`, so it skipped wherever the engine wasn't installed. `contract_version` (1) changes only when the shape does. Capability `contract`. Contract: `documentation/specs/CLI_CONTRACT.md`. Tests: `claudron/tests/test_contract.py`.
 
 ## 0.8.0 — 2026-10-03
 
@@ -40,7 +43,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
 - **The tag registry ([#200](https://github.com/Claudfather/Claudron/issues/200) §3).** A vault may keep `_shared/TAGS.yaml`: a closed set of facets (`domain`, `tech`, `repo`, `fleet`, `team`) and the canonical `facet:value` tags under them, each with a description, aliases and a status (`active`, `proposed`, `deprecated` with `merged_into`). Tags stay open.
   - **`new` and `capture` write canonical tags:** an alias, a case variant or a deprecated tag is stored as the tag it resolves to. Tags are case-insensitive, and an alias never takes over a registered tag.
   - **`claudron tags`** reports each registered tag's usage (derived from the index), tags in use under a registered facet that the registry doesn't name, aliases and deprecated tags still in use, and what is wrong with the file. `tags --resolve TAG...` prints canonical forms.
-  - Capability `tags`. Contract: SCHEMA.md §Tags, `docs/CLI_CONTRACT.md`. Tests: `claudron/tests/test_tags.py`.
+  - Capability `tags`. Contract: SCHEMA.md §Tags, `documentation/specs/CLI_CONTRACT.md`. Tests: `claudron/tests/test_tags.py`.
 - **The operations log ([#200](https://github.com/Claudfather/Claudron/issues/200) §5).** Under the vault's gitignored `.claudron/`, each run (`runs/<run_id>/ops.jsonl`) and each session (`sessions/<session_id>/ops.jsonl`) gets a JSONL log with one shared envelope (`v`, `ts`, `kind`, `session_id`, `run_id`, `emitter`, `event_id`).
   - A run logs every write it commits (`write`, or `write.uncommitted` with W108), what it asked for that didn't land (`write.refused`, `write.routed` by dedup), and its `revert-run`.
   - A session's hooks log what recall served, split by trust (`recall.served`), and the push outcome (`sync.push`), so "what was this session told?" has an answer after the fact.
@@ -63,7 +66,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
 ## 0.7.0 — 2026-10-02
 
 ### Added
-- **The harvest pipes ([#200](https://github.com/Claudfather/Claudron/issues/200) §4).** Mechanical doors an automated writer files facts through; none runs a model or picks a placement. Contract: `docs/CLI_CONTRACT.md`; capabilities `subjects`, `amend`, `runs`.
+- **The harvest pipes ([#200](https://github.com/Claudfather/Claudron/issues/200) §4).** Mechanical doors an automated writer files facts through; none runs a model or picks a placement. Contract: `documentation/specs/CLI_CONTRACT.md`; capabilities `subjects`, `amend`, `runs`.
   - **`subjects [--type T]`** lists the notes facts can go under, derived from the index, with each note's `##` sections, aliases and `trust`.
   - **`resolve --name N`** ranks candidate subjects: an exact title, alias or slug outranks any fuzzy match. `--aliases` widens the names tried; `--context` only breaks ties.
   - **`amend --stdin`** writes at the fact level (`append_fact`, `add_evidence`, `add_alias`, `supersede_fact`), in the fact format of the new SCHEMA.md §Facts. It is idempotent on fact id and evidence ref, and refuses an alias another note already has.
@@ -97,7 +100,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
 ## 0.6.1 — 2026-09-30
 
 ### Added
-- **The `doctor-settings` capability** ([#204](https://github.com/Claudfather/Claudron/issues/204)). `doctor --settings` shipped in 0.6.0, but `CAPABILITIES` did not name it. It is a new flag on an existing verb, the case the contract says a probe cannot see: an engine without the flag exits 2 on it, and exits 0 when `--help` follows. A consumer that wants to pass `--settings` now gates on `"doctor-settings" in status --json → data.capabilities`, as `navigation` does for `index --navigation`. `docs/CLI_CONTRACT.md` names the gate in the `doctor` section.
+- **The `doctor-settings` capability** ([#204](https://github.com/Claudfather/Claudron/issues/204)). `doctor --settings` shipped in 0.6.0, but `CAPABILITIES` did not name it. It is a new flag on an existing verb, the case the contract says a probe cannot see: an engine without the flag exits 2 on it, and exits 0 when `--help` follows. A consumer that wants to pass `--settings` now gates on `"doctor-settings" in status --json → data.capabilities`, as `navigation` does for `index --navigation`. `documentation/specs/CLI_CONTRACT.md` names the gate in the `doctor` section.
   - **Tests** (`claudron/tests/test_doctor_hooks.py`, `TestSettingsCapability`): the name is declared, `status --json` carries it, and the contract names its gate. A general test pins that every declared capability is gated by name in the contract, so a future name cannot ship undocumented. The first three fail before the change.
 
 ### Fixed
@@ -117,7 +120,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
 - **`doctor` checks the hooks a host has installed ([#204](https://github.com/Claudfather/Claudron/issues/204)): #190's two per-host rows.** `D009` compares each checked settings file's claudron entries with the current snippet shape: an event with no entry or with two, an entry with no `--vault` (installed before #183), or any other difference. `D010` asks whether each entry reaches a vault from where it runs. Errors: an executable that does not exist, an address that is not a vault, or one that walk-up binds to another vault. Warnings: a bare executable, a relative address, an address inside the diagnosed vault but not its root (walk-up binds this vault, so the hook works), or hooks for a vault other than the one diagnosed.
   - **Which file:** `doctor --settings PATH` (repeatable), or by default the file `hooks install --write` writes, `~/.claude/settings.json`. Doctor never looks for other files. A default file that does not exist, or that holds no claudron entry on any of the three events, is not a finding (`state` `not-installed`): that host never ran `hooks install`, and re-installing would put the loop into the operator's own sessions. A partial install is a finding, and so is a declared file either way. `data.hooks` names every file checked.
   - **Read-only.** Nothing from a settings file is executed, and `--fix` acts on neither code. Each finding names its remedy: `claudron --vault <vault> hooks install --write` with that file's `--settings` (another file, for hooks that sync another vault), or repairing a file that cannot be parsed, which the install refuses too: doctor and `hooks install --write` read a settings file through one reader (`read_settings`), so the two cannot disagree about it. Re-installing replaces the whole group that holds a claudron entry, so a finding whose group also holds other commands says it drops them.
-  - **The doctor table is bound to the code.** A doc-parity test pins `docs/CLI_CONTRACT.md`'s D table to `doctor.CODES`, and `_finding` refuses an unregistered code or severity.
+  - **The doctor table is bound to the code.** A doc-parity test pins `documentation/specs/CLI_CONTRACT.md`'s D table to `doctor.CODES`, and `_finding` refuses an unregistered code or severity.
   - **Every test gets an empty `HOME`** (conftest), so the default file is never a developer's own.
   - **`hooks install --write` refuses a settings file it cannot merge**: exit 3, the file unchanged, the reason on stderr. It refused only unparseable JSON, while `[]`, `{"hooks": null}` and `{"hooks": []}` were silently rewritten and `"x"`, `null` and `{"hooks": "x"}` crashed it; so did a claudron event that is not a list of objects, a file that is not UTF-8 or cannot be read, and a path that is a directory.
 
@@ -141,7 +144,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
   expression form needs setuptools 77, so the build requirement moved from
   `setuptools>=68` to `setuptools>=77`. The README's License section, the
   `pack.yaml` example in `SCHEMA.md` and the license facts in the boundary
-  brief (`documentation/plans/2026-07-20-claudfather-boundary-separation.md`)
+  brief (`documentation/decisions/005-claudfather-boundary-separation.md`)
   say Apache-2.0.
 
 ## 0.5.3 — 2026-09-29
@@ -172,7 +175,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
   Every change to what a vault must contain used to ship as a bespoke manual step ("add this file to your vault"), which is how a vault silently falls behind its engine. `doctor` makes "is my vault current?" one command.
   - **Read-only by default.** It reports pending migrations (`D001`), structure (`S1`–`S4`), a schema summary (`D002`), index drift (`D003`) and git health from `sync --check` (`D004`), each as a finding. With `--json` it returns the standard envelope. The capability is `doctor`.
   - **`--fix`** applies structure repairs and pending migrations in format order. The migrations are idempotent, creation- or edit-only and confined to the vault root. The result lands as one `migrate(<ids>): …` commit that stages only what the run wrote.
-  - **The first two migrations** are `m001` (create `.claudron-vault`) and `m002` (add the F9 ignore rules). They bring a vault from format 0 to format 2, and the result is recorded in the identity file. `doctor` also flags an unreadable identity file (`D007`) and tracked files the ignore rules now match (`D008`). From now on, a vault-shape change ships its migration in the same PR (`docs/CLAUDE.md`).
+  - **The first two migrations** are `m001` (create `.claudron-vault`) and `m002` (add the F9 ignore rules). They bring a vault from format 0 to format 2, and the result is recorded in the identity file. `doctor` also flags an unreadable identity file (`D007`) and tracked files the ignore rules now match (`D008`). From now on, a vault-shape change ships its migration in the same PR (`documentation/specs/CLAUDE.md`).
   - `validate --fix` still works as an alias for the structure half, and says so. Its "fixable" hint now points at `doctor --fix`.
 
 ## 0.5.1 — 2026-09-29
@@ -228,7 +231,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
   ```
 
   `data.capabilities` is new in this entry and is now a **stable** field of
-  `status --json` (`docs/CLI_CONTRACT.md` §Capability probe). Claudlobby
+  `status --json` (`documentation/specs/CLI_CONTRACT.md` §Capability probe). Claudlobby
   [#1723](https://github.com/Claudfather/Claudlobby/issues/1723) is blocked on
   this door and should gate its `navigation` row on that name.
 
@@ -381,7 +384,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
 
   **`claudron sync --ff-only`** runs the same door, so "matches the hook's behaviour" is a shared implementation rather than a claim two call sites must independently keep true. A full `claudron sync` still rebases and is for a scheduled reconciliation with an honest budget — never a hook.
 
-  **What an integration with no scheduled reconciliation now gets: an honest `ahead` state, and nothing that resolves it.** That is the deliberate trade. An un-reconciled `ahead` is safe and *visible* — `sync --check --json` reports it — where a killed rebase is neither, which is why this lands without waiting on the scheduled door. But it is not self-resolving: a deployment that never runs a reconciliation will accumulate divergence. `docs/INTEGRATION.md` §Session loop states that obligation to front-ends.
+  **What an integration with no scheduled reconciliation now gets: an honest `ahead` state, and nothing that resolves it.** That is the deliberate trade. An un-reconciled `ahead` is safe and *visible* — `sync --check --json` reports it — where a killed rebase is neither, which is why this lands without waiting on the scheduled door. But it is not self-resolving: a deployment that never runs a reconciliation will accumulate divergence. `documentation/guides/INTEGRATION.md` §Session loop states that obligation to front-ends.
 
   **The `--rebase` pin records argv from the real git door rather than grepping source**, and carries its own anti-vacuity guard: a cycle that issues no `fetch` fails with *"the --rebase assertion is vacuous"* instead of passing. A grep-pinned test would pass on a file that merely lacks the string — including when the rebase has moved behind a variable, a helper, or a second module.
 
@@ -400,7 +403,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
 
   Also a small journal `sync` writes and `check` only reads (`.claudron/sync.json`, gitignored): every exit from the locked section records the attempt, so REFUSALS count too — a clone refusing for a week and one nobody has asked to sync are otherwise identical, and telling them apart is the denominator [#149](https://github.com/Claudfather/Claudron/issues/149) asks for. Best-effort by construction; losing it never fails a sync.
 
-  `docs/CLI_CONTRACT.md` and `docs/INTEGRATION.md` now say plainly that `status --json` is a **capability** probe and this is the **health** probe.
+  `documentation/specs/CLI_CONTRACT.md` and `documentation/guides/INTEGRATION.md` now say plainly that `status --json` is a **capability** probe and this is the **health** probe.
 
 ### Fixed
 - **`_default_branch` answers `None` instead of guessing `main`, and a vault bootstrapped locally can sync again ([#154](https://github.com/Claudfather/Claudron/issues/154), defect in [#152](https://github.com/Claudfather/Claudron/issues/152)).** It fell back to a hardcoded `"main"` when neither `refs/remotes/origin/HEAD` nor `init.defaultBranch` could answer — a guess wearing the grammar of a fact. Three measured conditions make it fire together on git 2.39.5: a bare `git init` names its branch `master`; the bootstrap every new vault takes (`git init` + `git remote add` + `git push -u`, or cloning a still-empty remote) leaves `origin/HEAD` unset; and a host may have no `init.defaultBranch`. `claudron sync` then refused every run with *HEAD is on 'master', the vault syncs on 'main'* — a new vault that could never sync at all, so its captures reached no other machine, which is this program's own outage rebuilt by the check meant to prevent it. `_refuse_off_default` now weighs TWO facts before standing down, and an undetermined default is not on its own one of them — see below. `sync --check` reports `default_branch: null` so the condition is visible.
@@ -441,16 +444,16 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
 - **vault.py no longer forks schema.py's frontmatter primitives ([#100](https://github.com/Claudfather/Claudron/issues/100)).** `parse_frontmatter`'s inline fence walk is now `split_fence` (the dead import comes alive; schema.py's "single home of the fence protocol" claim is finally true), and `backfill_updated`'s inline insert loop is now `set_frontmatter_field(text, "updated", stamp)` guarded by `new != text` — same `touched` count, no-op writes still skipped. One deliberate fix rode along in the primitive: `set_frontmatter_field` now matches **top-level keys only** — an indented nested line (`metadata:` / `  updated: ...`) used to be replaced and de-indented, corrupting the mapping, anywhere the primitive stamps real notes (the engine.py addendum stamp today, adopt-backfill after this change); it now inserts a fresh top-level field and leaves nested lines alone, exactly what backfill's inline walk already did. Two fail-on-main tests pin the tightening; a 39-probe fence-edge battery (CRLF / unclosed fence / no-`created:` / non-mapping YAML / nested sub-keys) is byte-identical against main outside the two nested probes of the primitive itself; full suite green.
 
 ### Removed
-- **The two paired 0.3.0-era back-compat shims are retired — the `CLAUDRON_VAULT` env softener and the claudlobby-root tree-walk deprecation ([#102](https://github.com/Claudfather/Claudron/issues/102)).** Both eased the 0.3.0 `CLAUDRON_VAULT` removal; a full minor past 0.4.0, the migration window is closed. Gone: the softener subsystem (`REMOVED_VAULT_ENV_VARS`, `_ALIAS_REMOVED_IN`, `_shadowed_removed_vars`, `_removed_var_hint`, `_warn_shadowed_vault`) that emitted a one-line stderr note whenever a set `CLAUDRON_VAULT` shadowed the vault that actually resolved; and the `_resolve_claudlobby_root` wrapper whose only job was an stderr "deprecated: … tree-shape walk" nag around the pure `_detect_claudlobby_root` detector — callers (`plug`/`unplug`/`config`/`migrate`, via `_require_claudlobby_root`) now use the detector directly. **Behavior change (stderr; breaking, documented and test-pinned):** `claudron` no longer prints the removed-var softener on any path (resolution, the exit-3 message, or hooks), and the four claudlobby-root commands no longer nag when they auto-detect the root by tree shape — the walk itself is unchanged and still resolves, and `--claudlobby <path>` still preempts it. `CLAUDRON_VAULT` remains fully removed (never read); the softener was its only remaining trace. `docs/CLI_CONTRACT.md` §Environment drops the removed-name table row and trims the migration prose to a one-paragraph "removed, rename" note; the ~15 `test_cli.py` softener assertions and `test_plug.py::TestTreeWalkDeprecation` are removed, with the walk's still-live resolution re-pinned as silent. Coordinated cut: Claudlobby and clauDNA were audited and depend on neither shim (both emit/read only `CLAUDRON_VAULT_PATH`, neither invokes the tree-walk subcommands), so no consumer breaks. Ships as a breaking `0.5.x` release. (boundary program; tech-debt #102)
+- **The two paired 0.3.0-era back-compat shims are retired — the `CLAUDRON_VAULT` env softener and the claudlobby-root tree-walk deprecation ([#102](https://github.com/Claudfather/Claudron/issues/102)).** Both eased the 0.3.0 `CLAUDRON_VAULT` removal; a full minor past 0.4.0, the migration window is closed. Gone: the softener subsystem (`REMOVED_VAULT_ENV_VARS`, `_ALIAS_REMOVED_IN`, `_shadowed_removed_vars`, `_removed_var_hint`, `_warn_shadowed_vault`) that emitted a one-line stderr note whenever a set `CLAUDRON_VAULT` shadowed the vault that actually resolved; and the `_resolve_claudlobby_root` wrapper whose only job was an stderr "deprecated: … tree-shape walk" nag around the pure `_detect_claudlobby_root` detector — callers (`plug`/`unplug`/`config`/`migrate`, via `_require_claudlobby_root`) now use the detector directly. **Behavior change (stderr; breaking, documented and test-pinned):** `claudron` no longer prints the removed-var softener on any path (resolution, the exit-3 message, or hooks), and the four claudlobby-root commands no longer nag when they auto-detect the root by tree shape — the walk itself is unchanged and still resolves, and `--claudlobby <path>` still preempts it. `CLAUDRON_VAULT` remains fully removed (never read); the softener was its only remaining trace. `documentation/specs/CLI_CONTRACT.md` §Environment drops the removed-name table row and trims the migration prose to a one-paragraph "removed, rename" note; the ~15 `test_cli.py` softener assertions and `test_plug.py::TestTreeWalkDeprecation` are removed, with the walk's still-live resolution re-pinned as silent. Coordinated cut: Claudlobby and clauDNA were audited and depend on neither shim (both emit/read only `CLAUDRON_VAULT_PATH`, neither invokes the tree-walk subcommands), so no consumer breaks. Ships as a breaking `0.5.x` release. (boundary program; tech-debt #102)
 
 ### Fixed
 - **`claudron status` no longer walks the entire vault root — a large fleet subtree made it hang, which shut the knowledge door fleet-wide ([#130](https://github.com/Claudfather/Claudron/issues/130)).** `scan_quarantine`'s full-vault branch enumerated `vault.root.rglob("*.md")`, but on a Claudlobby-provisioned vault the root also holds every fleet's `runtime/` — 238,493 files on the reporting box — so `status --json` never returned. `/claudna:capture` gates on that Step 0 envelope, so a health check that could not complete blocked every capture while the engine underneath was perfectly healthy (`version`, `lookup` and `recall` all answer in under a second off the prebuilt index). The scan now walks `note_tiers()` — the same scope `build_index` and adopt-backfill already share ([#41](https://github.com/Claudfather/Claudron/issues/41)) — with `skip_non_notes=False`, plus two paths that belong to no tier and are named explicitly so the scoping cannot narrow coverage in silence: the vault-root `CONVENTIONS.md` (tiers start one level down, at `_shared/<subdir>`) and stray root-level notes (one directory listing, never a descent). The broad walk was never buying scope — `_SKIP_NAMES` drops `CONVENTIONS.md` by name, and that one filename is what it was really reaching for — so `iter_markdown_files` gains a keyword-only `skip_non_notes` opt-out rather than a second walker, keeping one enumerator across all four consumers. Measured on the reporting vault: enumeration `0.01s` over 311 candidates and `status --json` `rc=0` in `0.58s`, against a pre-fix walk that traversed 512,583 entries in 15s without finishing. Four tests pin it — the runtime-descent guard fails on the pre-fix code, and three coverage guards fail under mutation if a fix buys speed by seeing less.
-- **A `--stdin` `tags` comma-string no longer char-explodes into the written note; `tags` now takes one grammar on both spellings ([#51](https://github.com/Claudfather/Claudron/issues/51), part 1).** `capture --stdin` took the payload's `tags` value raw, so a JSON string (`"tags": "a,b"`) reached compose-time iteration and was walked character-by-character into the note (`tags: ["a", ",", "b"]`) — and a stray scalar (`"tags": 5`) crashed compose mid-write. The flag and the `--stdin` key now normalize through one `_tags_arg` door (the `source_type` both-spellings precedent): a string uses the documented flag grammar — comma-split, whitespace-stripped, empty segments dropped — an array is taken element-wise, and any other scalar is one tag via `schema._as_str_list`, matching the read side (#101). `new --tags` routes through the same door, so the flag also now strips padding and drops empty segments (previously `"a, b"` produced a literal `" b"` tag). Three fail-on-main pins cover string/array/scalar; the grammar is a contract row in docs/CLI_CONTRACT.md. Part 2 of #51 (`free_slug` near-dup widening) is deliberately not here — it pairs with the content-hash dedup work.
+- **A `--stdin` `tags` comma-string no longer char-explodes into the written note; `tags` now takes one grammar on both spellings ([#51](https://github.com/Claudfather/Claudron/issues/51), part 1).** `capture --stdin` took the payload's `tags` value raw, so a JSON string (`"tags": "a,b"`) reached compose-time iteration and was walked character-by-character into the note (`tags: ["a", ",", "b"]`) — and a stray scalar (`"tags": 5`) crashed compose mid-write. The flag and the `--stdin` key now normalize through one `_tags_arg` door (the `source_type` both-spellings precedent): a string uses the documented flag grammar — comma-split, whitespace-stripped, empty segments dropped — an array is taken element-wise, and any other scalar is one tag via `schema._as_str_list`, matching the read side (#101). `new --tags` routes through the same door, so the flag also now strips padding and drops empty segments (previously `"a, b"` produced a literal `" b"` tag). Three fail-on-main pins cover string/array/scalar; the grammar is a contract row in documentation/specs/CLI_CONTRACT.md. Part 2 of #51 (`free_slug` near-dup widening) is deliberately not here — it pairs with the content-hash dedup work.
 
 ## 0.4.0 — 2026-07-23
 
 ### Added
-- **`docs/CLI_CONTRACT.md` §Session-loop protocol** — the session loop is now
+- **`documentation/specs/CLI_CONTRACT.md` §Session-loop protocol** — the session loop is now
   contract text instead of two repos' changelog lore. It names the four roles
   and their owners (continuity is the front-end's; recall, the capture prompt,
   and sync are the engine's), states that the two SessionStart briefs
@@ -513,7 +516,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
   C1, fork F3)
 
 ### Added
-- **`docs/CLI_CONTRACT.md` grew the contracts it was missing.** §Environment is
+- **`documentation/specs/CLI_CONTRACT.md` grew the contracts it was missing.** §Environment is
   now the one normative, precedence-ordered statement of the vault address
   (§Flags defers to it); §Bridge file specifies the `.claudron` `vault=<path>`
   format as a *resolution artifact, not vault structure*; §Write guarantees
@@ -522,7 +525,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
   scope by constraint — with its limits and named conflict surface. Previously
   these lived only in `locking.py` / `sync.py` docstrings and one `§Flags` line.
   (boundary program C1; contracts #3/#4/#6)
-- **`docs/INTEGRATION.md`** — the vendor-neutral any-agent front door: install
+- **`documentation/guides/INTEGRATION.md`** — the vendor-neutral any-agent front door: install
   channels, engine detection (step 0), a runnable hello-world, the
   query-before / write-after loop, and a conformance checklist. Decision C
   cited this document as its mitigation; it had never been written. It is under
@@ -570,7 +573,7 @@ Completes [#200](https://github.com/Claudfather/Claudron/issues/200): memory hom
   read→write→index critical section and writes via temp-then-`os.replace`, so
   concurrent fleet writes can't drop an index entry or leave a torn file. (#62)
 - `claudron` resolves the vault via `--vault` → `$CLAUDRON_VAULT_PATH` →
-  walk-up, now stated once and normatively in `docs/CLI_CONTRACT.md`
+  walk-up, now stated once and normatively in `documentation/specs/CLI_CONTRACT.md`
   §Environment and pinned to the resolver by a doc-parity test. Reading
   `CLAUDRON_VAULT_PATH` (the var Claudlobby emits per bot) makes the CLI the
   fleet's contract floor. (#62, #30)
@@ -626,7 +629,7 @@ git sync across machines, quarantined conflicts, fail-open hooks.
   per-type status vocabularies, the `status`/`maturity` axis split, closed
   error catalog E001–E007/W101–W107, wikilink grammar, referential-only
   boundary, `pack.yaml` v0 reservation. (#22)
-- `docs/CLI_CONTRACT.md` — exit codes, `--json` envelope, channel
+- `documentation/specs/CLI_CONTRACT.md` — exit codes, `--json` envelope, channel
   discipline, command groups. (#22)
 - `claudron validate [PATH] [--strict]` — schema linter: lenient adoption
   tier by default, strict authoring tier for engine/write paths; stable

@@ -492,7 +492,7 @@ def note_tiers(vault: Vault) -> Iterator[tuple[Path, str]]:
 def backfill_updated(root: Path) -> int:
     """Backfill missing ``updated`` from file mtime across adopted notes.
 
-    The one sanctioned mutation (docs/CLI_CONTRACT.md), at adoption time
+    The one sanctioned mutation (CLI_CONTRACT.md), at adoption time
     only — it is the remedy for the W101 wall a legacy docs tree would
     otherwise produce. The stamp goes in via
     :func:`schema.set_frontmatter_field` — line-level, after ``created:``
