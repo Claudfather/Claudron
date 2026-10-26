@@ -17,17 +17,22 @@ DOCS = REPO_ROOT / "documentation"
 
 def test_documentation_is_strict_clean():
     findings = validate_path(DOCS, strict=True)
-    assert [f"{f.code} {f.path}: {f.message}" for f in findings] == []
+    assert not findings, "\n".join(
+        f"{f.code} documentation/{f.path}: {f.message}" for f in findings
+    )
 
 
 def test_archived_docs_carry_a_terminal_status():
     """`archive/` holds finished plans (the documentation standard), so a live
     status there is a plan nobody closed."""
+    archived = list(iter_markdown_files(DOCS / "archive"))
+    # A moved or emptied archive/ must fail, not pass with nothing checked.
+    assert archived, "documentation/archive/ is missing or empty"
     live = []
-    for md in iter_markdown_files(DOCS / "archive"):
+    for md in archived:
         fm = parse_note(md.read_text())[0] or {}
-        vocab = STATUS_VOCAB.get(fm.get("type"), {})
-        status = fm.get("status", vocab.get("default"))
-        if status not in vocab.get("terminal", ()):
-            live.append(f"{md.relative_to(DOCS)}: {fm.get('type')}/{status}")
-    assert live == []
+        kind, status = fm.get("type"), fm.get("status")
+        vocab = STATUS_VOCAB.get(kind, {}) if isinstance(kind, str) else {}
+        if (status or vocab.get("default")) not in vocab.get("terminal", ()):
+            live.append(f"{md.relative_to(REPO_ROOT)}: type={kind!r} status={status!r}")
+    assert not live, "archived docs without a terminal status:\n" + "\n".join(live)
