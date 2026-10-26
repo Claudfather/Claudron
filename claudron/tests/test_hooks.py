@@ -186,7 +186,7 @@ class TestGauntletPins:
 
 class TestSessionProtocolDocParity:
     """CLI_CONTRACT §Session-loop protocol is the ONE normative statement of
-    the loop (boundary spec §10.4 contract #5). It is also the surface a fleet
+    the loop (CONTRACT_REGISTER.md row 5). It is also the surface a fleet
     composer renders hook entries against — so drift here ships stale hooks to
     every vault-wired bot. This is the engine-side half of that gate; the
     composer-side half is L4's.

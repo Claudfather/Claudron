@@ -7,7 +7,9 @@ Claudlobby composition, any-agent integrations) — not repo commentary.
 codes, channels, `--json` envelope, vault resolution/environment) and the session-loop protocol
 (boundary plan C2). The same register also lives elsewhere: the any-agent integration front door
 in `../guides/INTEGRATION.md` (boundary plan C1), and note schema and vault structure at the repo
-root (`SCHEMA.md`, `VAULT-STRUCTURE.md`) with their approval gates.
+root (`SCHEMA.md`, `VAULT-STRUCTURE.md`) with their approval gates. The contract register
+(`CONTRACT_REGISTER.md`) lives here too: one row per cross-system contract, with its owner, where
+its text lives, and its status.
 
 **The register rules (short form — full set: boundary spec §10.4):**
 

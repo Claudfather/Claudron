@@ -385,7 +385,7 @@ class _RecordingEnv(dict):
 
 class TestEnvironmentDocParity:
     """CLI_CONTRACT §Environment is the ONE normative statement of the
-    vault-address contract (boundary spec §10.4 contract #4). The engine's
+    vault-address contract (CONTRACT_REGISTER.md row 4). The engine's
     resolution ladder and the table cannot drift: consumers on three repos
     build against the table, and the last time doc and code disagreed the
     two names resolved different vaults (Claudron #30)."""
