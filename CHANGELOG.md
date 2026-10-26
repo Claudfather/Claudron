@@ -10,6 +10,7 @@
 
 ### Changed
 - **Doc frontmatter follows `SCHEMA.md` ([#232](https://github.com/Claudfather/Claudron/issues/232)).** The move above brought the two contract docs into `claudron validate`'s scope and left finished plans in `documentation/archive/` marked live. `documentation/specs/CLI_CONTRACT.md` and `documentation/guides/INTEGRATION.md` gain frontmatter (`type: knowledge`, `status: current`), decisions 002 and 005 become ratified decisions, and each archived plan now carries the terminal status that matches its outcome. Frontmatter only: no doc body changed, so the doc-parity gates read the contract docs as before. `claudron validate --strict documentation` reports no findings.
+- **The contract register moved to `documentation/specs/CONTRACT_REGISTER.md` ([#237](https://github.com/Claudfather/Claudron/issues/237)).** Its table (one row per cross-system contract: owner, authoritative text, status) left decision 005 §10.4, because the status column changes as contracts ship and 005 is ratified. The register rules R1–R8 stay in 005 §10.4, which now points at the new file. Rows keep their numbers, so a "register row N" citation still names the same row; links to one should point at the new file, as `documentation/guides/INTEGRATION.md`'s provenance note now does.
 
 ## [0.10.0] - 2026-10-16
 
