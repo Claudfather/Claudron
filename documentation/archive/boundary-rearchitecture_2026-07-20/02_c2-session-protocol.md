@@ -10,7 +10,7 @@ updated: 2026-10-26
 
 # C2 — Session-loop protocol (Claudron)
 
-> **Status:** ✅ COMPLETE — shipped in v0.4.0 (Claudron #84), per the overview's status ledger
+> **Status:** ✅ COMPLETE — shipped in v0.4.0 (Claudron #84), per the overview's [status ledger](00_OVERVIEW.md#phases)
 > *(noted 2026-10-26, #236)*.
 >
 > ~~**Status: in flight.**~~ Scope amended once, before implementation: **Claudron
@@ -160,7 +160,7 @@ Write the hook tests first (red), then touch `hooks.py` (green).
       was wrong, not the schema, and the write door now rejects out-of-vocabulary values.)
 - [x] `hooks.py` contains no clauDNA-narrating docstring; the glob is commented as the
       transitional shim with its removal condition.
-- [ ] Claudron #44 closed; deferral comment on #55/#54 posted. *(on land)*
+- [x] Claudron #44 closed; deferral comment on #55/#54 posted. *(on land)* *(Checked 2026-10-26, #236: #44 closed with #84's merge on 2026-07-22; the comments on #55 and #54 were posted 2026-07-21.)*
 - [x] **#81 (step 5):** `--vault`-beats-env test exists; the budget test gates a contract sentence
       rather than an unowned gap; the `.gitignore` rule is confirmed-and-kept.
       *(#81 closes on land.)*
