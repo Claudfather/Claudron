@@ -5,12 +5,15 @@ status: completed
 owner: chris
 tags: [plan, claudron, session, hooks, protocol]
 created: 2026-07-20
-updated: 2026-10-25
+updated: 2026-10-26
 ---
 
 # C2 — Session-loop protocol (Claudron)
 
-> **Status: in flight.** Scope amended once, before implementation: **Claudron
+> **Status:** ✅ COMPLETE — shipped in v0.4.0 (Claudron #84), per the overview's status ledger
+> *(noted 2026-10-26, #236)*.
+>
+> ~~**Status: in flight.**~~ Scope amended once, before implementation: **Claudron
 > #81 (C1 residue) rides this phase** as step 5 — it reopens the same contract
 > doc and the same test class, so it has no cheaper home. Two findings from the
 > codebase-comparison pass are recorded inline: step 3's SCHEMA.md change is a
