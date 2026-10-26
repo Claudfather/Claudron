@@ -5,7 +5,7 @@ status: current
 owner: chris
 tags: [contracts, integration, claudron]
 created: 2026-07-21
-updated: 2026-10-25
+updated: 2026-10-26
 ---
 
 # Integrating any agent with Claudron
@@ -479,8 +479,8 @@ it can be checked without reading another document.
       request against this repository before it is implemented downstream.
 
 *(For readers tracing the boundary spec: these correspond to register rules
-R3–R7 and contracts #3, #4 and #6 in
-`documentation/decisions/005-claudfather-boundary-separation.md` §10.4. The
+R3–R7 in `documentation/decisions/005-claudfather-boundary-separation.md` §10.4
+and to contracts #3, #4 and #6 in `documentation/specs/CONTRACT_REGISTER.md`. The
 checklist stands on its own; the cross-reference is for provenance.)*
 
 ---

@@ -511,7 +511,8 @@ The institution §4 was missing. Rules first, then the v1 register.
 **The register itself** (one row per contract: its owner, where its authoritative text lives, and its
 status) **lives in [`../specs/CONTRACT_REGISTER.md`](../specs/CONTRACT_REGISTER.md).** *(Moved
 2026-10-26, #237: the table's status column changes as contracts ship, and this decision is ratified.
-The rules above stay here.)*
+The rules above stay here. Rows keep their numbers, so "contract #N" elsewhere in this
+document names row N there.)*
 
 ### 10.5 The hard cases, resolved
 

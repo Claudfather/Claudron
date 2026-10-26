@@ -14,10 +14,17 @@ Every agreement between Claudron, clauDNA and Claudlobby: its one owner, where i
 text lives, and its status. The rules each row follows (R1–R8: one owner, text lives with the owner,
 consumers conform and never fork, …) are ratified in
 [`../decisions/005-claudfather-boundary-separation.md` §10.4](../decisions/005-claudfather-boundary-separation.md#104-the-contract-register).
+Section numbers inside the table (§10.2, §10.5.2) are that decision's.
 
-This table was part of that decision until 2026-10-26 (#237). It moved here because its status column
-changes as contracts ship, and a ratified decision does not. Update a row in the PR that changes
-its contract.
+This table was part of that decision until 2026-10-26 (#237); rows keep their numbers. It moved here
+because its status column changes as contracts ship, and a ratified decision does not. Update a row
+in the PR that changes its contract; for a contract a sibling owns, in a Claudron PR once the
+owner's release ships (R6).
+
+Rows 1–9 are the v1 register as ratified on 2026-07-20, and only rows 5 and 10–12 have had their
+status brought up to date since. The other rows' status cells still describe the gaps the boundary program found then, most of
+which it has since closed: rows 3, 4 and 6, for example, predate `CLI_CONTRACT.md` §Environment,
+§Bridge file and §Write guarantees.
 
 | # | Contract | Owner | Authoritative text (today) | Status / gap |
 |---|---|---|---|---|
