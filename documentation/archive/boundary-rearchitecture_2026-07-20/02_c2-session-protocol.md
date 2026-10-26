@@ -5,12 +5,15 @@ status: completed
 owner: chris
 tags: [plan, claudron, session, hooks, protocol]
 created: 2026-07-20
-updated: 2026-10-25
+updated: 2026-10-26
 ---
 
 # C2 — Session-loop protocol (Claudron)
 
-> **Status: in flight.** Scope amended once, before implementation: **Claudron
+> **Status:** ✅ COMPLETE — shipped in v0.4.0 (Claudron #84), per the overview's [status ledger](00_OVERVIEW.md#phases)
+> *(noted 2026-10-26, #236)*.
+>
+> ~~**Status: in flight.**~~ Scope amended once, before implementation: **Claudron
 > #81 (C1 residue) rides this phase** as step 5 — it reopens the same contract
 > doc and the same test class, so it has no cheaper home. Two findings from the
 > codebase-comparison pass are recorded inline: step 3's SCHEMA.md change is a
@@ -157,7 +160,7 @@ Write the hook tests first (red), then touch `hooks.py` (green).
       was wrong, not the schema, and the write door now rejects out-of-vocabulary values.)
 - [x] `hooks.py` contains no clauDNA-narrating docstring; the glob is commented as the
       transitional shim with its removal condition.
-- [ ] Claudron #44 closed; deferral comment on #55/#54 posted. *(on land)*
+- [x] Claudron #44 closed; deferral comment on #55/#54 posted. *(on land)* *(Checked 2026-10-26, #236: #44 closed with #84's merge on 2026-07-22; the comments on #55 and #54 were posted 2026-07-21.)*
 - [x] **#81 (step 5):** `--vault`-beats-env test exists; the budget test gates a contract sentence
       rather than an unowned gap; the `.gitignore` rule is confirmed-and-kept.
       *(#81 closes on land.)*

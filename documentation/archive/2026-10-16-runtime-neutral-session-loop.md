@@ -4,7 +4,7 @@ type: plan
 status: completed
 owner: Claudron maintainers
 created: 2026-10-16
-updated: 2026-10-25
+updated: 2026-10-26
 ---
 
 # Runtime-neutral session-loop owner adapter
@@ -51,7 +51,7 @@ Run the complete current main suite in a history-free export/private HOME/TMPDIR
 - [x] Codex renderer/install/merge/doctor agree and match their own normative fence.
 - [x] Capability, release ordering, contract, CHANGELOG and boundary register describe the actual shipped source.
 - [x] Private actual CLI canary passes; no real user settings, provider requests or production runtime touched.
-- [ ] Independent simplify/review/verify converged on the exact source tree before root coordinates publication.
+- [x] Independent simplify/review/verify converged on the exact source tree before root coordinates publication. *(Checked 2026-10-26, #236: see the update under Corrected candidate verification.)*
 
 ### First candidate verification (historical)
 
@@ -66,6 +66,8 @@ The first candidate `30ff1d052b7c74420454747e310be5528b399406` passed the record
 ### Corrected candidate verification
 
 Fresh separate after export: **893 passed, exit 0**; unchanged baseline: **856 passed, exit 0**. Both failing/error name sets are empty. The baseline re-read matched all 131 source files in bytes and Git executable mode. An initial read-only observer compared extra archive permission bits instead of Git modes; its correction did not rerun or change the baseline producer. The actual-handler/native-limit regressions failed first (**3 failed, 2 passed, exit 1**) and the complete affected suite then passed (**152 passed, exit 0**). Ten fresh actual Claudron CLI/local-Git protocol arms again passed, with idempotent private installs/doctor and unchanged vault HEAD. That canary does not test native host timeout enforcement or promise total sync completion within three seconds. The first candidate's evidence remains separate; re-review of the corrected source is still pending.
+
+*Update 2026-10-26 (#236): the re-review converged. Claudron#229 records two independent reviewers at NO FINDINGS on `fc421eae` (tree `d0f5a47`), and that tree merged as `3ddaf9c`, released in 0.10.0.*
 
 ## What NOT To Do
 
