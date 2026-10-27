@@ -95,31 +95,20 @@ Two related corrections from the same pass, for the record:
 ## Amendment — 2026-10-27: the monitor is built
 
 Recorded by #244, from the contract register's check of row 9 (#241,
-`../specs/CONTRACT_REGISTER.md`).
+`../specs/CONTRACT_REGISTER.md`); grounds in boundary phase L1
+(`../archive/boundary-rearchitecture_2026-07-20/04_l1-validate-the-real-door.md`),
+shipped per that program's status ledger.
 
-**§Monitor's target state has shipped.** Boundary phase L1
-(Claudfather/Claudlobby#665, merged 2026-07-22) built the machine check that
-section describes, in the release the register's row 10 records as activated on
-the floor host on 2026-10-11. Where §Monitor says the check is "Not yet built",
-and where the 2026-07-20 amendment and §Cross-repo consequence call the
-phantom-MCP warning live, read this instead:
-
-- **The monitor exists.** For a fleet with a vault-wired bot, Claudlobby's
-  `host doctor` reports whether `claudron` is on PATH, the engine's capability
-  probe, and every row of `claudron_compat.COMPAT_FLOOR` as met, unmet or
-  parked. The MCP fragment's row is parked under this decision, and the doctor
-  reports it as demand-gated, not built and not required.
-- **The phantom-MCP warning is gone.** L1 deleted both of `validator.py`'s
-  vault-path ⟹ MCP checks. A bot with `claudron_vault_path` set is checked
-  against the CLI door instead: `claudron` on PATH, and the path resolving to a
-  vault. Both are warnings, never errors. Claudlobby's fleet schema documents
-  `CLAUDRON_VAULT_PATH` as the CLI's pointer to the vault, so both items
-  §Cross-repo consequence filed are done.
+**§Monitor's target state is met.** L1 (Claudfather/Claudlobby#665, merged
+2026-07-22) built the machine check that section describes and deleted the
+phantom-MCP warning, and both items §Cross-repo consequence filed are done. L1
+is in the release carrying Claudlobby#2203 (`c28c91c`), activated on the floor
+host on 2026-10-11. Where §Monitor and the 2026-07-20 amendment call the check
+unbuilt or the warning live, read this instead. From this date, register row 9
+tracks the monitor's state.
 
 The human check §Monitor kept until L1 landed is retired. The triggers are
-unchanged: trigger (1) fires when a fleet policy is filed that these checks
-cannot express, and trigger (2) when a non-clauDNA MCP consumer is named. Until
-one of them fires, C holds.
+unchanged; until one fires, C holds.
 
 ## Accepted reversal cost
 
