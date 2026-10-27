@@ -157,9 +157,7 @@ case for revising it.
 - **Claudron → Claudlobby:** the `plug` / `unplug` / `config` / `migrate` CLI verbs act **back on a
   Claudlobby install** (write the bridge file, migrate a fleet's shared docs into the vault); they
   print a clear error when no Claudlobby is found. So Claudron is Claudlobby-*aware* though
-  Claudlobby-*independent*. *(amended 2026-10-27: #243 cut this edge to the bridge file. `plug`,
-  `unplug` and `config` act on whatever root the caller declares with `--root`, and `migrate` is
-  gone, so these verbs no longer act on a Claudlobby install.)*
+  Claudlobby-*independent*.
 - **Claudron:** depends on neither sibling; the others are optional consumers of it.
 
 ---
@@ -416,7 +414,7 @@ ABI, the vault-address contract, the write protocol, the session-loop protocol f
 `claudna` was removed in 0.4.0 (#84, issue #85) and the capture-prompt claim is structural,
 `documentation/specs/CLI_CONTRACT.md` §Session-loop protocol; the `library/`+`lib/` tree-shape walk remains at
 `cli.py:146–157`, silent since #102 — the one open R5 item; §10.8 item 12)* *(amended 2026-10-27:
-#243 removed that walk, so no R5 item is open)*. Consumers declare
+#243 removed that walk)*. Consumers declare
 themselves to the engine (config/env per contract); the engine never goes looking. **Nor does it
 implement telemetry:** the engine emits no OpenTelemetry and takes no SDK (single dependency); what a
 session did inside its agent CLI is the bought layer, Claudlobby's (below; Claudlobby#2145 §2.1, §11).
@@ -744,6 +742,11 @@ protocol, one address table, one write path, one door.
     envisaged. §4.1's "partly reconciled" sentence, §10.5.1's claim mechanism, §10.5.5 and §10.7's
     `hooks.py` row describe the pre-C2 state and stay as history; the tree-shape walk is now
     `cli.py:146–157` (silent since #102) *(amended 2026-10-27: #243 removed it)*. Row 5 and §10.2 were refreshed by the 2026-10-04 amendment.
+13. **`plug`, `unplug` and `config` no longer act on a Claudlobby install** (found 2026-10-27): #243 replaced
+    the `library/`+`lib/` tree-shape walk with a declared `--root` and removed `migrate`. §3's Claudron →
+    Claudlobby edge and its diagram ("`claudron plug/unplug/config/migrate` act back on a Claudlobby install")
+    describe the state before #243 and stay as history: the verbs now act on whatever root the caller
+    declares, and `migrate`'s job is the consumer's (Claudlobby#2558).
 
 ## Amendment — 2026-10-04: the agent CLIs enter the frame
 

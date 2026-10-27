@@ -147,9 +147,13 @@ def _consumer_root(value: str) -> Path:
     """argparse ``type`` for ``--root``: the consumer root the caller declares.
 
     The engine never looks for a consumer's root itself -- no walk, no tree
-    shape (CLI_CONTRACT.md §Bridge file). A path that is not a directory is a
-    usage error, exit 2 like any other bad argument.
+    shape, and no working directory: an empty value, such as an unset
+    ``"$VAR"``, is refused rather than resolved to ``.`` (CLI_CONTRACT.md
+    §Bridge file). A path that is not a directory is a usage error too, exit 2
+    like any other bad argument.
     """
+    if not value.strip():
+        raise argparse.ArgumentTypeError("empty path")
     root = Path(value).expanduser().resolve()
     if not root.is_dir():
         raise argparse.ArgumentTypeError(f"not a directory: {root}")
@@ -1239,6 +1243,10 @@ def cmd_plug(args) -> int:
         return 2
 
     config_path = args.root / ".claudron"
+    if config_path.exists() and not config_path.is_file():
+        print(f"cannot write the bridge file: {config_path} is a directory "
+              f"(is --root a vault?)", file=sys.stderr)
+        return 2
     old_config = _read_claudron_config(config_path)
     old_vault = old_config.get("vault")
     if old_vault:

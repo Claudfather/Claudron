@@ -184,9 +184,12 @@ vault=/absolute/path/to/vault
   `claudron config --root <consumer-root>`. The consumer declares its root:
   the engine never looks for one, neither by walking up from the working
   directory nor by recognizing a consumer's tree shape (register rule R5). A
-  `--root` that is not a directory is a usage error (exit 2). Gate `--root` on
-  `"declared-root" in status --json → data.capabilities` (§Capability probe);
-  an engine without it exits 2 on the flag.
+  `--root` that is empty or not a directory is a usage error (exit 2), so an
+  unset `"$VAR"` never means the working directory; `plug` also exits 2 when
+  `<root>/.claudron` is a directory, such as a vault's own. Gate `--root` on
+  `"declared-root" in status --json → data.capabilities` (§Capability probe), or
+  on the same list from `contract --json`, which needs no vault; an engine
+  without it exits 2 on the flag.
 - `config --json`'s `data` carries `consumer_root`; `vault`, which is `null`
   when the root has no bridge file or the vault it names is missing;
   `config_file` when the bridge file names a vault; and `fleets` when that vault

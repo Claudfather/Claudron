@@ -61,6 +61,15 @@ class TestPlug:
         assert "not a directory" in capsys.readouterr().err
         assert not missing.exists()
 
+    def test_plug_refuses_a_root_whose_bridge_path_is_a_directory(
+        self, consumer_root: Path, empty_vault: Path, capsys
+    ):
+        (consumer_root / ".claudron").mkdir()  # a vault's own index directory
+        rc = main(["plug", str(empty_vault), "--root", str(consumer_root)])
+        assert rc == 2
+        assert "is a directory" in capsys.readouterr().err
+        assert (consumer_root / ".claudron").is_dir()
+
     def test_plug_shared_vault(self, consumer_root: Path, shared_vault: Path, capsys):
         """plug accepts vaults using shared/ (no underscore)."""
         rc = main(["plug", str(shared_vault), "--root", str(consumer_root)])
@@ -97,6 +106,16 @@ class TestConfig:
         assert env["data"]["consumer_root"] == str(plugged)
         assert env["data"]["vault"] == str(empty_vault)
         assert env["data"]["config_file"] == str(plugged / ".claudron")
+        assert env["data"]["fleets"] == []  # the vault resolves; it has no fleets
+
+    def test_config_json_dangling_bridge(self, consumer_root: Path, tmp_path: Path, capsys):
+        (consumer_root / ".claudron").write_text(f"vault={tmp_path / 'gone'}\n")
+        rc = main(["config", "--json", "--root", str(consumer_root)])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert data["vault"] is None
+        assert data["config_file"] == str(consumer_root / ".claudron")
+        assert "fleets" not in data
 
     def test_config_not_plugged(self, consumer_root: Path, capsys):
         rc = main(["config", "--root", str(consumer_root)])
@@ -119,8 +138,24 @@ class TestDeclaredRoot:
         with pytest.raises(SystemExit) as exc_info:
             main(argv)
         assert exc_info.value.code == 2  # usage error: --root is required
-        assert "--root" in capsys.readouterr().err
+        assert "required: --root" in capsys.readouterr().err
         assert not (shaped / ".claudron").exists()
+
+    @pytest.mark.parametrize("argv", [["plug", "VAULT"], ["unplug"], ["config"]])
+    def test_an_empty_root_is_refused_not_read_as_the_working_directory(
+        self, argv, empty_vault: Path, tmp_path: Path, monkeypatch, capsys
+    ):
+        """`--root "$UNSET"` must not mean `.`: that would be a walk by another name."""
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        (cwd / ".claudron").write_text(f"vault={empty_vault}\n")  # unplug must not delete it
+        monkeypatch.chdir(cwd)
+        argv = [str(empty_vault) if a == "VAULT" else a for a in argv]
+        with pytest.raises(SystemExit) as exc_info:
+            main([*argv, "--root", ""])
+        assert exc_info.value.code == 2
+        assert "empty path" in capsys.readouterr().err
+        assert (cwd / ".claudron").read_text() == f"vault={empty_vault}\n"
 
     def test_the_consumer_named_flag_is_gone(
         self, consumer_root: Path, empty_vault: Path, capsys
