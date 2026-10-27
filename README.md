@@ -80,8 +80,6 @@ claudron plug ./my-vault --root /path/to/consumer-root
 
 ## CLI commands
 
-Claudron works standalone as a knowledge engine.
-
 | Command | Purpose |
 |---------|---------|
 | `init` | Scaffold a new vault (`--adopt` converts + backfills; `--personal` bootstraps the full SD card) |

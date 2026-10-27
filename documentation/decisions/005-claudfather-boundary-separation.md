@@ -4,7 +4,7 @@ type: decision
 status: ratified
 owner: chris
 created: 2026-07-20
-updated: 2026-10-26
+updated: 2026-10-27
 tags: [system:claudron, system:claudna, system:claudlobby, boundaries, architecture, separation-of-concerns]
 repos: [Claudfather/Claudron, Claudfather/clauDNA, Claudfather/Claudlobby]
 ---
@@ -157,7 +157,9 @@ case for revising it.
 - **Claudron → Claudlobby:** the `plug` / `unplug` / `config` / `migrate` CLI verbs act **back on a
   Claudlobby install** (write the bridge file, migrate a fleet's shared docs into the vault); they
   print a clear error when no Claudlobby is found. So Claudron is Claudlobby-*aware* though
-  Claudlobby-*independent*.
+  Claudlobby-*independent*. *(amended 2026-10-27: #243 cut this edge to the bridge file. `plug`,
+  `unplug` and `config` act on whatever root the caller declares with `--root`, and `migrate` is
+  gone, so these verbs no longer act on a Claudlobby install.)*
 - **Claudron:** depends on neither sibling; the others are optional consumers of it.
 
 ---
@@ -413,7 +415,8 @@ ABI, the vault-address contract, the write protocol, the session-loop protocol f
 *(amended 2026-10-04: at authoring it sniffed both siblings; the `hooks.py:62` plugin-cache glob for
 `claudna` was removed in 0.4.0 (#84, issue #85) and the capture-prompt claim is structural,
 `documentation/specs/CLI_CONTRACT.md` §Session-loop protocol; the `library/`+`lib/` tree-shape walk remains at
-`cli.py:146–157`, silent since #102 — the one open R5 item; §10.8 item 12)*. Consumers declare
+`cli.py:146–157`, silent since #102 — the one open R5 item; §10.8 item 12)* *(amended 2026-10-27:
+#243 removed that walk, so no R5 item is open)*. Consumers declare
 themselves to the engine (config/env per contract); the engine never goes looking. **Nor does it
 implement telemetry:** the engine emits no OpenTelemetry and takes no SDK (single dependency); what a
 session did inside its agent CLI is the bought layer, Claudlobby's (below; Claudlobby#2145 §2.1, §11).
@@ -641,7 +644,10 @@ workaround and its false comment.
 - **Claudron's runtime-flavored surfaces**: `plug`/`config`/`migrate` are consumption-contract
   tooling and stay — but the *Claudlobby tree-shape walk* (`cli.py:104–113`) and the *clauDNA
   plugin sniff* (`hooks.py:62`) are R5 violations in the engine; both retire in favor of declared
-  contract artifacts (the bridge file the caller names; the claimed capture-prompt env).
+  contract artifacts (the bridge file the caller names; the claimed capture-prompt env). *(amended
+  2026-10-27: both have retired, the walk in #243. `migrate` left the engine with it: it copied a
+  consumer's `local/<fleet>/` tree, the same R5 class, so that job is the consumer's,
+  Claudlobby#2558.)*
 - **The template tail**: `templates/claude.md.j2` §Shared Documentation still stamps the legacy
   raw-tree convention into every bot; when a bot is vault-wired it should stamp the door
   (`/claudna:recall`, `/claudna:capture`, contract #4) instead.
@@ -737,7 +743,7 @@ protocol, one address table, one write path, one door.
     structural (a registered `hook pre-compact` entry), not the declared env or install marker §10.5.1
     envisaged. §4.1's "partly reconciled" sentence, §10.5.1's claim mechanism, §10.5.5 and §10.7's
     `hooks.py` row describe the pre-C2 state and stay as history; the tree-shape walk is now
-    `cli.py:146–157` (silent since #102). Row 5 and §10.2 were refreshed by the 2026-10-04 amendment.
+    `cli.py:146–157` (silent since #102) *(amended 2026-10-27: #243 removed it)*. Row 5 and §10.2 were refreshed by the 2026-10-04 amendment.
 
 ## Amendment — 2026-10-04: the agent CLIs enter the frame
 

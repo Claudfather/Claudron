@@ -55,6 +55,7 @@ CAPABILITIES: tuple[str, ...] = (
     "ops-log",      # `.claudron/{runs,sessions}/<id>/ops.jsonl`; `status --json` → `runs` (#200 §5)
     "contract",     # `contract --json`: the machine-readable contract consumers mirror (claudron.contract)
     "subject-filing",  # resolve's `exact`/`tier`/`--project`/`--alias`; amend's `expect_trust` + refusal envelope
+    "declared-root",  # plug/unplug/config --root PATH: the bridge file's consumer root, never walked for (#243)
 )
 
 from .vault import Vault, detect

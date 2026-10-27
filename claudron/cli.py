@@ -143,17 +143,16 @@ def _resolve_vault(args) -> Vault:
 # ── .claudron config ─────────────────────────────────────────────────
 
 
-def _require_consumer_root(args) -> Path:
-    """The consumer root the caller declared with ``--root``.
+def _consumer_root(value: str) -> Path:
+    """argparse ``type`` for ``--root``: the consumer root the caller declares.
 
     The engine never looks for a consumer's root itself -- no walk, no tree
     shape (CLI_CONTRACT.md §Bridge file). A path that is not a directory is a
-    usage error.
+    usage error, exit 2 like any other bad argument.
     """
-    root = Path(args.root).expanduser().resolve()
+    root = Path(value).expanduser().resolve()
     if not root.is_dir():
-        print(f"not a directory: {root}", file=sys.stderr)
-        sys.exit(2)  # usage error (CLI_CONTRACT.md)
+        raise argparse.ArgumentTypeError(f"not a directory: {root}")
     return root
 
 
@@ -1239,9 +1238,7 @@ def cmd_plug(args) -> int:
         )
         return 2
 
-    root = _require_consumer_root(args)
-
-    config_path = root / ".claudron"
+    config_path = args.root / ".claudron"
     old_config = _read_claudron_config(config_path)
     old_vault = old_config.get("vault")
     if old_vault:
@@ -1253,9 +1250,7 @@ def cmd_plug(args) -> int:
 
 
 def cmd_unplug(args) -> int:
-    root = _require_consumer_root(args)
-
-    config_path = root / ".claudron"
+    config_path = args.root / ".claudron"
     if not config_path.is_file():
         print("no .claudron config to remove", file=sys.stderr)
         return 1
@@ -1266,30 +1261,23 @@ def cmd_unplug(args) -> int:
 
 
 def cmd_config(args) -> int:
-    root = _require_consumer_root(args)
-
-    info: dict = {"root": str(root)}
-
-    vault_path = None
-    config = _read_claudron_config(root / ".claudron")
-    vault_str = config.get("vault")
+    config_path = args.root / ".claudron"
+    info: dict = {"consumer_root": str(args.root), "vault": None}
+    vault_str = _read_claudron_config(config_path).get("vault")
     if vault_str:
+        info["config_file"] = str(config_path)
         vault_path = Path(vault_str)
-        info["vault"] = str(vault_path)
-        info["config_file"] = str(root / ".claudron")
-
-    if vault_path and vault_path.is_dir():
-        vault = detect(vault_path)
-        if vault:
-            info["fleets"] = list(vault.fleets.keys())
-    else:
-        info["vault"] = None
+        if vault_path.is_dir():
+            info["vault"] = str(vault_path)
+            vault = detect(vault_path)
+            if vault:
+                info["fleets"] = list(vault.fleets)
 
     if args.json:
         _emit_json("config", info)
     else:
-        print(f"root:   {info['root']}")
-        print(f"vault:  {info.get('vault') or '(not plugged)'}")
+        print(f"root:   {info['consumer_root']}")
+        print(f"vault:  {info['vault'] or '(not plugged)'}")
         if info.get("fleets"):
             print(f"fleets: {', '.join(info['fleets'])}")
     return 0
@@ -1380,7 +1368,7 @@ def main(argv=None) -> int:
     # for one (CLI_CONTRACT.md §Bridge file).
     root_parent = argparse.ArgumentParser(add_help=False)
     root_parent.add_argument(
-        "--root", required=True, metavar="PATH",
+        "--root", required=True, metavar="PATH", type=_consumer_root,
         help="Consumer root that holds the .claudron bridge file",
     )
 

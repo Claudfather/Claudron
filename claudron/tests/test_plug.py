@@ -19,25 +19,21 @@ def consumer_root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def vault_for_plug(tmp_path: Path) -> Path:
-    """Vault to plug into a consumer root."""
-    vault = tmp_path / "vault"
-    (vault / "_shared" / "knowledge").mkdir(parents=True)
-    return vault
+def plugged(consumer_root: Path, empty_vault: Path, capsys) -> Path:
+    """A consumer root already plugged into ``empty_vault``."""
+    assert main(["plug", str(empty_vault), "--root", str(consumer_root)]) == 0
+    capsys.readouterr()
+    return consumer_root
 
 
 class TestPlug:
-    def test_plug_writes_config(
-        self, consumer_root: Path, vault_for_plug: Path, capsys
-    ):
-        rc = main(["plug", str(vault_for_plug), "--root", str(consumer_root)])
+    def test_plug_writes_config(self, consumer_root: Path, empty_vault: Path, capsys):
+        rc = main(["plug", str(empty_vault), "--root", str(consumer_root)])
         assert rc == 0
         config = consumer_root / ".claudron"
         assert config.is_file()
-        content = config.read_text()
-        assert f"vault={vault_for_plug}" in content
-        out = capsys.readouterr().out
-        assert "plugged" in out
+        assert f"vault={empty_vault}" in config.read_text()
+        assert "plugged" in capsys.readouterr().out
 
     def test_plug_not_a_vault(self, consumer_root: Path, tmp_path: Path, capsys):
         not_vault = tmp_path / "nope"
@@ -47,52 +43,36 @@ class TestPlug:
         assert "not a vault" in capsys.readouterr().err
 
     def test_plug_warns_on_overwrite(
-        self, consumer_root: Path, vault_for_plug: Path, tmp_path: Path, capsys
+        self, plugged: Path, empty_vault: Path, shared_vault: Path, capsys
     ):
-        # First plug
-        main(["plug", str(vault_for_plug), "--root", str(consumer_root)])
-        capsys.readouterr()
-
-        # Second plug with different vault
-        vault2 = tmp_path / "vault2"
-        (vault2 / "_shared").mkdir(parents=True)
-        rc = main(["plug", str(vault2), "--root", str(consumer_root)])
+        rc = main(["plug", str(shared_vault), "--root", str(plugged)])
         assert rc == 0
         out = capsys.readouterr().out
         assert "replacing existing config" in out
-        assert str(vault_for_plug) in out
+        assert str(empty_vault) in out
 
     def test_plug_root_must_be_a_directory(
-        self, vault_for_plug: Path, tmp_path: Path, capsys
+        self, empty_vault: Path, tmp_path: Path, capsys
     ):
         missing = tmp_path / "missing"
         with pytest.raises(SystemExit) as exc_info:
-            main(["plug", str(vault_for_plug), "--root", str(missing)])
+            main(["plug", str(empty_vault), "--root", str(missing)])
         assert exc_info.value.code == 2  # usage error (CLI_CONTRACT.md)
         assert "not a directory" in capsys.readouterr().err
         assert not missing.exists()
 
-    def test_plug_shared_vault(self, consumer_root: Path, tmp_path: Path, capsys):
+    def test_plug_shared_vault(self, consumer_root: Path, shared_vault: Path, capsys):
         """plug accepts vaults using shared/ (no underscore)."""
-        vault = tmp_path / "shared-vault"
-        (vault / "shared" / "knowledge").mkdir(parents=True)
-        rc = main(["plug", str(vault), "--root", str(consumer_root)])
+        rc = main(["plug", str(shared_vault), "--root", str(consumer_root)])
         assert rc == 0
         assert "plugged" in capsys.readouterr().out
 
 
 class TestUnplug:
-    def test_unplug_removes_config(
-        self, consumer_root: Path, vault_for_plug: Path, capsys
-    ):
-        # First plug
-        main(["plug", str(vault_for_plug), "--root", str(consumer_root)])
-        capsys.readouterr()
-
-        # Then unplug
-        rc = main(["unplug", "--root", str(consumer_root)])
+    def test_unplug_removes_config(self, plugged: Path, capsys):
+        rc = main(["unplug", "--root", str(plugged)])
         assert rc == 0
-        assert not (consumer_root / ".claudron").exists()
+        assert not (plugged / ".claudron").exists()
         assert "unplugged" in capsys.readouterr().out
 
     def test_unplug_no_config(self, consumer_root: Path, capsys):
@@ -102,53 +82,40 @@ class TestUnplug:
 
 
 class TestConfig:
-    def test_config_shows_resolved(
-        self, consumer_root: Path, vault_for_plug: Path, capsys
-    ):
-        main(["plug", str(vault_for_plug), "--root", str(consumer_root)])
-        capsys.readouterr()
-
-        rc = main(["config", "--root", str(consumer_root)])
+    def test_config_shows_resolved(self, plugged: Path, empty_vault: Path, capsys):
+        rc = main(["config", "--root", str(plugged)])
         assert rc == 0
         out = capsys.readouterr().out
-        assert str(consumer_root) in out
-        assert str(vault_for_plug) in out
+        assert str(plugged) in out
+        assert str(empty_vault) in out
 
-    def test_config_json(self, consumer_root: Path, vault_for_plug: Path, capsys):
-        main(["plug", str(vault_for_plug), "--root", str(consumer_root)])
-        capsys.readouterr()
-
-        rc = main(["config", "--json", "--root", str(consumer_root)])
+    def test_config_json(self, plugged: Path, empty_vault: Path, capsys):
+        rc = main(["config", "--json", "--root", str(plugged)])
         assert rc == 0
         env = json.loads(capsys.readouterr().out)
         assert env["command"] == "config"
-        assert env["data"]["root"] == str(consumer_root)
-        assert env["data"]["vault"] == str(vault_for_plug)
-        assert env["data"]["config_file"] == str(consumer_root / ".claudron")
+        assert env["data"]["consumer_root"] == str(plugged)
+        assert env["data"]["vault"] == str(empty_vault)
+        assert env["data"]["config_file"] == str(plugged / ".claudron")
 
     def test_config_not_plugged(self, consumer_root: Path, capsys):
         rc = main(["config", "--root", str(consumer_root)])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "not plugged" in out
+        assert "not plugged" in capsys.readouterr().out
 
 
 class TestDeclaredRoot:
-    """The consumer root is declared, never discovered (#243). The engine used
-    to walk up for a `library/` + `lib/` tree shape, which a current Claudlobby
-    checkout no longer has, and to take the root under a flag named for that
-    consumer. Both were boundary violations (`claudron/CLAUDE.md`: no consumer
-    names or tree shapes), and the walk had become a breakage too."""
+    """The consumer root is declared with --root, never discovered (#243)."""
 
     @pytest.mark.parametrize("argv", [["plug", "VAULT"], ["unplug"], ["config"]])
     def test_root_is_required_even_inside_a_consumer_shaped_tree(
-        self, argv, vault_for_plug: Path, tmp_path: Path, monkeypatch, capsys
+        self, argv, empty_vault: Path, tmp_path: Path, monkeypatch, capsys
     ):
-        shaped = tmp_path / "shaped"
+        shaped = tmp_path / "shaped"  # the tree shape the removed walk looked for
         (shaped / "library").mkdir(parents=True)
         (shaped / "lib").mkdir()
         monkeypatch.chdir(shaped)
-        argv = [str(vault_for_plug) if a == "VAULT" else a for a in argv]
+        argv = [str(empty_vault) if a == "VAULT" else a for a in argv]
         with pytest.raises(SystemExit) as exc_info:
             main(argv)
         assert exc_info.value.code == 2  # usage error: --root is required
@@ -156,11 +123,13 @@ class TestDeclaredRoot:
         assert not (shaped / ".claudron").exists()
 
     def test_the_consumer_named_flag_is_gone(
-        self, consumer_root: Path, vault_for_plug: Path
+        self, consumer_root: Path, empty_vault: Path, capsys
     ):
         with pytest.raises(SystemExit) as exc_info:
-            main(["plug", str(vault_for_plug), "--claudlobby", str(consumer_root)])
+            main(["plug", str(empty_vault), "--root", str(consumer_root),
+                  "--claudlobby", str(consumer_root)])
         assert exc_info.value.code == 2
+        assert "unrecognized arguments: --claudlobby" in capsys.readouterr().err
         assert not (consumer_root / ".claudron").exists()
 
     def test_migrate_is_gone(self, capsys):
@@ -168,3 +137,8 @@ class TestDeclaredRoot:
             main(["migrate", "--fleet", "f"])
         assert exc_info.value.code == 2
         assert "invalid choice" in capsys.readouterr().err
+
+    def test_the_engine_declares_the_capability(self):
+        from claudron import CAPABILITIES
+
+        assert "declared-root" in CAPABILITIES

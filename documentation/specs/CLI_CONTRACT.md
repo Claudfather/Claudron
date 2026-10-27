@@ -183,18 +183,21 @@ vault=/absolute/path/to/vault
   `claudron unplug --root <consumer-root>`; read back by
   `claudron config --root <consumer-root>`. The consumer declares its root:
   the engine never looks for one, neither by walking up from the working
-  directory nor by recognizing a consumer's tree shape (register rule R5).
+  directory nor by recognizing a consumer's tree shape (register rule R5). A
+  `--root` that is not a directory is a usage error (exit 2). Gate `--root` on
+  `"declared-root" in status --json → data.capabilities` (§Capability probe);
+  an engine without it exits 2 on the flag.
+- `config --json`'s `data` carries `consumer_root`; `vault`, which is `null`
+  when the root has no bridge file or the vault it names is missing;
+  `config_file` when the bridge file names a vault; and `fleets` when that vault
+  resolves.
 - **Read** by consumers that need to point a checkout at a vault without an
   ambient environment (Claudlobby's composition-time fleet resolution is the
   shipped case).
 
-> Breaking change (#243): `plug`, `unplug` and `config` found the consumer
-> root by walking up from the working directory, or from `--claudlobby`, for a
-> `library/` + `lib/` tree, a shape current Claudlobby checkouts no longer
-> have. They now take `--root PATH`; `--claudlobby` is gone, and `config
-> --json` reports `root` where it reported `claudlobby_root`. `migrate`, which
-> copied a consumer's `local/<fleet>/` tree into the vault, is removed: moving
-> a consumer's files is the consumer's job.
+> Breaking change (#243): the root came from `--claudlobby` or a walk up for a
+> `library/` + `lib/` tree; it is now `--root`, and `config --json` reports
+> `consumer_root` (was `claudlobby_root`). `migrate` is removed.
 
 **The engine does not resolve its own vault from a bridge file.** A consumer
 that has one passes the path it read via `--vault`, or exports
