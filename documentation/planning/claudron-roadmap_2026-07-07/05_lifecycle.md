@@ -5,12 +5,12 @@ status: active
 owner: chris
 tags: [epic, lifecycle, curation, promotion, claudron]
 created: 2026-07-07
-updated: 2026-07-07
+updated: 2026-10-27
 ---
 
 # E5 — Lifecycle & curation: the cauldron refines
 
-**Status:** PENDING — PR2–4 are deferred (#19); PR1 (the maturity ladder and `promote`, #68) shipped.
+**Status:** IN PROGRESS — PR1 (the maturity ladder and `promote`, #68) shipped; PR2–4 are still deferred (#19).
 
 **Release:** 0.5.0 · **Depends on:** E4 for PR2–4 (near-dup clusters, queue
 queries) — **PR1 (lifecycle verbs) needs only E1 and may pull forward to

@@ -5,7 +5,7 @@ status: ratified
 owner: chris
 tags: [decision, mcp, e3, claudlobby, claudna, claudron]
 created: 2026-07-18
-updated: 2026-07-20
+updated: 2026-10-27
 ---
 
 # Decision C — the MCP server (E3) is demand-gated, not the next epic
@@ -91,6 +91,24 @@ Two related corrections from the same pass, for the record:
   at `claudron lookup` / `claudron capture` — in-context discovery for the
   hosts the engine actually reaches. True self-announcement for arbitrary
   MCP-speaking agents remains gated behind trigger 2.
+
+## Amendment — 2026-10-27: the monitor is built
+
+Recorded by #244, from the contract register's check of row 9 (#241,
+`../specs/CONTRACT_REGISTER.md`); grounds in boundary phase L1
+(`../archive/boundary-rearchitecture_2026-07-20/04_l1-validate-the-real-door.md`),
+shipped per that program's status ledger.
+
+**§Monitor's target state is met.** L1 (Claudfather/Claudlobby#665, merged
+2026-07-22) built the machine check that section describes and deleted the
+phantom-MCP warning, and both items §Cross-repo consequence filed are done. L1
+is in the release carrying Claudlobby#2203 (`c28c91c`), activated on the floor
+host on 2026-10-11. Where §Monitor and the 2026-07-20 amendment call the check
+unbuilt or the warning live, read this instead. From this date, register row 9
+tracks the monitor's state.
+
+The human check §Monitor kept until L1 landed is retired. The triggers are
+unchanged; until one fires, C holds.
 
 ## Accepted reversal cost
 
