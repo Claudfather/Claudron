@@ -5,7 +5,7 @@ status: current
 owner: chris
 tags: [contracts, cli, claudron]
 created: 2026-07-07
-updated: 2026-10-25
+updated: 2026-10-27
 ---
 
 # Claudron CLI Contract
@@ -179,11 +179,22 @@ vault=/absolute/path/to/vault
 - Format: shell-sourceable `key=value`, one per line. `#` begins a comment
   line; blank lines are ignored; surrounding whitespace is stripped. `vault` is
   the only key defined today.
-- **Written** by `claudron plug <vault>` at the consumer root; removed by
-  `claudron unplug`; read back by `claudron config`.
+- **Written** by `claudron plug --root <consumer-root> <vault>`; removed by
+  `claudron unplug --root <consumer-root>`; read back by
+  `claudron config --root <consumer-root>`. The consumer declares its root:
+  the engine never looks for one, neither by walking up from the working
+  directory nor by recognizing a consumer's tree shape (register rule R5).
 - **Read** by consumers that need to point a checkout at a vault without an
   ambient environment (Claudlobby's composition-time fleet resolution is the
   shipped case).
+
+> Breaking change (#243): `plug`, `unplug` and `config` found the consumer
+> root by walking up from the working directory, or from `--claudlobby`, for a
+> `library/` + `lib/` tree, a shape current Claudlobby checkouts no longer
+> have. They now take `--root PATH`; `--claudlobby` is gone, and `config
+> --json` reports `root` where it reported `claudlobby_root`. `migrate`, which
+> copied a consumer's `local/<fleet>/` tree into the vault, is removed: moving
+> a consumer's files is the consumer's job.
 
 **The engine does not resolve its own vault from a bridge file.** A consumer
 that has one passes the path it read via `--vault`, or exports
@@ -505,7 +516,7 @@ vendor source; support for unobserved events is not promised by this snippet.
 | notes | `new`, `lookup`, `related`, `links`, `graph` |
 | session | `recall`, `capture`, `sync`, `hooks` *(E2)* |
 | fleet | `fleet add`, `fleet list` |
-| integration | `plug`, `unplug`, `config`, `migrate`, `contract` |
+| integration | `plug`, `unplug`, `config`, `contract` |
 | curation | `promote` *(E5)* |
 | harvest | `subjects`, `resolve`, `amend`, `revert-run` *(#200 §4)*, `tags` *(#200 §3)* |
 
