@@ -5,7 +5,7 @@ status: ratified
 owner: chris
 tags: [decision, mcp, e3, claudlobby, claudna, claudron]
 created: 2026-07-18
-updated: 2026-07-20
+updated: 2026-10-27
 ---
 
 # Decision C — the MCP server (E3) is demand-gated, not the next epic
@@ -91,6 +91,35 @@ Two related corrections from the same pass, for the record:
   at `claudron lookup` / `claudron capture` — in-context discovery for the
   hosts the engine actually reaches. True self-announcement for arbitrary
   MCP-speaking agents remains gated behind trigger 2.
+
+## Amendment — 2026-10-27: the monitor is built
+
+Recorded by #244, from the contract register's check of row 9 (#241,
+`../specs/CONTRACT_REGISTER.md`).
+
+**§Monitor's target state has shipped.** Boundary phase L1
+(Claudfather/Claudlobby#665, merged 2026-07-22) built the machine check that
+section describes, in the release the register's row 10 records as activated on
+the floor host on 2026-10-11. Where §Monitor says the check is "Not yet built",
+and where the 2026-07-20 amendment and §Cross-repo consequence call the
+phantom-MCP warning live, read this instead:
+
+- **The monitor exists.** For a fleet with a vault-wired bot, Claudlobby's
+  `host doctor` reports whether `claudron` is on PATH, the engine's capability
+  probe, and every row of `claudron_compat.COMPAT_FLOOR` as met, unmet or
+  parked. The MCP fragment's row is parked under this decision, and the doctor
+  reports it as demand-gated, not built and not required.
+- **The phantom-MCP warning is gone.** L1 deleted both of `validator.py`'s
+  vault-path ⟹ MCP checks. A bot with `claudron_vault_path` set is checked
+  against the CLI door instead: `claudron` on PATH, and the path resolving to a
+  vault. Both are warnings, never errors. Claudlobby's fleet schema documents
+  `CLAUDRON_VAULT_PATH` as the CLI's pointer to the vault, so both items
+  §Cross-repo consequence filed are done.
+
+The human check §Monitor kept until L1 landed is retired. The triggers are
+unchanged: trigger (1) fires when a fleet policy is filed that these checks
+cannot express, and trigger (2) when a non-clauDNA MCP consumer is named. Until
+one of them fires, C holds.
 
 ## Accepted reversal cost
 
