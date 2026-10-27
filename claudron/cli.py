@@ -152,7 +152,7 @@ def _consumer_root(value: str) -> Path:
     §Bridge file). A path that is not a directory is a usage error too, exit 2
     like any other bad argument.
     """
-    if not value.strip():
+    if not value:
         raise argparse.ArgumentTypeError("empty path")
     root = Path(value).expanduser().resolve()
     if not root.is_dir():
@@ -1243,15 +1243,23 @@ def cmd_plug(args) -> int:
         return 2
 
     config_path = args.root / ".claudron"
+    if (args.root / IDENTITY_FILE).exists():
+        print(f"cannot write the bridge file: {args.root} is a vault; --root names "
+              f"the consumer's root", file=sys.stderr)
+        return 2
     if config_path.exists() and not config_path.is_file():
-        print(f"cannot write the bridge file: {config_path} is a directory "
-              f"(is --root a vault?)", file=sys.stderr)
+        print(f"cannot write the bridge file: {config_path} is not a regular file",
+              file=sys.stderr)
         return 2
     old_config = _read_claudron_config(config_path)
     old_vault = old_config.get("vault")
     if old_vault:
         print(f"replacing existing config (was: {old_vault})")
-    _write_claudron_config(config_path, vault_path)
+    try:
+        _write_claudron_config(config_path, vault_path)
+    except OSError as exc:
+        print(f"cannot write the bridge file: {exc}", file=sys.stderr)
+        return 3  # environment error (CLI_CONTRACT.md)
     print(f"plugged vault {vault_path}")
     print(f"  config: {config_path}")
     return 0

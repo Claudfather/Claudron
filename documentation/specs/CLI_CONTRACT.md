@@ -185,8 +185,9 @@ vault=/absolute/path/to/vault
   the engine never looks for one, neither by walking up from the working
   directory nor by recognizing a consumer's tree shape (register rule R5). A
   `--root` that is empty or not a directory is a usage error (exit 2), so an
-  unset `"$VAR"` never means the working directory; `plug` also exits 2 when
-  `<root>/.claudron` is a directory, such as a vault's own. Gate `--root` on
+  unset `"$VAR"` never means the working directory. `plug` also exits 2 when the
+  root is a vault (it holds the identity file) or `<root>/.claudron` is not a
+  regular file, and 3 when the bridge file cannot be written. Gate `--root` on
   `"declared-root" in status --json → data.capabilities` (§Capability probe), or
   on the same list from `contract --json`, which needs no vault; an engine
   without it exits 2 on the flag.

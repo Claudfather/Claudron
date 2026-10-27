@@ -64,11 +64,28 @@ class TestPlug:
     def test_plug_refuses_a_root_whose_bridge_path_is_a_directory(
         self, consumer_root: Path, empty_vault: Path, capsys
     ):
-        (consumer_root / ".claudron").mkdir()  # a vault's own index directory
+        (consumer_root / ".claudron").mkdir()  # e.g. a vault's own index directory
         rc = main(["plug", str(empty_vault), "--root", str(consumer_root)])
         assert rc == 2
-        assert "is a directory" in capsys.readouterr().err
+        assert "is not a regular file" in capsys.readouterr().err
         assert (consumer_root / ".claudron").is_dir()
+
+    def test_plug_refuses_a_vault_as_the_root(
+        self, empty_vault: Path, shared_vault: Path, capsys
+    ):
+        """A fresh vault has no .claudron/ yet; a bridge file there would break its index."""
+        rc = main(["plug", str(shared_vault), "--root", str(empty_vault)])
+        assert rc == 2
+        assert "is a vault" in capsys.readouterr().err
+        assert not (empty_vault / ".claudron").exists()
+
+    def test_plug_reports_an_unwritable_bridge_file_as_an_environment_error(
+        self, consumer_root: Path, empty_vault: Path, tmp_path: Path, capsys
+    ):
+        (consumer_root / ".claudron").symlink_to(tmp_path / "missing" / "bridge")
+        rc = main(["plug", str(empty_vault), "--root", str(consumer_root)])
+        assert rc == 3
+        assert "cannot write the bridge file" in capsys.readouterr().err
 
     def test_plug_shared_vault(self, consumer_root: Path, shared_vault: Path, capsys):
         """plug accepts vaults using shared/ (no underscore)."""
