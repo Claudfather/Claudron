@@ -143,32 +143,21 @@ def _resolve_vault(args) -> Vault:
 # ── .claudron config ─────────────────────────────────────────────────
 
 
-def _detect_claudlobby_root(hint: Path | None = None) -> Path | None:
-    """Walk up from *hint* (or CWD) looking for a claudlobby repo root.
+def _consumer_root(value: str) -> Path:
+    """argparse ``type`` for ``--root``: the consumer root the caller declares.
 
-    Marker: directory containing both ``library/`` and ``lib/``. Policy-free
-    like ``_detect_vault``: callers handle ``None`` themselves --
-    ``_require_claudlobby_root`` exits 3, ``cmd_config`` reports "(not found)".
+    The engine never looks for a consumer's root itself -- no walk, no tree
+    shape, and no working directory: an empty value, such as an unset
+    ``"$VAR"``, is refused rather than resolved to ``.`` (CLI_CONTRACT.md
+    §Bridge file). A path that is not a directory is a usage error too, exit 2
+    like any other bad argument.
     """
-    start = (hint or Path.cwd()).resolve()
-    for candidate in [start, *start.parents]:
-        if (candidate / "library").is_dir() and (candidate / "lib").is_dir():
-            return candidate
-    return None
-
-
-def _require_claudlobby_root(args, command: str) -> Path:
-    """Resolve claudlobby root or exit with a clear error."""
-    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
-    if cl_root is None:
-        print(
-            f"could not find claudlobby root\n"
-            f"  {command} requires a claudlobby installation\n"
-            f"  specify with: claudron {command} --claudlobby <path>",
-            file=sys.stderr,
-        )
-        sys.exit(3)  # environment error (CLI_CONTRACT.md)
-    return cl_root
+    if not value:
+        raise argparse.ArgumentTypeError("empty path")
+    root = Path(value).expanduser().resolve()
+    if not root.is_dir():
+        raise argparse.ArgumentTypeError(f"not a directory: {root}")
+    return root
 
 
 def _read_claudron_config(path: Path) -> dict[str, str]:
@@ -1241,7 +1230,7 @@ def cmd_doctor(args) -> int:
     return 1 if errors else 0
 
 
-# ── Phase 2: claudlobby integration commands ─────────────────────────
+# ── integration: the .claudron bridge file ───────────────────────────
 
 
 def cmd_plug(args) -> int:
@@ -1253,23 +1242,31 @@ def cmd_plug(args) -> int:
         )
         return 2
 
-    cl_root = _require_claudlobby_root(args, "plug")
-
-    config_path = cl_root / ".claudron"
+    config_path = args.root / ".claudron"
+    if (args.root / IDENTITY_FILE).exists():
+        print(f"cannot write the bridge file: {args.root} is a vault; --root names "
+              f"the consumer's root", file=sys.stderr)
+        return 2
+    if config_path.exists() and not config_path.is_file():
+        print(f"cannot write the bridge file: {config_path} is not a regular file",
+              file=sys.stderr)
+        return 2
     old_config = _read_claudron_config(config_path)
     old_vault = old_config.get("vault")
     if old_vault:
         print(f"replacing existing config (was: {old_vault})")
-    _write_claudron_config(config_path, vault_path)
+    try:
+        _write_claudron_config(config_path, vault_path)
+    except OSError as exc:
+        print(f"cannot write the bridge file: {exc}", file=sys.stderr)
+        return 3  # environment error (CLI_CONTRACT.md)
     print(f"plugged vault {vault_path}")
     print(f"  config: {config_path}")
     return 0
 
 
 def cmd_unplug(args) -> int:
-    cl_root = _require_claudlobby_root(args, "unplug")
-
-    config_path = cl_root / ".claudron"
+    config_path = args.root / ".claudron"
     if not config_path.is_file():
         print("no .claudron config to remove", file=sys.stderr)
         return 1
@@ -1279,40 +1276,26 @@ def cmd_unplug(args) -> int:
     return 0
 
 
-def _claudlobby_hint(args) -> Path | None:
-    """Extract --claudlobby hint from args."""
-    raw = getattr(args, "claudlobby", None)
-    return Path(raw).resolve() if raw else None
-
-
 def cmd_config(args) -> int:
-    cl_root = _detect_claudlobby_root(_claudlobby_hint(args))
-
-    info: dict = {"claudlobby_root": str(cl_root) if cl_root else None}
-
-    vault_path = None
-    if cl_root:
-        config = _read_claudron_config(cl_root / ".claudron")
-        vault_str = config.get("vault")
-        if vault_str:
-            vault_path = Path(vault_str)
+    config_path = args.root / ".claudron"
+    info: dict = {"consumer_root": str(args.root), "vault": None}
+    vault_str = _read_claudron_config(config_path).get("vault")
+    if vault_str:
+        info["config_file"] = str(config_path)
+        vault_path = Path(vault_str)
+        if vault_path.is_dir():
             info["vault"] = str(vault_path)
-            info["config_file"] = str(cl_root / ".claudron")
-
-    if vault_path and vault_path.is_dir():
-        vault = detect(vault_path)
-        if vault:
-            info["fleets"] = list(vault.fleets.keys())
-    else:
-        info["vault"] = None
+            vault = detect(vault_path)
+            if vault:
+                info["fleets"] = list(vault.fleets)
 
     if args.json:
         _emit_json("config", info)
     else:
-        print(f"claudlobby: {info['claudlobby_root'] or '(not found)'}")
-        print(f"vault:      {info.get('vault') or '(not plugged)'}")
+        print(f"root:   {info['consumer_root']}")
+        print(f"vault:  {info['vault'] or '(not plugged)'}")
         if info.get("fleets"):
-            print(f"fleets:     {', '.join(info['fleets'])}")
+            print(f"fleets: {', '.join(info['fleets'])}")
     return 0
 
 
@@ -1363,102 +1346,6 @@ def cmd_fleet_list(args) -> int:
     return 0
 
 
-def cmd_migrate(args) -> int:
-    import shutil
-
-    vault = _resolve_vault(args)
-    fleet_name = args.fleet
-    apply = args.apply
-    force = getattr(args, "force", False)
-
-    # Find claudlobby root to locate local/<fleet>/
-    cl_root = _require_claudlobby_root(args, "migrate")
-
-    source = cl_root / "local" / fleet_name
-    if not source.is_dir():
-        print(f"source not found: {source}", file=sys.stderr)
-        return 2
-
-    dest = vault.root / fleet_name
-    if not dest.is_dir():
-        print(
-            f"fleet dir not in vault: {dest}\n  run: claudron fleet add {fleet_name}",
-            file=sys.stderr,
-        )
-        return 2
-
-    # Determine what to copy and detect overwrites
-    copyable = ("shared", "library", "voices")
-    plan: list[tuple[Path, Path]] = []
-    for dirname in copyable:
-        src = source / dirname
-        if src.is_dir():
-            plan.append((src, dest / dirname))
-
-    # Memory dirs: look in runtime/bots/*/memory/
-    runtime_bots = source / "runtime" / "bots"
-    memory_plan: list[tuple[Path, Path]] = []
-    if runtime_bots.is_dir():
-        for bot_dir in sorted(runtime_bots.iterdir()):
-            mem = bot_dir / "memory"
-            if mem.is_dir() and any(mem.iterdir()):
-                memory_plan.append(
-                    (mem, dest / "runtime" / "bots" / bot_dir.name / "memory")
-                )
-
-    if not plan and not memory_plan:
-        print("nothing to migrate")
-        return 0
-
-    # Build detailed file plan, distinguish new vs overwrite
-    has_overwrites = False
-    for src, dst in plan + memory_plan:
-        is_memory = src in [m[0] for m in memory_plan]
-        for item in sorted(src.rglob("*")):
-            if item.is_dir():
-                continue
-            rel = item.relative_to(src)
-            target = dst / rel
-            overwrites = target.is_file()
-            if overwrites:
-                has_overwrites = True
-            verb = "preserve" if is_memory else "copy"
-            if not apply:
-                verb = "would " + verb
-            tag = " (overwrite)" if overwrites else " (new)"
-            print(
-                f"  {verb}: {item.relative_to(cl_root)} -> {target.relative_to(vault.root)}{tag}"
-            )
-
-    if not apply:
-        print("\ndry run — pass --apply to execute")
-        return 0
-
-    if has_overwrites and not force:
-        print(
-            "\nsome files would be overwritten — pass --force to confirm",
-            file=sys.stderr,
-        )
-        return 1
-
-    # Execute
-    for src, dst in plan + memory_plan:
-        if dst.is_dir():
-            for item in src.rglob("*"):
-                rel = item.relative_to(src)
-                target = dst / rel
-                if item.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(item, target)
-        else:
-            shutil.copytree(src, dst)
-
-    print("\nmigration complete — verify with: claudron status")
-    return 0
-
-
 # ── main ──────────────────────────────────────────────────────────────
 
 
@@ -1492,12 +1379,13 @@ def main(argv=None) -> int:
     agent_parent = argparse.ArgumentParser(add_help=False)
     agent_parent.add_argument("--agent-cli", choices=("claude", "codex"),
                               default=argparse.SUPPRESS, help="Agent CLI for lifecycle hooks (default: claude)")
-    # --claudlobby shared by plug/unplug/config. migrate keeps its own inline
-    # copy: a parent injects its options ahead of directly-added ones, which
-    # would move migrate's --claudlobby (currently last) to first in --help.
-    claudlobby_parent = argparse.ArgumentParser(add_help=False)
-    claudlobby_parent.add_argument(
-        "--claudlobby", default=None, help="Claudlobby root (default: auto-detect)"
+    # --root shared by plug/unplug/config: the consumer root that holds the
+    # .claudron bridge file. The caller declares it; the engine never looks
+    # for one (CLI_CONTRACT.md §Bridge file).
+    root_parent = argparse.ArgumentParser(add_help=False)
+    root_parent.add_argument(
+        "--root", required=True, metavar="PATH", type=_consumer_root,
+        help="Consumer root that holds the .claudron bridge file",
     )
 
     # init
@@ -1879,18 +1767,20 @@ def main(argv=None) -> int:
 
     # plug
     p_plug = sub.add_parser(
-        "plug", help="Register vault with claudlobby", parents=[claudlobby_parent]
+        "plug", help="Point a consumer root at a vault (writes its .claudron bridge file)",
+        parents=[root_parent],
     )
     p_plug.add_argument("vault_path", help="Path to vault")
 
     # unplug
     p_unplug = sub.add_parser(
-        "unplug", help="Disconnect vault from claudlobby", parents=[claudlobby_parent]
+        "unplug", help="Remove a consumer root's .claudron bridge file", parents=[root_parent]
     )
 
     # config
     p_config = sub.add_parser(
-        "config", help="Show resolved config", parents=[json_parent, claudlobby_parent]
+        "config", help="Show the vault a consumer root's bridge file points at",
+        parents=[json_parent, root_parent],
     )
 
     # fleet
@@ -1901,21 +1791,6 @@ def main(argv=None) -> int:
     p_fleet_add.add_argument("name", help="Fleet name")
 
     fleet_sub.add_parser("list", help="List fleets in vault")
-
-    # migrate
-    p_migrate = sub.add_parser(
-        "migrate", help="Migrate local/<fleet>/ to vault (dry-run default)"
-    )
-    p_migrate.add_argument("--fleet", required=True, help="Fleet name to migrate")
-    p_migrate.add_argument(
-        "--apply", action="store_true", help="Execute migration (default: dry-run)"
-    )
-    p_migrate.add_argument(
-        "--force", action="store_true", help="Allow overwriting existing files"
-    )
-    p_migrate.add_argument(
-        "--claudlobby", default=None, help="Claudlobby root (default: auto-detect)"
-    )
 
     args = parser.parse_args(argv)
     if not args.command:
@@ -1965,7 +1840,6 @@ def main(argv=None) -> int:
         "plug": cmd_plug,
         "unplug": cmd_unplug,
         "config": cmd_config,
-        "migrate": cmd_migrate,
     }
     return dispatch[args.command](args)
 

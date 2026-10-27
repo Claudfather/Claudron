@@ -74,13 +74,11 @@ claudron lookup "auth patterns"
 # `updated` fields from file mtimes:
 claudron init ./existing-docs --adopt
 
-# Register vault with a claudlobby fleet
-claudron plug ./my-vault --claudlobby /path/to/claudlobby
+# Point a consumer at the vault: writes the .claudron bridge file at its root
+claudron plug ./my-vault --root /path/to/consumer-root
 ```
 
 ## CLI commands
-
-Claudron works standalone as a knowledge engine. Commands marked with **(claudlobby)** require a claudlobby installation and will print a clear error if one isn't found.
 
 | Command | Purpose |
 |---------|---------|
@@ -101,10 +99,9 @@ Claudron works standalone as a knowledge engine. Commands marked with **(claudlo
 | `version` | Print version |
 | `fleet add` | Scaffold a fleet overlay inside the vault |
 | `fleet list` | List fleet overlays in the vault |
-| `plug` | Register vault with a claudlobby installation **(claudlobby)** |
-| `unplug` | Disconnect vault from claudlobby **(claudlobby)** |
-| `config` | Show resolved vault configuration **(claudlobby)** |
-| `migrate` | Migrate shared docs from a claudlobby fleet into the vault **(claudlobby)** |
+| `plug` | Point a consumer's root at a vault: writes its `.claudron` bridge file (`--root PATH`) |
+| `unplug` | Remove a consumer root's `.claudron` bridge file |
+| `config` | Show the vault a consumer root's bridge file points at |
 
 ## Vault structure
 
