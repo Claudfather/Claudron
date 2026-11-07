@@ -575,9 +575,11 @@ def lookup(
 ) -> list[KnowledgeResult]:
     """Search vault knowledge. Returns ranked results.
 
-    Trust-aware (#200 §1): every trusted note ranks above every draft, whatever
-    the score, and an ``external`` draft (from the web or a session transcript)
-    is left out unless ``include_external``. Score orders notes within a class.
+    Trust-aware (#200 §1, #247): a reviewed note (verified or canonical) ranks
+    above every other note, whatever the score. Below those, score orders the
+    unrated notes and the authored drafts together, an unrated note first at
+    equal score. An ``external`` draft (from the web or a session transcript) is
+    left out unless ``include_external``, and an included one ranks last.
 
     ``tier_b=False`` restricts to the frontmatter index — no full-text
     body scan. Hot-path callers (recall at every SessionStart) use it for
@@ -632,10 +634,15 @@ def lookup(
         results = [r for r in results if r.doc.trust != "external"]
 
     def _sort_key(r: KnowledgeResult) -> tuple:
-        # Trusted before drafts first (a high-scoring draft must never outrank a
-        # verified note), then score. -ladder_index: canonical(-2) < verified(-1)
-        # < draft(0) < unrated(+1), so higher trust sorts first, above tier.
-        return (not r.doc.trusted, -r.score, -ladder_index(r.doc.maturity),
+        # Reviewed notes first (a high-scoring draft must never outrank a note a
+        # person verified), then the unrated notes and the authored drafts by
+        # score, then an included external draft. Keying the first group on
+        # `trusted` put every unrated note above every draft too, so a fresh
+        # capture sank below weaker matches (#247). At equal score a trusted note
+        # goes first (unrated before draft), then -ladder_index (canonical before
+        # verified), then tier. ladder_index > 0 is verified(1) or canonical(2).
+        group = 0 if ladder_index(r.doc.maturity) > 0 else 2 if r.doc.trust == "external" else 1
+        return (group, -r.score, not r.doc.trusted, -ladder_index(r.doc.maturity),
                 _tier_rank(r.doc.tier))
 
     results.sort(key=_sort_key)

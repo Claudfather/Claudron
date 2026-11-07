@@ -1,11 +1,13 @@
 """Trust-aware reads (#200 §1): maturity × origin decides what lookup and recall show.
 
-The contract: every trusted note ranks above every draft, whatever the score;
-an authored draft is shown and labelled; an external draft (from the web or a
-session transcript) is withheld from default lookup and only ever appears in
-recall's capped Unverified block — never among the notes a session treats as
-context. The fixture gives the drafts the *top* score on purpose: ranking
-alone would put them first.
+The contract: a reviewed note (verified or canonical) ranks above every other
+note, whatever the score; below those, score orders the unrated notes and the
+authored drafts together, an unrated note first at equal score (#247); an
+authored draft is shown and labelled; an external draft (from the web or a
+session transcript) is withheld from default lookup, ranks after every other
+note when included, and only ever appears in recall's capped Unverified block —
+never among the notes a session treats as context. The fixtures give the drafts
+the *top* score on purpose: ranking alone would put them first.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from claudron.cli import main
-from claudron.knowledge import lookup
+from claudron.knowledge import build_index, lookup
 from claudron.schema import trust_class
 from claudron.session import UNVERIFIED_LIMIT, recall, render_brief
 from claudron.vault import IDENTITY_FILE, Vault, detect, identity_text
@@ -88,10 +90,61 @@ def test_doctor_m003_moves_tagged_harvest_drafts_to_source_type_session(vault, c
     assert "Rate limits" not in _titles(lookup("rate limits", vault, limit=10))
 
 
-def test_lookup_ranks_every_trusted_note_above_every_draft(vault):
-    titles = _titles(lookup("rate limits", vault, limit=10))
-    assert titles.index("API notes: rate limits and quotas") < titles.index("Rate limits rollout plan")
-    assert titles.index("Gateway rate limits overview") < titles.index("Rate limits rollout plan")
+@pytest.fixture
+def ranked(tmp_path: Path) -> Vault:
+    """One query, "retry budget", against every read class (#247). The fresh capture is the
+    one authored note whose title is the query exactly (score 100); every other note matches
+    it as a word-bounded part of its title (90). Score alone would put the capture first."""
+    root = tmp_path / "ranked"
+    (root / "_shared" / "knowledge").mkdir(parents=True)
+    (root / "projects").mkdir()
+    _identify(root)
+    _note(root, "n-canonical", "Retry budget defaults", maturity="canonical")
+    _note(root, "n-verified", "Retry budget for the gateway", maturity="verified")
+    _note(root, "n-unrated", "Retry budget overview")  # unrated: trusted
+    _note(root, "n-draft", "Retry budget runbook", maturity="draft")
+    assert main(["--vault", str(root), "capture", "--type", "knowledge", "--title", "Retry budget",
+                 "--body", "Each client gets ten retries an hour.", "--owner", "t"]) == 0
+    # Written after the capture, so capture's same-title check never meets it. The index is then
+    # rebuilt: written in the same mtime tick as the index capture built, the note reads as indexed.
+    _note(root, "n-external", "retry budget", maturity="draft", source_type="url",
+          source_url="https://x.example/retry")
+    build_index(detect(root))
+    return detect(root)
+
+
+def _ranked(vault, **kw) -> list[str]:
+    return _titles(lookup("retry budget", vault, limit=10, **kw))
+
+
+def test_verified_and_canonical_rank_above_every_other_note(ranked):
+    """What a person reviewed stays first, though the capture outscores it (#247)."""
+    assert _ranked(ranked)[:2] == ["Retry budget defaults", "Retry budget for the gateway"]  # canonical first at a tie
+
+
+def test_a_fresh_capture_outranks_a_lower_scoring_unrated_note(ranked):
+    """The capture is a draft: 0.10.0 put every unrated note above it, whatever the score (#247)."""
+    titles = _ranked(ranked)
+    assert titles.index("Retry budget") < titles.index("Retry budget overview")
+
+
+def test_at_equal_score_an_unrated_note_ranks_above_a_draft(ranked):
+    titles = _ranked(ranked)
+    assert titles.index("Retry budget overview") < titles.index("Retry budget runbook")
+
+
+def test_an_external_draft_stays_withheld_and_ranks_last_when_included(ranked):
+    """Its exact title scores as high as the capture's; it is still withheld, and last when asked for."""
+    assert "retry budget" not in _ranked(ranked)
+    assert _ranked(ranked, include_external=True) == [
+        "Retry budget defaults", "Retry budget for the gateway", "Retry budget",
+        "Retry budget overview", "Retry budget runbook", "retry budget"]
+
+
+def test_recall_takes_the_fresh_capture_before_a_weaker_unrated_note(ranked):
+    """recall keeps lookup's order for the shared tier, so the session brief carries the capture."""
+    notes = recall(ranked, query="retry budget", limit=3)["notes"]
+    assert [n["title"] for n in notes] == ["Retry budget defaults", "Retry budget for the gateway", "Retry budget"]
 
 
 def test_lookup_withholds_external_drafts_by_default(vault, capsys):
@@ -101,13 +154,14 @@ def test_lookup_withholds_external_drafts_by_default(vault, capsys):
     assert "Rate limits rollout plan" in titles  # an authored draft stays visible
 
 
-def test_lookup_include_external_brings_them_back_still_after_the_trusted(vault, capsys):
+def test_lookup_include_external_brings_them_back_after_every_other_note(vault, capsys):
     _migrate(vault)
     results = lookup("rate limits", vault, limit=10, include_external=True)
     trust = [r.doc.trust for r in results]
     assert trust.count("external") == 3
+    # Their exact titles outscore every other note here; they still come last (#247).
     assert trust.index("draft") > trust.index("trusted") and min(
-        i for i, t in enumerate(trust) if t == "external") > max(i for i, t in enumerate(trust) if t == "trusted")
+        i for i, t in enumerate(trust) if t == "external") > max(i for i, t in enumerate(trust) if t != "external")
 
 
 def test_recall_never_puts_an_external_draft_among_the_notes(vault, capsys):
