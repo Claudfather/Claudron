@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## [0.10.1] - 2026-11-07
+
+### Fixed
+- **`lookup` ranks a fresh draft by score among the unrated notes ([#247](https://github.com/Claudfather/Claudron/issues/247)).** Since 0.7.0 every unrated note (no `maturity`, which the trust rule counts as trusted) ranked above every draft, whatever the score. A note `capture` had just written is a draft, so in a vault of mostly unrated notes it sank below much weaker matches, even for its own title. Now:
+  - a reviewed note (`verified` or `canonical`) ranks above every other note, whatever the score. It also ranks above every unrated note now; before, score ordered the two together;
+  - below those, score orders the unrated notes and the authored drafts together, an unrated note first at equal score;
+  - an external draft (`source_type` `url` or `session`) is still withheld unless `--include-external`, and an included one now ranks after every other note, authored drafts included.
+
+  `recall` takes its shared-tier notes in `lookup`'s order, so the session brief changes the same way. `trust_class`, `promote` and the withholding are unchanged. Contract: `docs/CLI_CONTRACT.md` §lookup / recall. Tests: `claudron/tests/test_trust.py`.
+
+### Changed
+- **CI runs on `release/**` branches too.** The test workflow ran only for `main`, so a pull request into a release line got no checks. It now runs for pull requests into, and pushes to, `main` and `release/**`.
+
 ## [0.10.0] - 2026-10-16
 
 ### Added

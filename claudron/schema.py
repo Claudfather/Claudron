@@ -202,9 +202,9 @@ EXTERNAL_SOURCE_TYPES = ("url", "session")
 
 # A note's read class (#200 §1): `trusted` (verified, canonical, or unrated
 # legacy), `draft` (an unreviewed note its author wrote — shown, labelled,
-# ranked after every trusted note), or `external` (an unreviewed note from
-# outside — withheld from default reads, shown only in recall's Unverified
-# block).
+# ranked below every verified or canonical note and by score among the unrated
+# ones, #247), or `external` (an unreviewed note from outside — withheld from
+# default reads, shown only in recall's Unverified block).
 TRUST_CLASSES = ("trusted", "draft", "external")
 
 
