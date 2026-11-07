@@ -701,10 +701,13 @@ vendor source; support for unobserved events is not promised by this snippet.
 - `lookup` / `recall` — **trust-aware reads** (#200 §1). Each note has a read
   class, `trust` ∈ `{trusted, draft, external}` (SCHEMA.md §Reads: maturity ×
   origin); `trusted` is its boolean.
-  - **`lookup` ranks every trusted note above every draft**, whatever the score;
-    score orders notes within a class. An **`external`** draft is withheld
-    unless **`--include-external`**. An authored draft is always included,
-    labelled `(draft)`; an included external one, `(unverified draft)`.
+  - **`lookup` ranks every reviewed note (`verified` or `canonical`) above
+    every other note**, whatever the score. Below those, score orders the
+    unrated notes and the authored drafts together, an unrated note first at
+    equal score (#247). An **`external`** draft is withheld unless
+    **`--include-external`**, and an included one ranks after every other note.
+    An authored draft is always included, labelled `(draft)`; an included
+    external one, `(unverified draft)`.
   - **`recall --json`** adds `trust`, `trusted` and `source_url` to every note,
     and two keys to `data`: `unverified` (external drafts, newest first, at most
     `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how many
