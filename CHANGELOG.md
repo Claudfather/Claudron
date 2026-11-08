@@ -18,6 +18,19 @@
 - **The contract register's rows 1–9 describe today's contracts, not the gaps of 2026-07-20 ([#241](https://github.com/Claudfather/Claudron/issues/241)).** Each row was checked against its owner, Claudron's rows against `main` and a sibling's against what it has released, and now says where the contract's text lives and which of its gaps are closed. A changed cell carries a dated note with its previous text, and an "Open:" clause names each gap that is still live, with its tracking issue where there is one. The check found three that no issue tracked. Two are now filed: `claudron plug` can no longer find a fresh clone of current Claudlobby, because its tree walk looks for the `lib/` that Claudlobby#1989 removed ([#243](https://github.com/Claudfather/Claudron/issues/243)); and Claudlobby still treats as live two skills that clauDNA 0.19.0 renamed or folded into another ([Claudlobby#2543](https://github.com/Claudfather/Claudlobby/issues/2543)). The third is row 9's: decision 001's §Monitor still calls the monitor "Not yet built". The header no longer calls rows 1–9 a 2026-07-20 snapshot. Docs only; rows keep their numbers.
 - **Stale status text in `documentation/` corrected ([#244](https://github.com/Claudfather/Claudron/issues/244)).** The E4 and E5 roadmap banners said `PENDING` for epics that have partly shipped; they now say `IN PROGRESS`, per clauDNA's documentation standard. Decision 001 gains a dated amendment recording that boundary phase L1 ([Claudlobby#665](https://github.com/Claudfather/Claudlobby/pull/665)) built the monitor its §Monitor called "Not yet built" and deleted the phantom-MCP warning, and handing the monitor's state to contract register row 9, which drops the "Open:" clause that tracked this. Docs only.
 
+## [0.10.1] - 2026-11-07
+
+### Fixed
+- **`lookup` ranks a fresh draft by score among the unrated notes ([#247](https://github.com/Claudfather/Claudron/issues/247)).** Since 0.7.0 every unrated note (no `maturity`, which the trust rule counts as trusted) ranked above every draft, whatever the score. A note `capture` had just written is a draft, so in a vault of mostly unrated notes it sank below much weaker matches, even for its own title. Now:
+  - a reviewed note (`verified` or `canonical`) ranks above every other note, whatever the score. It also ranks above every unrated note now; before, score ordered the two together;
+  - below those, score orders the unrated notes and the authored drafts together, an unrated note first at equal score;
+  - an external draft (`source_type` `url` or `session`) is still withheld unless `--include-external`, and an included one now ranks after every other note, authored drafts included.
+
+  `recall` takes its shared-tier notes in `lookup`'s order, so the session brief changes the same way. `trust_class`, `promote` and the withholding are unchanged. Contract: `documentation/specs/CLI_CONTRACT.md` §lookup / recall. Tests: `claudron/tests/test_trust.py`.
+
+### Changed
+- **CI runs on `release/**` branches too.** The test workflow ran only for `main`, so a pull request into a release line got no checks. It now runs for pull requests into, and pushes to, `main` and `release/**`.
+
 ## [0.10.0] - 2026-10-16
 
 ### Added

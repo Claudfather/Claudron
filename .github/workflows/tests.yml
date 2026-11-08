@@ -1,15 +1,16 @@
 name: Tests
 
-# Runs the test suite on every PR to main and every push to main. This is the
+# Runs the test suite on every PR to main or a release branch and every push to
+# them (a fix for an earlier release line lands on its release/** branch). This is the
 # gate that makes the boundary program's doc-parity drift tests — TestDocParity
 # (SCHEMA.md), TestEnvironmentDocParity + test_flags_section_defers_to_the_table
 # (CLI_CONTRACT.md) — actually execute on a PR, so a doc-vs-code drift can
 # no longer merge silently. See issue #83.
 on:
   pull_request:
-    branches: [main]
+    branches: [main, "release/**"]
   push:
-    branches: [main]
+    branches: [main, "release/**"]
 
 permissions:
   contents: read
