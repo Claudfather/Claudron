@@ -46,6 +46,13 @@ claudron/
   locking.py      # flock + atomic writes (the write-safety floor)
   promote.py      # Maturity promotion (E5)
   doctor.py       # Vault diagnosis + versioned migrations (`doctor [--fix]`)
+  amend.py        # Section-targeted writes: the fact-level door harvest files into
+  runs.py         # Harvest runs: each write tagged with its run, a run undone in one revert
+  subjects.py     # Subjects and resolve: the read pipes harvest places facts with
+  tags.py         # The tag registry: one git-tracked file of the tags that exist
+  ops.py          # The operations log: what the engine did, per run and per session
+  navigation.py   # `INDEX.md` as a derived navigation file
+  contract.py     # The machine-readable contract (`claudron contract`)
   tests/
     conftest.py   # Shared fixtures (vault_dir, vault_with_projects, etc.)
     test_*.py     # Per-module tests

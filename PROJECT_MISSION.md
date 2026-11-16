@@ -41,7 +41,7 @@ A hive mind any agent fleet can run locally and optionally federate.
 ## In bounds for autonomous work
 
 **Standing permissions:**
-- Bug fixes in MCP server, indexer, CLI
+- Bug fixes in the indexer and CLI
 - Documentation including the reference vault
 - Test additions and coverage improvements
 - Performance improvements to indexer (incremental rebuild, query latency)
