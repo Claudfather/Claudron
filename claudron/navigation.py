@@ -144,6 +144,8 @@ class NavigationResult:
     dropped: dict[str, list[str]] = field(default_factory=dict)
     carried: dict[str, list[str]] = field(default_factory=dict)
     skipped: dict[str, str] = field(default_factory=dict)
+    #: The written files could not be staged for the next sync (W108's message).
+    warnings: list[str] = field(default_factory=list)
     entries_seen: int = 0
     directories_considered: int = 0
 
@@ -533,6 +535,11 @@ def write_navigation(vault: "Vault", *, directories=None,
                 result.skipped[rel] = f"write failed ({exc.__class__.__name__})"
                 continue
             result.written.append(path)
+        if result.written:
+            # Staged, so the next `sync` commits them: sync commits what the
+            # write door staged and nothing written around it.
+            from .engine import stage_written
+            result.warnings = [f.message for f in stage_written(vault, result.written)]
     return result
 
 

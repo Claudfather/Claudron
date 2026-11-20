@@ -277,12 +277,12 @@ def _legacy_vault(root: Path) -> Path:
 class TestFirstMigrations:
     """#190's own "test it on yourself" flow, on a legacy vault."""
 
-    def test_legacy_vault_lists_m001_and_m002_read_only(self, tmp_path, capsys):
+    def test_legacy_vault_lists_m001_m002_and_m004_read_only(self, tmp_path, capsys):
         v = _repo(_legacy_vault(tmp_path / "legacy"))
         before = _fingerprint(v)
         assert main(["--vault", str(v), "doctor", "--json"]) == 1
         data = json.loads(capsys.readouterr().out)["data"]
-        assert [p["id"] for p in data["pending"]] == ["m001", "m002"]
+        assert [p["id"] for p in data["pending"]] == ["m001", "m002", "m004"]
         assert data["vault_format"] == 0
         assert _fingerprint(v) == before
 
@@ -291,10 +291,10 @@ class TestFirstMigrations:
         head = _git(v, "rev-parse", "HEAD").strip()
         assert main(["--vault", str(v), "doctor", "--fix", "--json"]) == 0
         data = json.loads(capsys.readouterr().out)["data"]
-        assert data["applied"] == ["m001", "m002"] and data["pending"] == []
+        assert data["applied"] == ["m001", "m002", "m004"] and data["pending"] == []
         assert data["vault_format"] == VAULT_FORMAT
         log = _git(v, "log", "--format=%s", f"{head}..HEAD").splitlines()
-        assert log == ["migrate(m001,m002): claudron doctor --fix"]
+        assert log == ["migrate(m001,m002,m004): claudron doctor --fix"]
         changed = set(_git(v, "show", "--name-only", "--format=", "HEAD").split())
         assert changed == {".claudron-vault", ".gitignore"}
 
@@ -344,7 +344,7 @@ class TestFirstMigrations:
         v = _legacy_vault(tmp_path / "legacy")
         (v / ".claudron-vault").write_text("# mine\nclaudron: 1\nname: kept\nhub: _shared\nextra: yes\n")
         report = fix(detect(v))
-        assert report.applied == ["m002"]
+        assert report.applied == ["m002", "m004"]
         text = (v / ".claudron-vault").read_text()
         assert text == f"# mine\nclaudron: {VAULT_FORMAT}\nname: kept\nhub: _shared\nextra: yes\n"
 
@@ -556,3 +556,36 @@ class TestWalkScope:
         runtime = _ignored_checkout(vault_dir)
         assert main(["validate", str(runtime)]) == 1
         assert "guide.md" in capsys.readouterr().out
+
+
+_CREDENTIAL_NAMES = [".env.local", "fleet/.env.production", ".netrc", "keys/id_ed25519", "tls/server.pem",
+                     "tls/server.key", "gcp-credentials.json", "client_secret_123.json"]
+
+
+def _ignored(root: Path, names: list[str]) -> list[str]:
+    out = subprocess.run(["git", "-C", str(root), "check-ignore", "--no-index", *names],
+                         capture_output=True, text=True)
+    return out.stdout.split()
+
+
+def test_credential_names_are_ignored_in_a_new_vault_and_added_to_an_older_one(tmp_path, capsys):
+    """Key files, `.env.*`, `.netrc` and credential JSON never become history: `init` writes the
+    rules into a new vault, and `doctor --fix` adds them to a vault from before them (m004)."""
+    from claudron.vault import IDENTITY_FILE, identity_text
+
+    fresh = tmp_path / "fresh"
+    assert main(["init", str(fresh)]) == 0
+    _git(fresh, "init", "-q", "--initial-branch=main")
+    assert _ignored(fresh, _CREDENTIAL_NAMES) == _CREDENTIAL_NAMES
+
+    older = tmp_path / "older"
+    assert main(["init", str(older)]) == 0
+    (older / ".gitignore").write_text("# claudron vault\n**/runtime/\n**/data/events/fleet-*.jsonl\n"
+                                      "**/data/.last-tool-call\n**/data/.idle\n*.bak\n.env\n.claudron/\n")
+    (older / IDENTITY_FILE).write_text(identity_text(older.name, "_shared", fmt=3))
+    _repo(older)
+    assert _ignored(older, _CREDENTIAL_NAMES) == []
+    capsys.readouterr()
+    assert main(["--vault", str(older), "doctor", "--fix", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["applied"] == ["m004"]
+    assert _ignored(older, _CREDENTIAL_NAMES) == _CREDENTIAL_NAMES

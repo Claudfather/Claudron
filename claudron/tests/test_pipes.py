@@ -442,3 +442,45 @@ def test_supersede_into_an_existing_fact_keeps_both_sides_evidence(vault):
     facts, history = _note(vault).split("## History")
     assert "evidence: s:2" in facts and "evidence: n:1" in facts and "Old." not in facts
     assert "evidence: o:1" in history  # the old fact's provenance moved with it
+
+
+def test_resolve_labels_trust_as_lookup_does(vault, capsys):
+    """Plain `resolve` output marks an unreviewed candidate the way `lookup` and `subjects` do."""
+    (vault.root / "_shared" / "knowledge" / "pipeline-from-the-web.md").write_text(
+        NOTE.replace("Deploy Pipeline", "Deploy Pipeline from the web").replace("aliases: [ci deploys]", "aliases: []")
+        .replace("updated: 2026-09-01\n", "updated: 2026-09-01\nmaturity: draft\nsource_type: url\n"))
+    assert main(["--vault", str(vault.root), "resolve", "--name", "Deploy Pipeline"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert next(ln for ln in lines if "Deploy Pipeline from the web" in ln).endswith("(unverified draft)")
+    assert not next(ln for ln in lines if "deploy-pipeline.md" in ln).endswith("draft)")
+
+
+def test_amend_puts_into_a_reviewed_note_only_what_the_user_asserted(vault):
+    """A verified or canonical note takes a fact or an alias only when the user asserted it; a
+    harvested one is refused and nothing is written, whether or not the request names
+    expect_trust."""
+    _path(vault).write_text(NOTE.replace("updated: 2026-09-01\n", "updated: 2026-09-01\nmaturity: Verified\n"))
+    before = _note(vault)
+    for request in ({"op": "append_fact", "section": "Facts", "fact": "From a transcript.", "evidence": _ev()},
+                    {"op": "append_fact", "section": "Facts", "fact": "From a transcript.", "evidence": _ev(),
+                     "expect_trust": "trusted"},
+                    {"op": "add_alias", "alias": "the deploy thing"}):
+        with pytest.raises(AmendError, match="reviewed"):
+            amend(vault, _path(vault), request, no_commit=True)
+        assert _note(vault) == before
+    result = amend(vault, _path(vault), {"op": "append_fact", "section": "Facts", "fact": "The user said so.",
+                                         "evidence": _ev(asserted_by="user")}, no_commit=True)
+    assert result.action == "updated" and "The user said so." in _note(vault)
+
+
+def test_revert_run_counts_only_its_own_revert_commits(gvault):
+    """A commit counts as undone only when a revert-run commit says so: a captured title that reads
+    like a revert record does not make a run look reverted."""
+    amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "Bad fact.", "evidence": _ev()},
+          run_id="bad-run")
+    sha = _cgit(gvault.root, "log", "-1", "--format=%H").stdout.strip()
+    assert main(["--vault", str(gvault.root), "capture", "--type", "knowledge",
+                 "--title", f"This reverts commit {sha}.", "--body", "Reads like a revert record."]) == 0
+    result = revert_run(gvault, "bad-run")
+    assert result.action == "reverted" and result.commits == [sha]
+    assert "Bad fact." not in _note(gvault)

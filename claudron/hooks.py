@@ -36,7 +36,7 @@ from pathlib import Path
 
 from . import ops
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, pull_ff_only, sync
+from .sync import SyncError, left_behind_line, pull_ff_only, sync
 from .vault import Vault, detect
 
 SESSION_START_PULL_TIMEOUT = 2.0  # seconds — the SessionStart latency budget
@@ -200,6 +200,8 @@ def hook_session_end(vault: Vault, payload: dict, *, agent_cli: str = "claude") 
         ops.record(vault, "sync.push", session_id=_session_id(payload), ok=result.ok, detail=str(result.detail or ""))
         if not result.ok:
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
+        if result.left_behind_count:
+            _log(vault, "session-end", f"sync --push left behind: {left_behind_line(result)}")
     # Deliberate, not a residual guard the boundary makes redundant: a
     # vault without a working git setup raises SyncError on every push, so
     # this is the expected-degradation logger ("skipped", symmetric with the

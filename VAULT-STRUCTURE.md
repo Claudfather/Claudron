@@ -95,16 +95,31 @@ The tree is normative. Beyond what its comments state:
   fleet's own `.gitignore`) and an optional vault-root `.env` for vault-wide
   per-machine secrets. `fleet add` scaffolds each fleet's `.env`+`.gitignore`;
   `init` writes (or, on `--adopt`, augments) the vault-root `.gitignore`; a
-  root `.env` is the operator's to create.
-- **The vault-root `.gitignore` is `sync`'s safety net** (#182, F9). `sync`
-  keeps `git add -A`, so these rules are what stop machine droppings entering
-  history: `**/runtime/` (any depth — a nested fleet's `runtime/` too),
-  `**/data/events/fleet-*.jsonl`, `**/data/.last-tool-call`, `**/data/.idle`,
-  `*.bak`, `.env`, `.claudron/`. `fleet.yaml`, `library/`, `voices/`,
-  `missions/` and `shared/` keep flowing and stay browsable. `claudron doctor
-  --fix` appends any missing rule (migration `m002`) without touching existing
-  lines. An ignore rule never untracks a file already committed; `doctor`
-  names those (`D008`) for a human to `git rm --cached`.
+  root `.env` is the operator's to create. The credential names are ignored
+  too, at any depth: `.env.*`, `.netrc`, `_netrc`, `.git-credentials`, key
+  files (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`, `id_dsa`, `id_ecdsa`,
+  `id_ed25519`) and credential JSON (`*credential*.json`,
+  `client_secret*.json`). Nothing the engine commits takes a file with such a
+  name, however it was staged, and `sync` does not push a commit that adds or
+  changes one.
+- **`sync` commits what the write door staged, and nothing else.** A door
+  write that is not committed at once (`--no-commit`, a commit that failed,
+  `new`, `index --navigation`, `fleet add`, `init --adopt` in a repository of
+  its own) is staged, and the next `sync` commits it. A file written around
+  the door, by hand or by any process, stays on disk uncommitted until a person
+  commits it with git; each `sync` names such files (`left_behind`). A staged
+  file that is neither a note (`*.md`) nor a vault file (`.gitignore`,
+  `.gitkeep`, `.claudron-vault`, `fleet.yaml`, `TAGS.yaml`), or that has a
+  credential name, is unstaged and named instead of committed.
+- **The vault-root `.gitignore` keeps machine droppings out of history** (#182,
+  F9) when files are committed by hand: `**/runtime/` (any depth, a nested
+  fleet's `runtime/` too), `**/data/events/fleet-*.jsonl`,
+  `**/data/.last-tool-call`, `**/data/.idle`, `*.bak`, `.env`, `.claudron/`,
+  and the credential names above. `fleet.yaml`, `library/`, `voices/`,
+  `missions/` and `shared/` stay trackable and browsable. `claudron doctor
+  --fix` appends any missing rule (migrations `m002`, `m004`) without touching
+  existing lines. An ignore rule never untracks a file already committed;
+  `doctor` names those (`D008`) for a human to `git rm --cached`.
 
 This tree is the full tenant vault; `SCHEMA.md` §Vault directory taxonomy draws
 the same knowledge tiers from the note-filing side. The Claudlobby-injected

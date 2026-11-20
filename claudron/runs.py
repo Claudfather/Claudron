@@ -8,8 +8,8 @@ as **one** revert commit — or, if any conflicts with later edits, none of
 them. Auto-drain is only safe if it can be undone.
 
 Deliberately no deferred "commit the run later" step: uncommitted run writes
-would sit in the tree, where ``sync``'s safety net sweeps them up untagged,
-and the window #157 closed would reopen.
+would be committed by the next ``sync`` without the run's trailer, and the
+window #157 closed would reopen.
 """
 
 from __future__ import annotations
@@ -73,10 +73,31 @@ def _commits(vault: Vault, run_id: str) -> list[str]:
     return proc.stdout.split() if proc.returncode == 0 else []
 
 
+#: The subject verb of the commit ``revert_run`` makes. No other writer uses it, and a subject's
+#: verb is never note text (``engine._commit_subject``), so only a revert-run commit carries it.
+REVERT_VERB = "revert-run"
+_REVERTED_LINE = re.compile(r"^This reverts commit ([0-9a-f]{40})\.$", re.MULTILINE)
+
+
 def _already_reverted(vault: Vault) -> set[str]:
-    """Every sha a later commit reverted (its message says 'This reverts commit <sha>.'), in one scan."""
-    proc = _git(vault, "log", "--format=%B", "-F", "--grep=This reverts commit")
-    return set(re.findall(r"This reverts commit ([0-9a-f]{40})", proc.stdout)) if proc.returncode == 0 else set()
+    """Every sha a revert-run commit reverted, in one scan.
+
+    Only revert-run's own commits count: their subject's verb is ``revert-run`` and
+    their body has one ``This reverts commit <sha>.`` line per commit. Any other
+    commit that carries those words (a captured title is a commit subject) is
+    not a revert record, and reading it as one would leave its run in place.
+    """
+    from .engine import _subject_verb
+
+    proc = _git(vault, "log", "--format=%x1e%s%x1f%b", "-F", "--grep=This reverts commit")
+    if proc.returncode != 0:
+        return set()
+    shas: set[str] = set()
+    for record in proc.stdout.split("\x1e"):
+        subject, _, body = record.partition("\x1f")
+        if _subject_verb(subject) == REVERT_VERB:
+            shas.update(_REVERTED_LINE.findall(body))
+    return shas
 
 
 def revert_run(vault: Vault, run_id: str) -> RunResult:
@@ -107,7 +128,7 @@ def revert_run(vault: Vault, run_id: str) -> RunResult:
             _git(vault, "revert", "--abort")
             said = (proc.stderr or proc.stdout or "").strip()[:200]
             raise RunError(f"reverting run {run_id} conflicts with later edits; nothing was reverted ({said})")
-        message = (f"{_commit_subject('revert-run', run_id)}\n\n"
+        message = (f"{_commit_subject(REVERT_VERB, run_id)}\n\n"
                    + "\n".join(f"This reverts commit {sha}." for sha in todo))
         done = _git(vault, "commit", "-m", message)
         if done.returncode != 0:

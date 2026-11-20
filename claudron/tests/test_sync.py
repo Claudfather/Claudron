@@ -6,6 +6,7 @@ within the conftest tmp_path convention.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import socket
@@ -84,18 +85,6 @@ class TestSyncRoundTrip:
         assert rc == 0
         assert "Machine A Finding" in capsys.readouterr().out
 
-    def test_sync_commits_unstaged_vault_changes(self, synced_pair, capsys):
-        """Captures don't git-commit; sync owns the commit+push so notes
-        actually travel."""
-        a, _ = synced_pair
-        (a / "_shared" / "knowledge" / "loose.md").write_text(
-            "---\ntitle: Loose Note\ntype: knowledge\nstatus: current\n"
-            "owner: t\ncreated: 2026-07-01\nupdated: 2026-07-01\n---\n\n# L\n"
-        )
-        assert main(["--vault", str(a), "sync"]) == 0
-        status = _git(a, "status", "--porcelain").stdout
-        assert status.strip() == ""  # committed and pushed
-
     def test_sync_not_a_git_repo_is_env_error(self, vault_dir: Path, capsys):
         rc = main(["--vault", str(vault_dir), "sync"])
         assert rc == 3
@@ -131,6 +120,7 @@ class TestSyncRoundTrip:
             "---\ntitle: N\ntype: knowledge\nstatus: current\n"
             "owner: t\ncreated: 2026-07-01\n---\n\n# N\n\nbody\n"
         )
+        run_git(root, "add", "--", "_shared/knowledge/n.md")  # staged, as the door leaves it
         result = sync(detect(root), pull=False, push=False)
         assert result.committed, f"commit dropped on an identity-less host: {result.detail}"
 
@@ -246,11 +236,13 @@ class TestConflictQuarantine:
         (a / self.NOTE).write_text(
             (a / self.NOTE).read_text().replace("Original line.", "A's truth.")
         )
+        _git(a, "add", self.NOTE)  # staged, as the door leaves an edit for sync
         assert main(["--vault", str(a), "sync"]) == 0
         capsys.readouterr()
         (b / self.NOTE).write_text(
             (b / self.NOTE).read_text().replace("Original line.", "B's truth.")
         )
+        _git(b, "add", self.NOTE)
         return b, b / self.NOTE
 
     def _land_markers(self, synced_pair, capsys) -> tuple[Path, Path]:
@@ -526,15 +518,18 @@ class TestRefusesToStartABadRebase:
         assert _git(a, "rev-parse", "HEAD").stdout.strip() == head_before
         assert _git(a, "status", "--porcelain").stdout.strip(), "change was consumed"
 
-    def test_dirty_tree_after_a_failed_commit_skips_the_pull(
+    def test_a_failed_commit_no_longer_stops_the_pull_and_its_files_are_named(
         self, synced_pair, monkeypatch
     ):
-        """Defect 2: the pull was unconditional on index state, so a failed
-        commit was followed by a rebase attempt against a dirty tree."""
+        """Defect 2 was a rebase started against a dirty tree. Integration runs
+        off the live tree now, and the live tree moves only where git's own
+        refusals allow, so a commit that did not take no longer stops the pull:
+        its files stay on disk, staged, and are named as left behind."""
         from claudron import sync as sync_mod
 
         a, _ = synced_pair
         (a / "_shared" / "knowledge" / "pending.md").write_text(_note("Pending"))
+        _git(a, "add", "_shared/knowledge/pending.md")  # staged, as the door leaves it
         real = sync_mod.run_git
 
         def fake(root, *args, **kw):
@@ -545,9 +540,10 @@ class TestRefusesToStartABadRebase:
         monkeypatch.setattr(sync_mod, "run_git", fake)
         result = sync_mod.sync(detect(a), pull=True, push=False)
 
-        assert not result.ok
-        assert "working tree is not clean" in result.detail
-        assert not result.pulled
+        assert result.ok, result.detail
+        assert not result.committed and result.pulled
+        assert result.left_behind == ["_shared/knowledge/pending.md"]
+        assert (a / "_shared" / "knowledge" / "pending.md").is_file()
 
     def test_branch_without_upstream_skips_pull_but_still_pushes(self, synced_pair):
         """A never-pushed branch has nothing to rebase onto. The old refspec
@@ -555,6 +551,7 @@ class TestRefusesToStartABadRebase:
         a, _ = synced_pair
         _git(a, "checkout", "-b", "never-pushed")
         (a / "_shared" / "knowledge" / "fresh.md").write_text(_note("Fresh"))
+        _git(a, "add", "_shared/knowledge/fresh.md")  # staged, as the door leaves it
 
         # branch= since C1 (#152), for the same reason as the test above: the
         # subject is the missing upstream, not the branch policy.
@@ -769,8 +766,10 @@ class TestStaleLock:
         return lock
 
     def _dirty(self, repo: Path) -> Path:
+        """A door write the next sync commits: written and staged."""
         note = repo / "_shared" / "knowledge" / "locked.md"
         note.write_text(_note("Locked"))
+        _git(repo, "add", "_shared/knowledge/locked.md")
         return note
 
     # --- the predicate ----------------------------------------------------
@@ -909,11 +908,10 @@ class TestStaleLock:
         assert lock.exists(), "an expirable lock must survive a refused sync"
         assert "index.lock" not in result.detail
 
-    def test_a_failed_add_names_gits_own_message_not_the_dirty_tree(self, synced_pair, monkeypatch):
-        """The misdirection that hid the lock for ten days: an unchecked `add`
-        fell through to a failing commit, and the porcelain re-read then
-        reported "not clean after the pre-pull commit" — true, useless, and
-        pointing at the tree rather than the cause."""
+    def test_an_unreadable_index_names_gits_own_message_not_the_dirty_tree(self, synced_pair, monkeypatch):
+        """The misdirection that hid the lock for ten days: an unchecked index
+        operation fell through to a failing commit, and a porcelain re-read then
+        blamed the tree. Reading what is staged is that operation now."""
         a, _ = synced_pair
         self._dirty(a)
         import claudron.sync as sync_mod
@@ -922,9 +920,9 @@ class TestStaleLock:
 
         def fake(root, *args, **kw):
             calls.append(args[0])
-            if args[0] == "add":
+            if args[0] == "status":
                 return subprocess.CompletedProcess(
-                    ["git", "add"], 128, "",
+                    ["git", "status"], 128, "",
                     "fatal: Unable to create '.git/index.lock': File exists.")
             return real(root, *args, **kw)
 
@@ -932,7 +930,7 @@ class TestStaleLock:
         result = sync(detect(a), pull=False, push=False)
         assert not result.ok
         assert "index.lock" in result.detail and "Unable to create" in result.detail
-        assert "commit" not in calls, "a failed add must return before commit"
+        assert "commit" not in calls, "an unreadable index must return before commit"
 
 
 class TestCheck:
@@ -1521,18 +1519,16 @@ class TestPullFfOnly:
 
 class TestTheSafetyNetStays:
     """#157 requirement 2. The write door commits its own notes now, so sync's
-    commit could look redundant — it is not. It is the net for everything written
-    AROUND the door: a hand-edited plan, a working document, a bot writing with a
-    shell redirect (which this estate still does). Deleting it would strand
-    exactly that population."""
+    commit could look redundant; it is not. It commits the door writes that were
+    not committed at once (`--no-commit`, a commit that failed, `new`, `index
+    --navigation`, `fleet add`, `init`): they are staged, and only they are."""
 
-    def test_a_file_written_around_the_door_still_travels(self, synced_pair):
+    def test_a_door_write_that_was_not_committed_still_travels(self, synced_pair, capsys):
         a, b = synced_pair
-        # Nobody's capture wrote this — a hand edit, the net's whole population.
-        (a / "_shared" / "knowledge" / "hand-written.md").write_text(
-            "---\ntitle: Hand Written\ntype: knowledge\nstatus: current\n"
-            "owner: t\ncreated: 2026-07-01\nupdated: 2026-07-01\n"
-            "---\n\n# Hand Written\n\nWritten with a redirect.\n")
+        # Written through the door without a commit: staged for this sync.
+        assert main(["--vault", str(a), "capture", "--type", "knowledge", "--title", "Hand Written",
+                     "--body", "Staged, not committed.", "--owner", "t", "--no-commit"]) == 0
+        capsys.readouterr()
         result = sync(detect(a), pull=False, push=False, timeout=30.0)
         assert result.ok and result.committed, (result.ok, result.detail)
         subject = _git(a, "log", "-1", "--format=%s").stdout.strip()
@@ -1546,6 +1542,7 @@ class TestTheSafetyNetStays:
         (a / "_shared" / "knowledge" / "one.md").write_text(
             "---\ntitle: One\ntype: knowledge\nstatus: current\nowner: t\n"
             "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# One\n\nx\n")
+        _git(a, "add", "_shared/knowledge/one.md")  # staged, as the door leaves it
         sync(detect(a), pull=False, push=False, timeout=30.0)
         subject = _git(a, "log", "-1", "--format=%s").stdout.strip()
         assert subject == f"vault sync: 1 straggler(s) from {socket.gethostname()}", subject
@@ -2166,15 +2163,181 @@ class TestCommitPathsCommitsOnlyItsPaths:
         assert _git(root, "rev-parse", "HEAD").stdout == head
         assert _git(root, "diff", "--cached", "--name-only").stdout.split() == ["stranger.txt"]
 
-    def test_no_paths_is_still_the_nets_whole_tree_commit(self, tmp_path):
-        """Control: `sync`'s safety net passes no paths, and its commit must
-        keep taking everything, staged or not."""
+    def test_no_paths_is_refused_rather_than_read_as_everything(self, tmp_path):
+        """There is no "everything": sync commits what the door staged
+        (`commit_staged`), so an empty path list is a caller's mistake."""
         root = self._repo_with_a_staged_stranger(tmp_path)
-        (root / "straggler.md").write_text("written around the door\n")
+        head = _git(root, "rev-parse", "HEAD").stdout
 
-        outcome = sync_mod.commit_paths(root, [], "net commit")
+        with pytest.raises(ValueError):
+            sync_mod.commit_paths(root, [], "net commit")
 
-        assert outcome.ok, outcome.error
-        committed = set(_git(root, "show", "--name-only", "--format=", "HEAD").stdout.split())
-        assert committed == {"straggler.md", "stranger.txt"}, committed
-        assert _git(root, "diff", "--cached", "--name-only").stdout == ""
+        assert _git(root, "rev-parse", "HEAD").stdout == head
+
+
+class TestPullWithFilesLeftOnDisk:
+    """The pull no longer stops because files are still on disk after the sync's own commit.
+    git's own refusals guard them path by path: a local file the incoming change touches stops
+    the pull and is named, and an unrelated one is kept while the pull lands. (A pre-commit hook
+    that fails stands in for whatever leaves a file uncommitted.)"""
+
+    @staticmethod
+    def _commits_fail(clone: Path) -> None:
+        hook = clone / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+
+    @staticmethod
+    def _push_from(clone: Path, rel: str, text: str) -> None:
+        (clone / rel).write_text(text)
+        _git(clone, "add", rel)
+        _git(clone, "commit", "-m", f"add {rel}")
+        _git(clone, "push", "origin", "main")
+
+    def test_an_unrelated_local_file_is_kept_and_the_pull_lands(self, synced_pair):
+        a, b = synced_pair
+        self._push_from(b, "_shared/knowledge/from-b.md", "---\ntitle: From B\ntype: knowledge\n"
+                        "status: current\nowner: t\ncreated: 2026-07-01\nupdated: 2026-07-01\n---\n\n# From B\n")
+        self._commits_fail(a)
+        (a / "scratch.txt").write_text("left on this disk\n")
+
+        result = sync(detect(a), push=False)
+
+        assert result.ok, result.detail
+        assert result.pulled and (a / "_shared" / "knowledge" / "from-b.md").is_file()
+        assert (a / "scratch.txt").read_text() == "left on this disk\n"
+
+    def test_a_local_file_the_pull_would_replace_stops_it_and_is_named(self, synced_pair):
+        a, b = synced_pair
+        self._push_from(b, "_shared/knowledge/clash.md", "from B\n")
+        self._commits_fail(a)
+        (a / "_shared" / "knowledge" / "clash.md").write_text("from A\n")
+        head = _git(a, "rev-parse", "HEAD").stdout
+
+        result = sync(detect(a), push=False)
+
+        assert not result.ok and "_shared/knowledge/clash.md" in result.detail, result.detail
+        assert (a / "_shared" / "knowledge" / "clash.md").read_text() == "from A\n"
+        assert _git(a, "rev-parse", "HEAD").stdout == head
+
+
+_BY_HAND = ("---\ntitle: By Hand\ntype: knowledge\nstatus: current\nowner: t\ncreated: 2026-07-01\n"
+            "updated: 2026-07-01\n---\n\n# By Hand\n\nWritten outside the write door.\n")
+
+
+def _remote_files(clone: Path) -> set[str]:
+    return set(_git(clone, "ls-tree", "-r", "--name-only", "origin/main").stdout.split())
+
+
+class TestSyncCommitsOnlyWhatTheDoorStaged:
+    """sync commits what the write door staged, and nothing written around it. A file written by
+    hand or by any other process stays on disk, uncommitted, and is named; a staged file with a
+    credential-shaped name or that is not a vault file is unstaged and named; and nothing with a
+    credential-shaped name is pushed, whoever committed it."""
+
+    def test_a_door_write_travels_and_files_written_around_the_door_do_not(self, synced_pair, capsys):
+        a, _ = synced_pair
+        assert main(["--vault", str(a), "capture", "--type", "knowledge", "--title", "Door Note",
+                     "--body", "Written through the door.", "--owner", "t", "--no-commit"]) == 0
+        (a / "_shared" / "CONVENTIONS.md").write_text("---\nmaturity: verified\n---\n\n- Written by hand.\n")
+        (a / "projects" / "CLAUDE.md").write_text("Written by hand.\n")
+        (a / "_shared" / "knowledge" / "by-hand.md").write_text(_BY_HAND)
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 0
+
+        remote = _remote_files(a)
+        assert "_shared/knowledge/door-note.md" in remote
+        assert "_shared/knowledge/by-hand.md" not in remote
+        for rel in ("_shared/CONVENTIONS.md", "projects/CLAUDE.md"):
+            assert "Written by hand" not in _git(a, "show", f"origin/main:{rel}").stdout, rel
+        err = capsys.readouterr().err
+        assert "left behind: 3 file(s)" in err
+        assert all(rel in err for rel in ("_shared/CONVENTIONS.md", "projects/CLAUDE.md",
+                                          "_shared/knowledge/by-hand.md"))
+        assert (a / "_shared" / "knowledge" / "by-hand.md").read_text() == _BY_HAND
+
+    def test_a_staged_credential_or_non_vault_file_is_unstaged_and_named(self, synced_pair, capsys):
+        a, _ = synced_pair
+        (a / "id_ed25519").write_text("not a real key\n")
+        (a / "diagram.png").write_bytes(b"\x89PNG\r\n")
+        _git(a, "add", "-f", "id_ed25519", "diagram.png")
+        assert main(["--vault", str(a), "capture", "--type", "knowledge", "--title", "Door Note",
+                     "--body", "Written through the door.", "--owner", "t", "--no-commit"]) == 0
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 1
+
+        err = capsys.readouterr().err
+        assert "id_ed25519" in err and "diagram.png" in err
+        remote = _remote_files(a)
+        assert "_shared/knowledge/door-note.md" in remote
+        assert "id_ed25519" not in remote and "diagram.png" not in remote
+        assert _git(a, "diff", "--cached", "--name-only").stdout == ""
+        assert (a / "id_ed25519").is_file() and (a / "diagram.png").is_file()
+
+    def test_the_push_stops_on_a_commit_that_adds_a_credential_shaped_name(self, synced_pair, capsys):
+        a, _ = synced_pair
+        (a / "_shared" / ".env.local").write_text("TOKEN=not-real\n")
+        _git(a, "add", "-f", "_shared/.env.local")
+        _git(a, "commit", "-m", "committed by hand")
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 1
+
+        assert "_shared/.env.local" in capsys.readouterr().err
+        assert "_shared/.env.local" not in _remote_files(a)
+
+    @pytest.mark.parametrize("writer", ["new", "index --navigation", "fleet add", "init --adopt"])
+    def test_every_door_write_is_staged_for_the_next_sync(self, tmp_path, writer, capsys):
+        root = tmp_path / "v"
+        if writer == "init --adopt":
+            (root / "notes").mkdir(parents=True)
+            (root / "notes" / "kept.md").write_text("# Kept\n")
+            _git(tmp_path, "init", "-q", "--initial-branch=main", str(root))
+            _git(root, "add", "-A")
+            _git(root, "commit", "-m", "before the vault")
+            assert main(["init", str(root), "--adopt"]) == 0
+            expect = {".claudron-vault", ".gitignore", "_shared/CONVENTIONS.md", "projects/CLAUDE.md"}
+        else:
+            assert main(["init", str(root)]) == 0
+            _git(tmp_path, "init", "-q", "--initial-branch=main", str(root))
+            _git(root, "add", "-A")
+            _git(root, "commit", "-m", "seed")
+            (root / "_shared" / "knowledge" / "seeded.md").write_text(_BY_HAND)
+            _git(root, "add", "-A")
+            _git(root, "commit", "-m", "a note")
+            args = {"new": ["new", "knowledge", "Fresh Home"], "index --navigation": ["index", "--navigation"],
+                    "fleet add": ["fleet", "add", "crew"]}[writer]
+            assert main(["--vault", str(root), *args]) == 0
+            expect = {"new": {"_shared/knowledge/fresh-home.md"},
+                      "index --navigation": {"_shared/knowledge/INDEX.md"},
+                      "fleet add": {"crew/fleet.yaml", "crew/.gitignore"}}[writer]
+        capsys.readouterr()
+
+        staged = set(_git(root, "diff", "--cached", "--name-only").stdout.split())
+        assert expect <= staged, staged
+        assert not any(path.endswith(".env") for path in staged)
+        result = sync(detect(root), pull=False, push=False)
+        assert result.committed and expect <= set(_git(root, "show", "--name-only", "--format=", "HEAD").stdout.split())
+
+    def test_every_sync_names_what_it_left_behind(self, synced_pair, capsys):
+        """The first 20 paths and a count, on stderr, in --json and in the hook log; never in
+        `detail`, so a clone that keeps such files does not read as failing on every run."""
+        from claudron.hooks import hook_session_end
+
+        a, _ = synced_pair
+        for n in range(25):
+            (a / "_shared" / "knowledge" / f"by-hand-{n:02d}.md").write_text(_BY_HAND)
+
+        result = sync(detect(a), pull=False, push=False)
+        assert result.ok, result.detail
+        assert result.left_behind_count == 25 and len(result.left_behind) == 20
+        assert result.left_behind[0] == "_shared/knowledge/by-hand-00.md"
+
+        assert main(["--vault", str(a), "sync", "--json"]) == 0
+        assert json.loads(capsys.readouterr().out)["data"]["left_behind_count"] == 25
+        assert main(["--vault", str(a), "sync"]) == 0
+        assert "left behind: 25 file(s)" in capsys.readouterr().err and "and 5 more" not in result.detail
+        hook_session_end(detect(a), {})
+        assert "left behind: 25 file(s)" in (a / ".claudron" / "hooks.log").read_text()

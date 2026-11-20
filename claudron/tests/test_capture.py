@@ -329,6 +329,23 @@ class TestCaptureUpdate:
         assert rc == 2
         assert "no such note" in capsys.readouterr().err
 
+    def test_update_adds_to_a_reviewed_note_only_what_the_user_asserted(self, vault_dir: Path, capsys):
+        """A verified or canonical note takes an addendum only when the user asserted it: anything
+        else is refused (exit 2) and the note stays as it was."""
+        existing = _existing(vault_dir)
+        existing.write_text(existing.read_text().replace("updated: 2026-06-10\n",
+                                                         "updated: 2026-06-10\nmaturity: canonical \n"))
+        before = existing.read_text()
+        rel = "_shared/knowledge/retry-strategy.md"
+        for who in ([], ["--asserted-by", "agent"]):
+            rc = main(["--vault", str(vault_dir), "capture", "--update", rel,
+                       "--body", "Text from a web page.", *who])
+            assert rc == 2 and "reviewed" in capsys.readouterr().err
+            assert existing.read_text() == before
+        rc = main(["--vault", str(vault_dir), "capture", "--update", rel,
+                   "--body", "The user said so.", "--asserted-by", "user"])
+        assert rc == 0 and "The user said so." in existing.read_text()
+
 
 class TestCaptureValidation:
     def test_invalid_finding_rejected_with_findings(self, vault_dir: Path, capsys, monkeypatch):

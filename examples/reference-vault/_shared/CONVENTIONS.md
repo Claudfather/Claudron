@@ -1,3 +1,7 @@
+---
+maturity: verified
+---
+
 # Vault conventions
 
 <!-- Filled-in twin of schema.CONVENTIONS_TEMPLATE (the init default) —

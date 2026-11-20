@@ -1,6 +1,6 @@
 """Vault sync: the git leg of the SD-card loop (E2).
 
-`sync` is a thin, explicit git wrapper — commit vault changes, integrate
+`sync` is a thin, explicit git wrapper: commit what the write door staged, integrate
 the upstream, push. Integration never rewrites the live tree: a behind
 clone fast-forwards, a diverged one is rebased in a throwaway worktree and
 the live tree moves only once, by `reset --keep`, to the finished tip
@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .locking import vault_write_lock
-from .vault import Vault, scan_quarantine
+from .vault import Vault, is_secret_name, scan_quarantine, split_commit_refusals
 
 
 @dataclass
@@ -60,6 +60,14 @@ class SyncResult:
     #: false-signal class. So the count gets its own field and `detail` stays
     #: empty, which keeps `ok` True and keeps the number.
     local_ahead: int | None = None
+    #: Files still uncommitted after the sync's own commit: written outside the
+    #: write door, so sync did not stage them (the first :data:`LEFT_BEHIND_SHOWN`,
+    #: sorted). NOT `detail`, for the reason `local_ahead` is not: a clone that
+    #: keeps such files would otherwise read as failing on every run. They are
+    #: named, so nothing stops travelling silently.
+    left_behind: list[str] = field(default_factory=list)
+    #: How many files that is in all (``left_behind`` shows at most 20 of them).
+    left_behind_count: int = 0
 
     @property
     def ok(self) -> bool:
@@ -73,7 +81,13 @@ class SyncResult:
             "quarantined": self.quarantined,
             "detail": self.detail,
             "local_ahead": self.local_ahead,
+            "left_behind": self.left_behind,
+            "left_behind_count": self.left_behind_count,
         }
+
+
+#: How many left-behind paths a result names; ``left_behind_count`` has the total.
+LEFT_BEHIND_SHOWN = 20
 
 
 # Default per-git-op bound when a caller passes no timeout. The hooks pass their
@@ -517,16 +531,14 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
                  timeout: float | None = None) -> CommitOutcome:
     """``git add`` the NAMED paths and commit them. Returns the commit's result.
 
-    Extracted from :func:`sync` so the write door and the safety net share one
-    definition of "stage and commit" — the identity fallback, the bounded
-    invoker, and the add-failure-is-reported-not-swallowed rule (#157).
+    The write door's one definition of "stage and commit": the identity
+    fallback, the bounded invoker, and the add-failure-is-reported-not-swallowed
+    rule (#157).
 
-    **It stages and commits only what it is given.** `sync` passes nothing and
-    gets `add -A` and a bare commit (the net sweeps whatever is lying around);
-    the write door passes the note it just wrote, so a capture cannot commit a
-    half-finished file somebody else was editing in the same tree. An empty
-    ``paths`` therefore means "everything" and is the net's call, never the
-    door's.
+    **It stages and commits only what it is given**, so a capture cannot commit a
+    half-finished file somebody else was editing in the same tree. ``paths`` must
+    name something: there is no "everything" (``sync`` commits what the door
+    staged, through :func:`commit_staged`).
 
     THE COMMIT TAKES THE SAME PATHSPEC AS THE ADD (#211): a bare `git commit`
     takes the whole index, so a change somebody else had already staged would
@@ -539,14 +551,86 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
     is `committed=False`, for the write door it is a warning on a note that is
     already on disk. Collapsing those would force one of them to lie.
     """
+    if not paths:
+        raise ValueError("commit_paths needs the paths it commits")
     t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
-    pathspec = ["--", *[str(p) for p in paths]] if paths else []
-    added = run_git(root, "add", *(pathspec or ["-A"]), timeout=t)
+    pathspec = ["--", *[str(p) for p in paths]]
+    added = run_git(root, "add", *pathspec, timeout=t)
     if added.returncode != 0:
         # Hand the ADD's failure back, not a commit that was never attempted:
         # naming the cause rather than the symptom is why sync stopped here too.
         return CommitOutcome("add", added)
     return CommitOutcome("commit", run_git(root, "commit", "-m", message, *pathspec, timeout=t))
+
+
+def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) -> subprocess.CompletedProcess:
+    """``git add`` exactly the named paths, committing nothing: how a write that is
+    not committed at once (``--no-commit``, `new`'s editor, `index --navigation`,
+    `fleet add`, `init`) hands its files to the next :func:`sync`, which commits
+    what is staged and nothing else."""
+    t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
+    return run_git(root, "add", "--", *[str(p) for p in paths], timeout=t)
+
+
+def commit_staged(root: Path, message: str, *, timeout: float | None = None) -> CommitOutcome:
+    """Commit what is staged and nothing else: sync's own commit."""
+    t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
+    return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
+
+
+def _status(root: Path, t: float, *, untracked: str = "normal") -> tuple[list[tuple[str, str, str]] | None, str]:
+    """``(index, worktree, path)`` for every uncommitted path, from one ``git status -z``
+    (a rename as a delete plus an add), and ``""``; or ``None`` and git's own message.
+
+    ``untracked`` is git's ``--untracked-files`` mode: ``normal`` keeps an untracked
+    directory one entry ("dir/"), so a sync never walks one; ``all`` lists every file."""
+    out = run_git(root, "status", "--porcelain=v1", "-z", "--no-renames",
+                  f"--untracked-files={untracked}", timeout=t)
+    if out.returncode != 0:
+        said = (out.stderr or out.stdout or "").strip()[:200]
+        return None, said or f"exit {out.returncode}"
+    return [(entry[0], entry[1], entry[3:]) for entry in out.stdout.split("\0") if len(entry) > 3], ""
+
+
+def uncommitted_paths(root: Path, t: float, *, untracked: str = "all") -> list[str] | None:
+    """Every path with an uncommitted change (staged, changed, deleted or untracked), sorted;
+    None if unreadable."""
+    entries, _said = _status(root, t, untracked=untracked)
+    return None if entries is None else sorted({path for _x, _y, path in entries})
+
+
+def _unstage(root: Path, paths: list[str], t: float) -> subprocess.CompletedProcess:
+    """Take *paths* out of the index (back to HEAD's version, or out entirely when new);
+    the files on disk are not touched."""
+    if run_git(root, "rev-parse", "--verify", "-q", "HEAD", timeout=t).returncode == 0:
+        return run_git(root, "reset", "-q", "HEAD", "--", *paths, timeout=t)
+    return run_git(root, "rm", "--cached", "-q", "--", *paths, timeout=t)
+
+
+def _outgoing_secret_names(root: Path, t: float) -> list[str] | None:
+    """Secret-shaped file names that commits not yet on the remote add or change; None if unreadable."""
+    out = run_git(root, "log", "--format=", "--name-only", "--no-renames", "--diff-filter=AMT", "-z",
+                  "HEAD", "--not", "--remotes=origin", timeout=t)
+    if out.returncode != 0:
+        return None
+    return sorted({name.strip("\n") for name in out.stdout.split("\0")
+                   if name.strip() and is_secret_name(name.strip("\n"))})
+
+
+def name_paths(shown: list[str], total: int | None = None) -> str:
+    """Paths for a message: at most :data:`LEFT_BEHIND_SHOWN` of *shown*, then how many more
+    there are of *total* (default: all of *shown*)."""
+    total = len(shown) if total is None else total
+    listed = shown[:LEFT_BEHIND_SHOWN]
+    rest = total - len(listed)
+    return ", ".join(listed) + (f" and {rest} more" if rest > 0 else "")
+
+
+def left_behind_line(result: SyncResult) -> str:
+    """The left-behind files as one line, for the CLI's stderr and the hook log."""
+    return (f"{result.left_behind_count} file(s) not committed, written outside the write door: "
+            f"{name_paths(result.left_behind, result.left_behind_count)} "
+            "(commit them with git, or write them through the door)")
 
 
 def _reap_integration(root: Path, wt: Path | None, branch: str | None,
@@ -621,8 +705,8 @@ def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
     discard a straggler write silently — this issue's own failure mode re-entering
     through its fix, since a file absent from disk is precisely what nobody
     notices. If a review ever argues for `--hard` because a reset refused, the
-    refusal was correct and the remedy is to commit the straggler, which sync's
-    safety net does before this runs.
+    refusal was correct and the remedy is for whoever wrote the local file to
+    commit it (sync commits only what the write door staged).
 
     **ON LOCKING.** This assumes only what `sync()` already assumes: the caller
     holds `vault_write_lock` for the whole critical section. It adds no new
@@ -752,7 +836,7 @@ def sync(
     result = SyncResult()
 
     # Hold the vault write-lock across the whole git critical section: a
-    # `git add -A`/commit or a rebase that rewrites working-tree files must not
+    # commit or a rebase that rewrites working-tree files must not
     # interleave with a concurrent `capture` writing a note + index on the same
     # machine (the local-writer race the lock exists for; cross-machine
     # serialization still happens at the git layer below).
@@ -795,7 +879,7 @@ def sync(
             )
             return _done(result)
 
-        # A side branch is refused BEFORE the `add -A` below, not after: the
+        # A side branch is refused BEFORE the commit below, not after: the
         # whole harm of a clone on the wrong branch is that it keeps
         # accumulating work nothing else can see, so a refusal that committed
         # first would add one more stranded commit each time it fired.
@@ -834,8 +918,12 @@ def sync(
         else:
             expired_note = None
 
+        # What this run did or refused that stays true whatever happens next:
+        # an expired lock it removed, staged files it would not commit.
+        standing: list[str] = [expired_note] if expired_note else []
+
         def _detail(text: str) -> str:
-            """Compose a detail that never drops a repair we performed.
+            """Compose a detail that never drops a repair we performed or a refusal we made.
 
             An expired lock is something this run DID, and it stays true
             whatever happens afterwards. Without composing, the next
@@ -843,64 +931,64 @@ def sync(
             ten-day wedge reports only its next problem -- which is the same
             class of silence this issue exists to end.
             """
-            return f"{expired_note}; {text}" if expired_note else text
+            return "; ".join([*standing, text])
 
-        # Commit any working-tree changes first. SINCE #157 THE WRITE DOOR
-        # COMMITS ITS OWN NOTES, so this is the SAFETY NET rather than the only
-        # commit: what it still catches is everything written AROUND the door --
-        # a hand-edited plan, a working document, a bot writing with a shell
-        # redirect (which this estate does). The older comment here said
-        # "captures don't commit, sync owns the commit so notes actually travel",
-        # which stopped being true at #157 and would have sent the next reader
-        # looking for the durability guarantee in the wrong place.
-        porcelain = run_git(root, "status", "--porcelain", timeout=t).stdout.strip()
-        if porcelain:
-            # THE SAFETY NET, and it stays even though the write door now
-            # commits its own notes (#157). What it catches is everything
-            # written AROUND the door -- a hand-edited plan, a working document,
-            # a bot writing with a shell redirect (which this estate still
-            # does). Deleting it because captures commit themselves would
-            # strand exactly those files, which is the population it exists for.
-            #
-            # "straggler(s)" rather than "change(s)" on purpose: the two commit
-            # classes stay countable in `git log`, so "how much still arrives
-            # around the door" is a number rather than an impression.
-            n = len(porcelain.splitlines())
-            outcome = commit_paths(
-                root, [],   # [] = add -A: the net sweeps, the door does not
-                f"vault sync: {n} straggler(s) from {socket.gethostname()}",
-                timeout=t,
-            )
-            if not outcome.ok and outcome.step == "add":
-                # The pre-existing rule, preserved: a failed STAGE is a refusal
-                # naming git's own message, never a commit that was never
-                # attempted and a porcelain re-read blaming the tree.
-                result.detail = _detail(f"git add failed: {outcome.error}")
-                return _done(result)
-            result.committed = outcome.ok
+        # Commit what the write door staged, and nothing else. SINCE #157 THE
+        # DOOR COMMITS ITS OWN NOTES; what is still staged here is a door write
+        # that was not committed at once (`--no-commit`, a commit that failed,
+        # `new`, `index --navigation`, `fleet add`, `init`). A file written
+        # AROUND the door -- by hand, or by any process -- is never staged by
+        # sync: it stays on disk, uncommitted, and is named in `left_behind`.
+        # Git's index is the record of what the door wrote: adding to it takes
+        # running git, not just writing a file.
+        # One status read serves the whole step: what is staged (the index
+        # column), what is refused, and what is left behind.
+        entries, said = _status(root, t)
+        if entries is None:
+            # git's own message, never a re-read blaming the tree (the rule a
+            # failed stage followed when sync still staged files itself).
+            result.detail = _detail(f"could not read the tree's status ({said}); nothing was committed")
+            return _done(result)
+        if entries:
+            staged = {path for x, _y, path in entries if x not in " ?!"}
+            # Staged by hand or by the door, a credential-shaped name or a file
+            # that is not a vault file is never committed here: it is taken out
+            # of the index (the file on disk stays) and named. A staged deletion
+            # adds nothing, so it is never refused.
+            _ok, refused = split_commit_refusals(sorted(p for x, _y, p in entries if x not in " ?!D"))
+            if refused:
+                unstaged = _unstage(root, refused, t)
+                if unstaged.returncode != 0:
+                    said = (unstaged.stderr or unstaged.stdout or "").strip()[:200]
+                    result.detail = _detail(f"refusing to commit {name_paths(refused)} and could not "
+                                            f"unstage them: {said}; nothing was committed")
+                    return _done(result)
+                standing.append(f"not committed: {len(refused)} staged file(s) with a credential-shaped "
+                                f"name or not a vault file ({name_paths(refused)}); unstaged, still on disk")
+            committing = staged - set(refused)
+            if committing:
+                # "straggler(s)" rather than "change(s)" on purpose: the two commit
+                # classes stay countable in `git log`, so "how many door writes
+                # reached the net" is a number rather than an impression.
+                outcome = commit_staged(
+                    root, f"vault sync: {len(committing)} straggler(s) from {socket.gethostname()}", timeout=t)
+                result.committed = outcome.ok
+            # Left behind: every change outside the index, the refused files, and
+            # what was staged when its commit did not take.
+            left = sorted({p for _x, y, p in entries if y != " "} | set(refused)
+                          | (committing if committing and not result.committed else set()))
+            if left:
+                result.left_behind = left[:LEFT_BEHIND_SHOWN]
+                result.left_behind_count = len(left)
 
         if pull:
-            # A rebase must not be *started* unless it is safe to finish. Both
-            # checks below are refusals rather than attempts, because the cost
-            # is asymmetric: a refused pull is a logged no-op, an attempted one
-            # can replay dozens of commits onto the wrong base and be killed
-            # half-way through (#147).
-            # Re-read only when a commit was actually attempted: with nothing
-            # to commit the tree was already clean and nothing here has written
-            # to it since. SessionStart runs on a 2s budget and that is the
-            # common path, so this saves a git invocation on every clean sync.
-            if porcelain and run_git(
-                root, "status", "--porcelain", timeout=t
-            ).stdout.strip():
-                # The commit above did not take, so the tree is still dirty and
-                # git would refuse the rebase anyway — but it would refuse
-                # *after* deciding to start one. Stop here instead, and say
-                # which of the two things went wrong.
-                result.detail = _detail(
-                    "pull skipped: the working tree is not clean after the "
-                    "pre-pull commit, so a rebase cannot be started safely"
-                )
-                return _done(result)
+            # Files still on disk after the commit above (left behind, or a
+            # commit that did not take) do NOT stop the pull. Integration runs
+            # off the live tree, and the live tree moves only by a fast-forward
+            # or one `reset --keep`: each refuses to move over a local file the
+            # incoming change touches, names it, and keeps every other one.
+            # Stopping here instead would stop every pull on a clone for as long
+            # as one file written outside the door stays there.
             upstream = run_git(
                 root, "rev-parse", "--abbrev-ref", "--symbolic-full-name",
                 "@{upstream}", timeout=t,
@@ -954,16 +1042,27 @@ def sync(
                 )
 
         if push:
-            pushed = run_git(root, "push", "origin", "HEAD", timeout=t)
-            result.pushed = pushed.returncode == 0
-            if not result.pushed:
-                result.detail = _detail(f"push failed: {pushed.stderr.strip()[:200]}")
+            # Nothing with a credential-shaped name leaves this clone, whoever
+            # committed it: commits not yet on the remote are read first.
+            secrets = _outgoing_secret_names(root, t)
+            if secrets is None:
+                result.detail = _detail("push refused: could not read the file names in the commits "
+                                        "not yet pushed")
+            elif secrets:
+                result.detail = _detail(f"push refused: commits not yet pushed add or change "
+                                        f"{len(secrets)} file(s) with a credential-shaped name "
+                                        f"({name_paths(secrets)}); take them out of those commits first")
+            else:
+                pushed = run_git(root, "push", "origin", "HEAD", timeout=t)
+                result.pushed = pushed.returncode == 0
+                if not result.pushed:
+                    result.detail = _detail(f"push failed: {pushed.stderr.strip()[:200]}")
 
-        # A clean run still has to SAY it repaired something. Without this the
-        # one outcome where the fix did its whole job -- expired the lock and
+        # A clean run still has to SAY what it repaired or refused. Without this
+        # the one outcome where the fix did its whole job -- expired the lock and
         # then succeeded -- is the one that reports nothing.
-        if expired_note and not result.detail:
-            result.detail = expired_note
+        if standing and not result.detail:
+            result.detail = "; ".join(standing)
 
         # The success path's recording, still inside the lock -- `detail` is
         # final by here, and `ok` is derived from it.

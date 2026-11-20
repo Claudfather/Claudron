@@ -85,10 +85,12 @@ def test_a_person_takes_only_user_asserted_facts(vault_dir, capsys):
 
 
 def _me(vault_dir, extra=""):
+    """The operator's about-me note, reviewed (the brief carries it only then) unless *extra* says otherwise."""
     me = vault_dir / PERSONAL_HUB / "person" / "me.md"
     me.parent.mkdir(parents=True, exist_ok=True)
-    me.write_text("---\ntitle: Me\ntype: person\nstatus: current\nowner: t\ncreated: 2026-09-01\n" + extra
-                  + "---\n\n# Me\n\nI review on Tuesdays.\n")
+    reviewed = "" if "maturity:" in extra else "maturity: verified\n"
+    me.write_text("---\ntitle: Me\ntype: person\nstatus: current\nowner: t\ncreated: 2026-09-01\n" + reviewed
+                  + extra + "---\n\n# Me\n\nI review on Tuesdays.\n")
 
 
 def test_person_me_is_injected_into_every_brief(vault_dir):
@@ -152,7 +154,8 @@ def test_a_bots_session_never_gets_the_operators_me(vault_dir, monkeypatch):
 def test_me_sections_render_as_labels_and_empty_ones_drop(vault_dir):
     me = vault_dir / PERSONAL_HUB / "person" / "me.md"
     me.parent.mkdir(parents=True, exist_ok=True)
-    me.write_text("---\ntitle: Me\ntype: person\nstatus: current\nowner: t\ncreated: 2026-09-01\n---\n\n# Me\n\n"
+    me.write_text("---\ntitle: Me\ntype: person\nstatus: current\nowner: t\ncreated: 2026-09-01\n"
+                  "maturity: verified\n---\n\n# Me\n\n"
                   "## Role\n\nEngineer.\n\n## Preferences\n\n## Notes\n\nTuesdays.\n")
     assert recall(detect(vault_dir))["me"] == "> **Role**\n> Engineer.\n> **Notes**\n> Tuesdays."
 

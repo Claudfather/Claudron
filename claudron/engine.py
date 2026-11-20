@@ -43,7 +43,9 @@ from .schema import (
     Finding,
     claimed_names,
     is_person_note,
+    is_reviewed,
     content_fingerprint,
+    vocab_value,
     parse_note,
     set_frontmatter_field,
     slugify,
@@ -60,6 +62,10 @@ class ScopeError(Exception):
 
 class PersonEditError(ScopeError):
     """An edit of a person note without the user's assertion (#200 §2)."""
+
+
+class ReviewedEditError(ScopeError):
+    """An edit of a reviewed note (verified or canonical) without the user's assertion."""
 
 
 @dataclass
@@ -407,8 +413,23 @@ def capture(
 
 def _commit_after(vault: Vault, path: Path, run_id: str | None, no_commit: bool, verb: str, title: str,
                       note_type: str, tier: str) -> list[Finding]:
-    """After a write: commit it (unless ``no_commit``), with the run's trailer when it names one."""
-    return [] if no_commit else _commit_written(vault, [path], verb, title, note_type, tier, run_id)
+    """After a write: commit it, with the run's trailer when it names one. With ``no_commit`` it
+    is staged instead, so the next ``sync`` commits it (sync commits what the door staged)."""
+    if no_commit:
+        return stage_written(vault, [path])
+    return _commit_written(vault, [path], verb, title, note_type, tier, run_id)
+
+
+def stage_written(vault: Vault, paths: list[Path]) -> list[Finding]:
+    """Stage what the door just wrote, without committing it; warnings, never raises.
+
+    How a write that is not committed at once hands its files to the next
+    ``sync``, which commits what is staged and nothing written around the door.
+    Takes ``vault_write_lock`` (reentrant, so a door already holding it may call
+    this), so staging never interleaves with a sync. Same rules as :func:`commit_guarded`.
+    """
+    with vault_write_lock(vault):
+        return commit_guarded(vault, paths, "", stage_only=True)
 
 
 def _commit_subject(verb: str, title: str) -> str:
@@ -424,6 +445,12 @@ def _commit_subject(verb: str, title: str) -> str:
              or "operator").strip() or "operator"
     # One line, no newlines from a title: a subject is a line.
     return f"{verb}({actor}): " + " ".join(title.split())
+
+
+def _subject_verb(subject: str) -> str:
+    """The verb of a subject :func:`_commit_subject` wrote (``<verb>(<actor>): ...``), else ``""``."""
+    verb, paren, _rest = subject.partition("(")
+    return verb if paren and verb and " " not in verb else ""
 
 
 def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
@@ -455,16 +482,17 @@ def _commit_written(vault: Vault, paths: list[Path], verb: str, title: str,
     return warnings
 
 
-def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Finding]:
+def commit_guarded(vault: Vault, paths: list[Path], message: str, *, stage_only: bool = False) -> list[Finding]:
     """Commit ``paths`` with ``message`` under the write door's rules; warnings, never raises.
 
     The one home of those rules (#157), shared by every door that commits what
     it wrote: a plain directory is silent, a wedged tree is refused but the
     files stay written, and a failed stage or commit is a warning on files that
-    are already on disk.
+    are already on disk. With ``stage_only`` the paths are staged and not
+    committed (``message`` is unused): the next ``sync`` commits them.
     """
     from .sync import (DEFAULT_GIT_TIMEOUT, SyncError, _git_dir,
-                       _interrupted_state, commit_paths)
+                       _interrupted_state, commit_paths, stage_paths)
 
     t = DEFAULT_GIT_TIMEOUT
     try:
@@ -487,17 +515,31 @@ def commit_guarded(vault: Vault, paths: list[Path], message: str) -> list[Findin
         return warn(
             f"note written but NOT committed: {interrupted} — a capture never "
             "repairs a mid-surgery repository, and is never refused because of "
-            "one. Resolve the tree, then `claudron sync` commits this note."
+            "one. Resolve the tree, then stage the note with git (or write it "
+            "again): `claudron sync` commits only what is staged."
         )
 
     try:
+        if stage_only:
+            staged = stage_paths(vault.root, paths, timeout=t)
+            if staged.returncode != 0:
+                said = (staged.stderr or staged.stdout or "").strip()[:200] or f"exit {staged.returncode}"
+                return warn(f"written but NOT staged (git add failed: {said}); `claudron sync` commits only "
+                            "what is staged, so write it again or stage it with git")
+            return []
         outcome = commit_paths(vault.root, paths, message, timeout=t)
     except SyncError as exc:
         return warn(f"note written but NOT committed: {exc}")
+    if not outcome.ok and outcome.step == "add":
+        return warn(
+            f"note written but NOT committed (git add failed: {outcome.error}); it is on "
+            "disk but not staged, so `claudron sync` will not commit it: write it again, "
+            "or commit it with git"
+        )
     if not outcome.ok:
         return warn(
-            f"note written but NOT committed (git {outcome.step} failed: "
-            f"{outcome.error}) — it is on disk and `claudron sync` will commit it"
+            f"note written but NOT committed (git commit failed: {outcome.error}); it is "
+            "on disk and staged, and `claudron sync` will commit it"
         )
     return []
 
@@ -520,6 +562,10 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
     this door. Self-guards containment; refuses a bad ``run_id`` before writing.
     **The person rule lives here, for every edit:** a person note (by type or by
     place) is edited only when ``asserted_by`` is ``user`` (#200 §2).
+    **So does the reviewed rule:** a verified or canonical note takes an edit only
+    when ``asserted_by`` is ``user``, since nothing else a writer brings (a web
+    page, a transcript, a harvested fact) has been reviewed. A replay that would
+    write nothing stays ``unchanged``, so a retry still learns its write landed.
     """
     if not is_within_root(note_path, vault.root):
         raise ScopeError(f"path {str(note_path)!r} escapes the vault root")
@@ -537,6 +583,10 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
         text = transform(original, fm or {})
         if text is None:
             return WriteResult(action="unchanged", path=str(note_path), reason="already there; nothing written")
+        if fm and is_reviewed(fm.get("maturity")) and asserted_by != "user":
+            raise ReviewedEditError(
+                f"the note is reviewed ({vocab_value(fm.get('maturity'))}): it takes an edit only when the "
+                "user asserted it (asserted_by: user); nothing written")
         text = set_frontmatter_field(text, "updated", date.today().isoformat())
 
         fm, note_body, err = parse_note(text)
@@ -557,7 +607,7 @@ def edit_note(vault: Vault, note_path: Path, transform: Callable[[str, dict], st
 
         # Same rule as capture (#157): written first, committed second, inside
         # the lock already held. The verb keeps write classes countable in
-        # `git log` — the same reason the safety net says "straggler(s)".
+        # `git log`: the same reason sync's own commit says "straggler(s)".
         warnings = _commit_after(vault, note_path, run_id, no_commit, verb, fm.get("title") or rel,
                                      str(fm.get("type") or "unknown"), "existing")
 

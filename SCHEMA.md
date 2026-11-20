@@ -48,11 +48,21 @@ read class:
 
 | Class | Which notes |
 |---|---|
-| `trusted` | `maturity` verified, canonical, or absent (unrated) |
+| `trusted` | `maturity` verified or canonical; or, authored, absent (unrated) |
 | `draft` | `maturity: draft`, authored: any `source_type` but `url` and `session`, or none |
-| `external` | `maturity: draft` with `source_type` `url` or `session` |
+| `external` | `source_type` `url` or `session`, unless `maturity` is verified or canonical |
 
-Promoting a note (`claudron promote`) makes it trusted whatever its origin.
+`maturity` and `source_type` are read the same however they are cased or
+spaced: `Draft`, `draft ` and `DRAFT` are one value. Promoting a note
+(`claudron promote`) makes it trusted whatever its origin.
+
+**Reviewed** means `maturity: verified` or `canonical`, and it is the bar for
+what a session is handed and for what an edit may change. The session brief
+carries a note as context, the about-me note, and `CONVENTIONS.md` only once
+they are reviewed (`CONVENTIONS.md` says so in its own frontmatter; `init`
+writes it that way); every other note recall finds is listed as awaiting
+review. A reviewed note takes an edit (`capture --update`, `amend`) only when
+the user asserted it.
 What each command does with each class is `documentation/specs/CLI_CONTRACT.md` (§lookup /
 recall). Harvested drafts written before `source_type: session` existed carry
 the tag `origin:session-harvest` instead; `claudron doctor --fix` (migration

@@ -33,6 +33,7 @@ from .vault import (
     init,
     is_within_root,
     scaffold_shared_tree,
+    split_commit_refusals,
     status,
     vault_markdown_files,
 )
@@ -62,7 +63,7 @@ from .amend import AmendError, AmendResult, amend
 from .runs import RunError, revert_run
 from .subjects import resolve, subjects
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, check, pull_ff_only, run_git, sync
+from .sync import SyncError, check, left_behind_line, pull_ff_only, run_git, sync
 
 
 # ── output contract (CLI_CONTRACT.md) ─────────────────────────────────
@@ -175,6 +176,29 @@ def _read_claudron_config(path: Path) -> dict[str, str]:
     return result
 
 
+def _stage_or_warn(vault, paths: list[Path]) -> None:
+    """Stage what a CLI door wrote, for the next `sync`; a failure is a warning on stderr."""
+    from .engine import stage_written
+
+    for warning in stage_written(vault, paths):
+        print(f"warning: {warning.message}", file=sys.stderr)
+
+
+def _uncommitted(root: Path) -> list[str] | None:
+    """Every uncommitted path when *root* is the top of a git work tree of its own, else None."""
+    from .sync import DEFAULT_GIT_TIMEOUT, uncommitted_paths
+
+    try:
+        if not root.is_dir():
+            return None
+        top = run_git(root, "rev-parse", "--show-toplevel")
+        if top.returncode != 0 or Path(top.stdout.strip()).resolve() != root.resolve():
+            return None
+        return uncommitted_paths(root, DEFAULT_GIT_TIMEOUT)
+    except SyncError:
+        return None
+
+
 def _write_claudron_config(path: Path, vault_path: Path) -> None:
     """Write ``.claudron`` config pointing to vault."""
     path.write_text(
@@ -187,6 +211,11 @@ def _write_claudron_config(path: Path, vault_path: Path) -> None:
 
 def cmd_init(args) -> int:
     path = Path(args.path).expanduser()
+    # Adopting a repository of its own: what init writes is staged for the next
+    # `sync`, which commits what the write door staged (without this the identity
+    # file would never reach another clone). Read before, so a change somebody
+    # already had in progress is left to them.
+    before = _uncommitted(path) if not getattr(args, "personal", False) else None
     try:
         root = init(path, adopt=args.adopt)
     except VaultError as e:
@@ -195,6 +224,12 @@ def cmd_init(args) -> int:
 
     if getattr(args, "personal", False):
         return _init_personal(args, root)
+
+    if before is not None:
+        vault = detect(root)
+        wrote = sorted(set(_uncommitted(root) or ()) - set(before))
+        if vault is not None and wrote:
+            _stage_or_warn(vault, [root / rel for rel in split_commit_refusals(wrote)[0]])
 
     if args.json:
         _emit_json(
@@ -251,8 +286,9 @@ def _init_personal(args, root: Path) -> int:
         smoke_ok = result.action == "created"
         if smoke_ok:
             data = recall(vault, project=None, query="vault bootstrap")
+            # A capture is a draft, so recall lists it as awaiting review: served either way.
             smoke_ok = any(
-                n["title"] == "Vault Bootstrap" for n in data["notes"]
+                n["title"] == "Vault Bootstrap" for n in data["notes"] + data["unverified"]
             )
     except Exception as exc:
         print(f"smoke test failed: {exc}", file=sys.stderr)
@@ -268,12 +304,21 @@ def _init_personal(args, root: Path) -> int:
     # and say so when it fails (an unconditional success message would tell
     # the user to push a commit that doesn't exist). run_git injects a fallback
     # identity for commits (#91), so an unset git identity no longer fails this;
-    # a failure here now signals something else (a locked/unwritable repo). No
-    # SyncError catch by design: git presence is proven by rev-parse above and
-    # no timeout is passed, so run_git cannot raise on this path.
+    # a failure here now signals something else (a locked/unwritable repo). A
+    # git call past its bound is the same failed seed commit, reported below.
+    # The same rule as `sync`: notes and vault files only, never a credential-shaped
+    # name. Anything else in an adopted folder stays on disk, uncommitted, and is
+    # named. Committed through the door's own primitive, so only the seed is taken.
+    from .sync import DEFAULT_GIT_TIMEOUT, commit_paths, name_paths, uncommitted_paths
     seed_msg = "claudron init --personal"
-    run_git(root, "add", "-A")
-    committed = run_git(root, "commit", "-m", seed_msg).returncode == 0
+    try:
+        seed, refused = split_commit_refusals(uncommitted_paths(root, DEFAULT_GIT_TIMEOUT) or [])
+        committed = bool(seed) and commit_paths(root, seed, seed_msg).ok
+    except SyncError:
+        refused, committed = [], False
+    if refused:
+        print(f"not committed: {len(refused)} file(s) with a credential-shaped name or not a vault "
+              f"file: {name_paths(refused)}; they stay on disk", file=sys.stderr)
     if not committed:
         print(
             f"warning: seed commit failed — run  git -C {root} commit "
@@ -540,7 +585,8 @@ def cmd_resolve(args) -> int:
     if not found:
         print(f"no subject matches '{args.name}'", file=sys.stderr)
     for s in found:
-        print(f"  [{s.score:3d}] {s.title:<40s} {s.path}  ({s.match_type})")
+        label = _TRUST_LABEL.get(s.trust, "")  # an unreviewed candidate is marked, as lookup marks it
+        print(f"  [{s.score:3d}] {s.title:<40s} {s.path}  ({s.match_type}){label}")
     return 0
 
 
@@ -638,6 +684,8 @@ def cmd_index(args) -> int:
         # otherwise load or rebuild it a second time, and on `--full` that is a
         # second full walk of the vault.
         nav = write_navigation(vault, index=idx)
+        for warning in nav.warnings:
+            print(f"warning: {warning}", file=sys.stderr)
 
     if args.json:
         payload = {"entries": count, "rebuilt": rebuilt}
@@ -752,6 +800,10 @@ def cmd_new(args) -> int:
             subprocess.run([editor, str(target)])
         else:
             print("$EDITOR is not set — note written, not opened", file=sys.stderr)
+
+    # Staged once the editor has closed, so the next `sync` commits the note as
+    # written here: sync commits what the write door staged, nothing else.
+    _stage_or_warn(vault, [target])
 
     if args.json:
         _emit_json("new", {"path": str(target)})
@@ -1045,6 +1097,8 @@ def cmd_sync(args) -> int:
             print(f"sync: {done_txt} — needs attention (see stderr)")
         if result.detail:
             print(result.detail, file=sys.stderr)
+        if result.left_behind_count:
+            print(f"left behind: {left_behind_line(result)}", file=sys.stderr)
         # A failed integration names notes it COULD NOT INTEGRATE (the live
         # copy is untouched and still served); a clean pull names notes that
         # arrived carrying markers (excluded from search until resolved).
@@ -1331,6 +1385,10 @@ def cmd_fleet_add(args) -> int:
     scaffold_shared_tree(fleet_dir / "shared")
     (fleet_dir / ".env").write_text("# Fleet secrets — never commit\n")
     (fleet_dir / ".gitignore").write_text("runtime/\n.env\n")
+    # Staged for the next `sync` (it commits what the write door staged); the
+    # fleet's `.env` is not, and its own `.gitignore` and the vault's keep it out.
+    _stage_or_warn(vault, [fleet_dir / "fleet.yaml", fleet_dir / ".gitignore",
+                           *(fleet_dir / "shared" / leaf / ".gitkeep" for leaf in SCAFFOLD_TREE)])
 
     print(f"fleet '{name}' scaffolded at {fleet_dir}")
     return 0
@@ -1527,10 +1585,10 @@ def main(argv=None) -> int:
     )
     p_capture.add_argument(
         "--no-commit", dest="no_commit", action="store_true",
-        help="Write the note without committing it (#157). AN ESCAPE HATCH FOR "
-             "BATCHING, never a default: capture is durable on return precisely "
-             "because it commits, and a note that is written-not-committed "
-             "exists on one disk until something else runs. Use it when you are "
+        help="Write and stage the note without committing it (#157). AN ESCAPE "
+             "HATCH FOR BATCHING, never a default: capture is durable on return "
+             "precisely because it commits, and a staged note exists on one disk "
+             "until the next `claudron sync` commits it. Use it when you are "
              "about to commit a set yourself.",
     )
 
@@ -1712,7 +1770,8 @@ def main(argv=None) -> int:
     p_amend.add_argument("--stdin", action="store_true", required=True,
                          help="Read the request as JSON from stdin (required: the only input form)")
     p_amend.add_argument("--run-id", metavar="ID", help="Tag the commit with a run id (see revert-run)")
-    p_amend.add_argument("--no-commit", action="store_true", help="Write without committing")
+    p_amend.add_argument("--no-commit", action="store_true",
+                         help="Write and stage without committing (the next sync commits it)")
 
     # revert-run — undo every commit a run made, as one revert (#200 §4)
     p_revert_run = sub.add_parser(

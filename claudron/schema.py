@@ -184,6 +184,11 @@ DEDUP_EXEMPT = LOOKUP_EXCLUDED
 # first rung; E5's promote walks the rest.
 MATURITY_VALUES = ("draft", "verified", "canonical")
 
+#: The rungs a person has vouched for. Only a note at one of these is reviewed:
+#: the session brief carries nothing else as context, and an edit lands in such a
+#: note only when the user asserted it.
+REVIEWED_MATURITIES = MATURITY_VALUES[1:]
+
 # `source_type`'s vocabulary (SCHEMA.md §Frontmatter fields, optional). Held
 # here so the CLI door can refuse a value the schema doesn't define — on both
 # spellings, the flag and the --stdin key; a parity test reads the doc row
@@ -208,24 +213,41 @@ EXTERNAL_SOURCE_TYPES = ("url", "session")
 TRUST_CLASSES = ("trusted", "draft", "external")
 
 
-def trust_class(maturity: str, source_type: str) -> str:
+def vocab_value(value: object) -> str:
+    """A ``maturity`` or ``source_type`` value as the rules read it: lower case, with no
+    blanks anywhere, so ``Draft``, ``draft `` and ``DRAFT`` are one value. ``None`` is ``""``."""
+    return "".join(str(value if value is not None else "").split()).lower()
+
+
+def is_reviewed(maturity: object) -> bool:
+    """True for a maturity a person vouched for (:data:`REVIEWED_MATURITIES`), however spelled."""
+    return vocab_value(maturity) in REVIEWED_MATURITIES
+
+
+def trust_class(maturity: object, source_type: object) -> str:
     """The note's read class (:data:`TRUST_CLASSES`) — the one home of the rule.
 
-    Only ``draft`` is unreviewed: a value off the ladder reads as unrated, which
-    is trusted (legacy notes predate the axis).
+    Both values are read through :func:`vocab_value`, so case and blanks never
+    change the class. A note from outside (:data:`EXTERNAL_SOURCE_TYPES`) is
+    ``external`` until it is reviewed. Otherwise only ``draft`` is unreviewed: a
+    value off the ladder reads as unrated, which is trusted (legacy notes predate
+    the axis).
     """
+    maturity, source_type = vocab_value(maturity), vocab_value(source_type)
+    if source_type in EXTERNAL_SOURCE_TYPES and maturity not in REVIEWED_MATURITIES:
+        return "external"
     if maturity != MATURITY_VALUES[0]:
         return "trusted"
-    if source_type in EXTERNAL_SOURCE_TYPES:
-        return "external"
     return "draft"
 
 
-def ladder_index(maturity: str) -> int:
+def ladder_index(maturity: object) -> int:
     """Position on the trust ladder: draft(0) < verified(1) < canonical(2);
     unrated is below all (-1). The single home of the maturity ordinal — E5's
     promote reads it for direction (higher = a promotion), and lookup's sort
-    negates it (``-ladder_index`` puts canonical first, unrated last)."""
+    negates it (``-ladder_index`` puts canonical first, unrated last). Read
+    through :func:`vocab_value`, like :func:`trust_class`."""
+    maturity = vocab_value(maturity)
     return MATURITY_VALUES.index(maturity) if maturity in MATURITY_VALUES else -1
 
 
@@ -314,7 +336,14 @@ CONVENTIONS_BUDGET_HARD = 160
 # it must satisfy (guarded by test). `init` writes it; the reference vault
 # carries a filled-in twin (adds the standing-facts example bullet) — keep
 # the shared bullets in sync when editing either.
+# A new vault's CONVENTIONS.md is the engine's own text, so it is written
+# reviewed: the session brief carries CONVENTIONS.md only at a reviewed maturity
+# (SCHEMA.md §Reads), and an edit made by hand keeps whatever the editor leaves.
 CONVENTIONS_TEMPLATE = """\
+---
+maturity: verified
+---
+
 # Vault conventions
 
 - One file per topic; update or supersede, never duplicate.
@@ -396,7 +425,7 @@ CATALOG: dict[str, dict[str, str | None]] = {
     "W107": {"lenient": "warning", "strict": None},
     # #157: the write door wrote the note but could not commit it. A WARNING in
     # both tiers because it is never an error: the note is on disk, and the
-    # safety net commits it on the next sync. Not a validation condition -- the
+    # next sync commits it once it is staged. Not a validation condition -- the
     # only catalog member that describes the note's SURROUNDINGS rather than its
     # content -- which is why both tiers read the same.
     "W108": {"lenient": "warning", "strict": "warning"},

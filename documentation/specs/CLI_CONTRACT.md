@@ -554,6 +554,14 @@ vendor source; support for unobserved events is not promised by this snippet.
   `already up to date`. A clean run exits 0 with `ok: true` and no errors.
   Branch on `ok` or the exit code; `detail` is prose. `sync --check` is
   unaffected: every verdict exits 0 (§Exit codes).
+  **`sync` commits what the write door staged, and nothing else**
+  (VAULT-STRUCTURE.md). A staged file with a credential name or that is not a
+  vault file is unstaged and named in `detail`; so are the credential-named
+  files that commits not yet pushed add or change, and that push does not run.
+  `data.left_behind` names the first 20 files still uncommitted after its
+  commit (written outside the door), `data.left_behind_count` counts them all,
+  and `sync` prints them on stderr as `left behind: …` (the SessionEnd hook
+  logs the same line). They are not `detail`, so they never fail a run.
 - `doctor [--fix] [--settings PATH]…` — **the vault's health-and-migration door** (#190). Diagnoses
   the vault against *this* engine's rules and names what `--fix` would change.
   - **Read-only unless `--fix` is passed** — no file, index or journal is
@@ -681,16 +689,19 @@ vendor source; support for unobserved events is not promised by this snippet.
   writes one only with `asserted_by: user` (`--asserted-by` or the `--stdin`
   key), else exit 2; `capture --update` of one likewise needs `--asserted-by
   user`, and `amend` refuses a fact or an alias about a person unless the user
-  asserted it (`evidence.asserted_by` / `asserted_by`). Person notes are never
+  asserted it (`evidence.asserted_by` / `asserted_by`). The same holds for any
+  reviewed note (`maturity` verified or canonical): `capture --update` of one
+  needs `--asserted-by user` (else exit 2, nothing written), and `amend` refuses
+  a fact or an alias for one unless the user asserted it. Person notes are never
   `lookup` or `recall` results. A `--project`/`--fleet` that isn't one
   directory name (`../x`, `a/b`) exits 2.
   `subjects` and `resolve` take `--home H` (the same filter as `--type`, and
   exclusive with it) and `--kind K`, and each subject carries `kind` and
-  `relations`. `recall --json` gains `me`: a trusted, person-typed
-  `_personal/person/me.md` as ready-to-render markdown — within its
+  `relations`. `recall --json` gains `me`: a reviewed (verified or canonical),
+  person-typed `_personal/person/me.md` as ready-to-render markdown, within its
   120-token budget by whole lines, quoted line by line (so nothing in it can
   open or swallow a section wherever it is rendered), with a notice when the
-  budget cut it — or `null` (absent, a draft, conflicted, or `BOT_NAME` set).
+  budget cut it; or `null` (absent, not reviewed, conflicted, or `BOT_NAME` set).
   The brief renders it under `## About me`. Person notes are never in
   `notes` or `unverified`, wherever one sits. Gate on
   `"memory-homes" in status --json → data.capabilities`.
@@ -707,15 +718,23 @@ vendor source; support for unobserved events is not promised by this snippet.
     equal score (#247). An **`external`** draft is withheld unless
     **`--include-external`**, and an included one ranks after every other note.
     An authored draft is always included, labelled `(draft)`; an included
-    external one, `(unverified draft)`.
+    external one, `(unverified draft)`. Plain `subjects` and `resolve` output
+    labels a candidate the same way.
   - **`recall --json`** adds `trust`, `trusted` and `source_url` to every note,
-    and two keys to `data`: `unverified` (external drafts, newest first, at most
-    `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how many
-    more exist). An external draft never appears in `notes`.
-  - **The brief** renders `unverified` after everything trusted, under its own
+    and two keys to `data`: `unverified` (every note recall finds that is not
+    reviewed: a draft, an unrated note, a note from outside; newest first, at
+    most `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how
+    many more exist). Only a reviewed note (verified or canonical) appears in
+    `notes`. `conventions` is CONVENTIONS.md's body only while the file is
+    reviewed (its own frontmatter says `maturity: verified` or `canonical`);
+    when it is there but not reviewed, `conventions_unreviewed` is its
+    vault-relative path (else `null`).
+  - **The brief** renders `unverified` after everything reviewed, under its own
     header and a "never cite as fact" line, in whatever budget is left. Each line
-    is title, type, path and `source_url`; the body is never shown, since the
-    body is where someone else's instructions would be.
+    is title, type, maturity (or `unrated`), path and `source_url`; the body is
+    never shown, since the body is where someone else's instructions would be.
+    Every field of every note line is one line. A CONVENTIONS.md that is not
+    reviewed is one line saying it is not shown until it is.
   - Gate on `"trust-aware-reads" in status --json → data.capabilities`. On an
     engine without it, `lookup` returns drafts ranked by score alone and
     `recall` has no `unverified` key, so a consumer splits drafts out itself.
