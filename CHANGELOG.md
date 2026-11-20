@@ -26,6 +26,7 @@
 - **Stale status text in `documentation/` corrected ([#244](https://github.com/Claudfather/Claudron/issues/244)).** The E4 and E5 roadmap banners said `PENDING` for epics that have partly shipped; they now say `IN PROGRESS`, per clauDNA's documentation standard. Decision 001 gains a dated amendment recording that boundary phase L1 ([Claudlobby#665](https://github.com/Claudfather/Claudlobby/pull/665)) built the monitor its §Monitor called "Not yet built" and deleted the phantom-MCP warning, and handing the monitor's state to contract register row 9, which drops the "Open:" clause that tracked this. Docs only.
 
 ### Fixed
+- **Git takes every path the engine names literally.** The write door's commit and stage, `doctor --fix`, the first commit of `init --personal` and `sync`'s unstage pass each path as a literal pathspec (`:(literal)`), so a file or directory name with `*`, `?` or `[` in it, or a relative path that starts with `:`, names that one path and is never read as a glob or as pathspec magic: a door write to a note called `*.md` commits that note alone. Tests: `claudron/tests/test_sync.py`, `claudron/tests/test_personal.py`.
 - **The agent instruction files match the package.** The root `CLAUDE.md` maps all 21 modules, `amend`, `contract`, `navigation`, `ops`, `runs`, `subjects` and `tags` among them, and `claudron/CLAUDE.md` counts those seven among the engine modules that never print. `PROJECT_MISSION.md` gives bug fixes in the indexer and CLI as standing work: no MCP server exists to fix, since decision C parks it.
 
 ## [0.10.1] - 2026-11-07

@@ -2178,6 +2178,66 @@ class TestCommitPathsCommitsOnlyItsPaths:
         assert _git(root, "rev-parse", "HEAD").stdout == head
 
 
+class TestGitTakesEveryPathLiterally:
+    """Every path the engine hands git is a literal pathspec, so a name with `*`, `?` or `[`
+    in it names that one file: a door write to a note called `*.md` commits or stages that
+    note alone. Read as a glob, the name would also take every changed file it matches, and
+    whatever the door's commit left staged, the next sync commits."""
+
+    _STAR = ("---\ntitle: Star Note\ntype: knowledge\nstatus: current\nowner: t\ncreated: 2026-07-01\n"
+             "updated: 2026-07-01\n---\n\n# Star Note\n\nThe file is called *.md.\n")
+
+    def _star_beside_changed_files(self, a: Path) -> None:
+        knowledge = a / "_shared" / "knowledge"
+        (knowledge / "*.md").write_text(self._STAR)
+        (knowledge / "CLAUDE.md").write_text("Committed instructions.\n")
+        _git(a, "add", "--", ":(literal)_shared/knowledge/*.md", "_shared/knowledge/CLAUDE.md")
+        _git(a, "commit", "-m", "by hand")
+        (knowledge / "CLAUDE.md").write_text("Changed around the door.\n")
+        shared = knowledge / "shared-note.md"
+        shared.write_text(shared.read_text() + "Changed around the door.\n")
+
+    def test_a_door_commit_to_a_note_called_star_md_commits_that_note_alone(self, synced_pair):
+        a, _ = synced_pair
+        self._star_beside_changed_files(a)
+
+        assert main(["--vault", str(a), "promote", "Star Note", "--to", "verified", "--by", "t"]) == 0
+
+        committed = _git(a, "show", "--name-only", "--format=", "HEAD").stdout.split()
+        assert committed == ["_shared/knowledge/*.md"], committed
+        assert _git(a, "diff", "--cached", "--name-only").stdout == "", "nothing else may stay staged"
+        changed = _git(a, "status", "--porcelain").stdout
+        assert "_shared/knowledge/CLAUDE.md" in changed and "_shared/knowledge/shared-note.md" in changed
+
+    def test_a_no_commit_stage_of_a_note_called_star_md_stages_that_note_alone(self, synced_pair):
+        a, _ = synced_pair
+        self._star_beside_changed_files(a)
+        head = _git(a, "rev-parse", "HEAD").stdout
+
+        assert main(["--vault", str(a), "capture", "--update", "_shared/knowledge/*.md",
+                     "--body", "One more line.", "--no-commit"]) == 0
+
+        assert _git(a, "rev-parse", "HEAD").stdout == head
+        staged = _git(a, "diff", "--cached", "--name-only").stdout.split()
+        assert staged == ["_shared/knowledge/*.md"], staged
+
+    def test_a_refused_glob_named_staged_file_is_unstaged_alone(self, synced_pair, capsys):
+        a, _ = synced_pair
+        assert main(["--vault", str(a), "capture", "--type", "knowledge", "--title", "Door Note",
+                     "--body", "Written through the door.", "--owner", "t", "--no-commit"]) == 0
+        (a / "_shared" / "knowledge" / "*").write_text("not a note\n")
+        _git(a, "add", "-f", "--", ":(literal)_shared/knowledge/*")
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 1
+
+        remote = _remote_files(a)
+        assert "_shared/knowledge/door-note.md" in remote
+        assert "_shared/knowledge/*" not in remote
+        assert _git(a, "diff", "--cached", "--name-only").stdout == ""
+        assert (a / "_shared" / "knowledge" / "*").is_file()
+
+
 class TestPullWithFilesLeftOnDisk:
     """The pull no longer stops because files are still on disk after the sync's own commit.
     git's own refusals guard them path by path: a local file the incoming change touches stops

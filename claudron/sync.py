@@ -153,6 +153,15 @@ def _has_git_identity(root: Path) -> bool:
     return True
 
 
+def _literal_paths(args: tuple[str, ...]) -> tuple[str, ...]:
+    """*args* with each argument after the first ``--`` made a literal pathspec: git takes
+    ``:(literal)<path>`` as that one path, never as a glob or as pathspec magic."""
+    if "--" not in args:
+        return args
+    cut = args.index("--") + 1
+    return (*args[:cut], *(f":(literal){arg}" for arg in args[cut:]))
+
+
 def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
     """The package git invoker: guarded subprocess with SyncError-typed
     environment failures (git missing/not executable, timeouts). Every
@@ -163,13 +172,19 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     A `commit` on a host with no configured git identity gets a fallback
     identity injected (:data:`_FALLBACK_IDENTITY`) so the engine's commits
     never silently fail on a bare host (#91); a configured identity always
-    wins."""
+    wins.
+
+    Every argument after ``--`` is a path, and git takes it literally
+    (:func:`_literal_paths`): a file or directory name with ``*``, ``?`` or
+    ``[`` in it, or a relative path that starts with ``:``, names that one
+    path. Not ``GIT_LITERAL_PATHSPECS``, which git hands on to the vault's
+    own hooks."""
     prefix: list[str] = []
     if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
         prefix = list(_FALLBACK_IDENTITY)
     try:
         return subprocess.run(
-            ["git", "-C", str(root), *prefix, *args],
+            ["git", "-C", str(root), *prefix, *_literal_paths(args)],
             capture_output=True, text=True, timeout=timeout,
         )
     except (FileNotFoundError, PermissionError) as exc:

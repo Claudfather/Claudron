@@ -54,6 +54,17 @@ class TestInitPersonal:
         assert "photo.png" in capsys.readouterr().err
         assert all((folder / name).is_file() for name in (".netrc", "credentials.json", "photo.png"))
 
+    def test_a_name_that_starts_with_a_colon_names_only_its_own_file(self, tmp_path: Path):
+        """git takes each name in the seed commit literally: a note called `:ideas.md` is
+        committed under that name, beside an `ideas.md`, and is never read as pathspec magic."""
+        folder = tmp_path / "notes"
+        folder.mkdir()
+        (folder / "ideas.md").write_text("# Ideas\n")
+        (folder / ":ideas.md").write_text("# Ideas from the margin\n")
+        assert main(["init", str(folder), "--adopt", "--personal", "--owner", "t"]) == 0
+        committed = set(_git(folder, "ls-files").stdout.split())
+        assert {"ideas.md", ":ideas.md"} <= committed, committed
+
     def test_scaffolds_projects_claude_md(self, tmp_path: Path):
         """projects/ ships a CLAUDE.md carrying the vault-vs-repo-plane
         boundary — Claude Code reads it up the tree, so it governs every
