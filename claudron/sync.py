@@ -685,7 +685,8 @@ SYNC_FILE = "SYNC.yaml"
 #: session brief reads as instructions (matched case-blind on the name). Nor is
 #: anything under a dot directory (``.claude/``, ``.github/`` and the like), where
 #: agent CLIs keep theirs (:func:`_opt_in_may_carry`).
-NEVER_OPTED_IN = frozenset({"claude.md", "claude.local.md", "agents.md", "conventions.md"})
+NEVER_OPTED_IN = frozenset({"claude.md", "claude.local.md", "agents.md", "agents.override.md", "agent.md",
+                            "gemini.md", "qwen.md", "conventions.md"})
 
 
 def _opt_in_may_carry(rel: str) -> bool:
@@ -728,40 +729,55 @@ def _opted_in_dirs(vault: Vault, t: float) -> tuple[list[str], str]:
 
 
 def _carried_by_opt_in(vault: Vault, entries: list[tuple[str, str, str]],
-                       t: float) -> tuple[list[str], str, list[str]]:
-    """The notes written outside the door that the vault's opt-in carries, ``""``, and the
-    notes it could not read; or none, what is wrong with SYNC.yaml, and none.
+                       t: float) -> tuple[list[str], str, list[str], list[str]]:
+    """The notes written outside the door that the vault's opt-in carries, ``""``, the notes
+    it could not read, and the listed directories git could not list; or none, what is
+    wrong with SYNC.yaml, and none.
 
     A changed, new or deleted note (``*.md``) under an opted-in directory travels,
     except: an instruction file (:func:`_opt_in_may_carry`); a credential-shaped name;
-    a symbolic link; a note it cannot read, which it names instead; and a note that is
-    reviewed (maturity verified or canonical) in its copy on disk OR in its last commit,
-    so neither a reviewed note nor a change to one goes without the door."""
+    a symbolic link (a tracked link that is deleted travels as a deletion); a note it
+    cannot read, which it names instead; and a note that is reviewed (maturity verified
+    or canonical) in its copy on disk OR in its last commit, so neither a reviewed note
+    nor a change to one goes without the door. Each listed directory is listed on its
+    own, so one that git cannot list (a NUL in its path, git's own failure) is named and
+    the notes of the others still travel."""
     if not any(y != " " for _x, y, _p in entries):
-        return [], "", []
+        return [], "", [], []
     dirs, problem = _opted_in_dirs(vault, t)
     if problem or not dirs:
-        return [], problem, []
+        return [], problem, [], []
     root = vault.root
-    scoped, _said = _status(root, t, untracked="all", paths=dirs)
-    carried, unreadable = [], []
-    for x, y, rel in scoped or []:
-        path = root / rel
-        if y == " " or not _opt_in_may_carry(rel) or path.is_symlink():
-            continue
+    carried, unreadable, unlisted, seen = [], [], [], set()
+    for listed in dirs:
         try:
-            copies = [path.read_text(encoding="utf-8", errors="replace")] if path.is_file() else []
-            if x != "?":
-                committed = run_git(root, "show", f"HEAD:{rel}", timeout=t)
-                if committed.returncode == 0:
-                    copies.append(committed.stdout)
-        except (OSError, UnicodeDecodeError):
-            unreadable.append(rel)  # not carried: it stays on disk, left behind
+            scoped, said = _status(root, t, untracked="all", paths=[listed])
+        except (ValueError, OSError) as exc:  # a UnicodeError is a ValueError too
+            scoped = None
+            said = str(exc)
+        if scoped is None:
+            unlisted.append(f"{listed!r} ({said})")  # its notes stay on disk, left behind
             continue
-        if any(_declares_reviewed(text) for text in copies):
-            continue
-        carried.append(rel)
-    return carried, "", unreadable
+        for x, y, rel in scoped:
+            if rel in seen:
+                continue  # under two listed directories
+            seen.add(rel)
+            path = root / rel
+            if y == " " or not _opt_in_may_carry(rel) or path.is_symlink():
+                continue
+            try:
+                copies = [path.read_text(encoding="utf-8", errors="replace")] if path.is_file() else []
+                if x != "?":
+                    committed = run_git(root, "show", f"HEAD:{rel}", timeout=t)
+                    if committed.returncode == 0:
+                        copies.append(committed.stdout)
+            except (OSError, UnicodeDecodeError):
+                unreadable.append(rel)  # not carried: it stays on disk, left behind
+                continue
+            if any(_declares_reviewed(text) for text in copies):
+                continue
+            carried.append(rel)
+    return carried, "", unreadable, unlisted
 
 
 def _declares_reviewed(text: str) -> bool:
@@ -1117,11 +1133,14 @@ def sync(
             door_failed = bool(committing) and not result.committed
             # The vault's opt-in, in a commit of its own (countable like the
             # door's): notes written outside the door under the paths it lists.
-            carried, problem, unreadable = ([], "", []) if door_failed else _carried_by_opt_in(vault, entries, t)
+            carried, problem, unreadable, unlisted = (([], "", [], []) if door_failed
+                                                      else _carried_by_opt_in(vault, entries, t))
             if problem:
                 standing.append(f"nothing opted in: {problem}")
             if unreadable:
                 standing.append(f"not opted in, could not be read: {name_paths(sorted(unreadable))}")
+            if unlisted:
+                standing.append(f"not opted in, could not be listed: {name_paths(unlisted)}")
             if carried:
                 added = run_git(root, "add", "-A", "--", *carried, timeout=t)
                 outcome = (commit_staged(root, f"vault sync: {len(carried)} opted-in file(s) from "

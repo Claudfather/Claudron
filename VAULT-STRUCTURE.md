@@ -123,11 +123,16 @@ The tree is normative. Beyond what its comments state:
   The file is read from the last commit, so an uncommitted edit cannot widen it,
   and a person commits it with git: `sync` never does. The opt-in never carries
   an instruction file (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
-  `CONVENTIONS.md`, or anything under a dot directory such as `.claude/`), a
-  credential-named file, a symbolic link, or a note that is reviewed
-  (`maturity` verified or canonical) on disk or in its last commit, so a
-  reviewed note, and any change to one, still goes through the door. A note it
-  cannot read stays on disk, left behind, and `sync` names it. A `SYNC.yaml`
+  `AGENTS.override.md`, `AGENT.md`, `GEMINI.md`, `QWEN.md`, `CONVENTIONS.md`, in
+  any case, or anything under a dot directory such as `.claude/`), a
+  credential-named file, a symbolic link (a tracked link that is deleted travels
+  as a deletion), or a note that is reviewed (`maturity` verified or canonical)
+  on disk or in its last commit, so a reviewed note, and any change to one,
+  still goes through the door. A note it cannot read (on disk or in its last
+  commit) stays on disk, left behind, and `sync` names it. A note under a listed
+  directory that git cannot list (a NUL in its path) stays left behind too:
+  `sync` names the directory, and the notes of the other directories still
+  travel. A `SYNC.yaml`
   that is not a list of directories inside the vault opts nothing in, and
   `sync` says so: each listed path names one directory by its path, so one
   that is the vault itself (`.`, `./.`), holds `*`, `?` or `[`, or starts with

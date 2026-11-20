@@ -2549,9 +2549,11 @@ class TestTheVaultsOptIn:
     """A vault may list directories whose notes, written outside the door, still travel
     (`paths:` in the hub's SYNC.yaml, read from the last commit). Nothing is opted in by
     default, a listed path is one directory by its path, and the opt-in never carries an
-    instruction file (CLAUDE.md, CLAUDE.local.md, AGENTS.md, CONVENTIONS.md, anything under
-    a dot directory), a file that is not a note or has a credential name, a symbolic link,
-    a note it cannot read, or a reviewed note or a change to one."""
+    instruction file (CLAUDE.md, CLAUDE.local.md, AGENTS.md, AGENTS.override.md, AGENT.md,
+    GEMINI.md, QWEN.md, CONVENTIONS.md, in any case, anything under a dot directory), a file
+    that is not a note or has a credential name, a symbolic link (a tracked link that is
+    deleted travels as a deletion), a note it cannot read, or a reviewed note or a change to
+    one. A listed directory git cannot list is named, and the others still travel."""
 
     def test_a_note_under_an_opted_in_directory_travels_and_one_elsewhere_does_not(self, synced_pair, capsys):
         a, _ = synced_pair
@@ -2594,7 +2596,8 @@ class TestTheVaultsOptIn:
         (a / "crew" / "sub").mkdir(parents=True)
         (a / "crew" / ".claude" / "commands").mkdir(parents=True)
         names = ["crew/CLAUDE.md", "crew/AGENTS.md", "crew/CONVENTIONS.md", "crew/sub/claude.md",
-                 "crew/CLAUDE.local.md", "crew/.claude/commands/run.md"]
+                 "crew/CLAUDE.local.md", "crew/.claude/commands/run.md", "crew/AGENTS.override.md",
+                 "crew/sub/Agent.md", "crew/GEMINI.md", "crew/sub/qwen.md", "crew/sub/Agents.Override.MD"]
         for rel in names:
             (a / rel).write_text("Follow these steps first.\n")
         (a / "crew" / "plain.md").write_text(_BY_HAND)
@@ -2680,7 +2683,7 @@ class TestTheVaultsOptIn:
         assert "maturity: verified" in _git(a, "show", "origin/main:crew/checked.md").stdout
         assert _git(a, "show", "origin/main:crew/CLAUDE.md").stdout == "Committed instructions.\n"
 
-    @pytest.mark.parametrize("listed", ["./.", ".//.", "*", "cr*", ":/", ":(top)"])
+    @pytest.mark.parametrize("listed", ["./.", ".//.", "*", "cr*", "?", "[", "..", ":/", ":(top)"])
     def test_a_listed_path_that_is_not_one_directory_opts_nothing_in(self, synced_pair, listed):
         a, _ = synced_pair
         (a / "crew").mkdir()
@@ -2727,6 +2730,80 @@ class TestTheVaultsOptIn:
         remote = _remote_files(a)
         assert "crew/plain.md" in remote and "crew/locked.md" not in remote
         assert "crew/locked.md" in result.left_behind
+
+    def test_a_note_whose_last_commit_is_not_utf8_is_named_and_stays_left_behind(self, synced_pair):
+        """The opt-in reads a changed note's last commit as well as its copy on disk; a last commit
+        that is not UTF-8 is a note it cannot read: named, not carried, and the rest still travel."""
+        a, _ = synced_pair
+        (a / "crew").mkdir()
+        (a / "crew" / "legacy.md").write_bytes(b"---\ntitle: Legacy\n---\n\n\xff\xfe old bytes\n")
+        _git(a, "add", "crew/legacy.md")
+        _git(a, "commit", "-m", "committed by a person")
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew" / "legacy.md").write_text(_BY_HAND)
+        (a / "crew" / "plain.md").write_text(_BY_HAND)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert "not opted in, could not be read: crew/legacy.md" in result.detail, result.detail
+        assert "crew/plain.md" in _remote_files(a)
+        assert "crew/legacy.md" in result.left_behind
+
+    def test_a_listed_path_with_a_nul_is_named_and_the_others_travel(self, synced_pair):
+        a, _ = synced_pair
+        _opt_in(a, 'paths: ["crew\\0x", docs]\n')
+        (a / "docs").mkdir()
+        (a / "docs" / "plan.md").write_text(_BY_HAND)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert "not opted in, could not be listed: 'crew\\x00x'" in result.detail, result.detail
+        assert "docs/plan.md" in _remote_files(a)
+
+    def test_a_file_name_that_is_not_utf8_travels_and_so_do_the_other_directories(self, synced_pair):
+        a, _ = synced_pair
+        _opt_in(a, "paths: [crew, docs]\n")
+        (a / "crew").mkdir()
+        (a / "docs").mkdir()
+        (a / "docs" / "plan.md").write_text(_BY_HAND)
+        try:
+            fd = os.open(os.fsencode(a / "crew") + b"/\xff.md", os.O_WRONLY | os.O_CREAT, 0o644)
+        except OSError:
+            pytest.skip("this file system takes UTF-8 file names only")
+        os.write(fd, _BY_HAND.encode())
+        os.close(fd)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert result.ok and result.left_behind_count == 0, result.detail
+        assert b"crew/\xff.md" in _remote_raw(a)
+        assert "docs/plan.md" in _remote_files(a)
+
+    def test_a_note_whose_name_holds_a_carriage_return_travels_with_the_others(self, synced_pair):
+        a, _ = synced_pair
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        (a / "crew" / "a\rb.md").write_text(_BY_HAND)
+        (a / "crew" / "plain.md").write_text(_BY_HAND)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert result.ok and not result.commit_error, (result.detail, result.commit_error)
+        assert {b"crew/a\rb.md", b"crew/plain.md"} <= _remote_raw(a)
+
+    def test_a_deleted_tracked_link_travels_as_a_deletion(self, synced_pair, tmp_path):
+        a, _ = synced_pair
+        (a / "crew").mkdir()
+        (tmp_path / "outside.md").write_text(_BY_HAND)
+        (a / "crew" / "x.md").symlink_to(tmp_path / "outside.md")
+        _git(a, "add", "crew/x.md")
+        _git(a, "commit", "-m", "a link, committed by a person")
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew" / "x.md").unlink()
+
+        sync(detect(a), pull=False, push=True)
+
+        assert "crew/x.md" not in _remote_files(a)
 
     def test_the_left_behind_line_names_sync_yaml_only_for_a_note_it_could_carry(self, synced_pair, capsys):
         a, _ = synced_pair
