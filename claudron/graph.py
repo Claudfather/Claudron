@@ -78,7 +78,12 @@ def render_html(graph: dict, *, title: str = "Claudron knowledge graph") -> str:
     in any browser. All-pairs repulsion is O(n²)/frame: fine to a few hundred
     notes (a personal vault); larger graphs want a spatial index (deferred with
     the SQLite tier)."""
-    data = json.dumps(graph, separators=(",", ":"))
+    data = (
+        json.dumps(graph, separators=(",", ":"))
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
     return (
         _HTML_TEMPLATE
         .replace("__TITLE__", _escape(title))

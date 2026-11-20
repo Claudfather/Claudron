@@ -73,6 +73,31 @@ class TestRenderHtml:
         assert "<script>x</script>" not in html.split("const DATA")[0]
         assert "&lt;script&gt;" in html
 
+    def _embedded_data(self, html: str) -> str:
+        return html.split("const DATA = ", 1)[1].split(";", 1)[0]
+
+    def test_note_title_with_script_close_tag_cannot_break_out(self, tmp_path: Path):
+        """A note title holding `</script>` must not terminate the script
+        element: the embedded JSON is escaped for a script context."""
+        v = _graph_vault(tmp_path)
+        _note(v, "evil.md", "x</script><b>y</b>", "plain body")
+        g = build_graph(detect(v))
+        html = render_html(g)
+        # exactly one `</script>` — the template's own
+        assert html.count("</script>") == 1
+        assert json.loads(self._embedded_data(html)) == g
+
+    def test_ghost_label_with_script_close_tag_cannot_break_out(self, tmp_path: Path):
+        """An unresolved `[[x</script>y]]` link becomes a ghost node whose
+        label is attacker-controlled text; it must be escaped too."""
+        v = _graph_vault(tmp_path)
+        _note(v, "a.md", "Note A", "links to [[x</script>y]]")
+        _note(v, "b.md", "Note B", "plain leaf")
+        g = build_graph(detect(v))
+        html = render_html(g)
+        assert html.count("</script>") == 1
+        assert json.loads(self._embedded_data(html)) == g
+
     def test_embedded_js_actually_runs(self, tmp_path: Path):
         """Regression guard: the rendered JS must EXECUTE, not just parse. A
         `let drag`-after-use TDZ error once threw on frame 1 and blanked the
