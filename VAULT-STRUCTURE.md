@@ -122,13 +122,23 @@ The tree is normative. Beyond what its comments state:
   their own (`vault sync: N opted-in file(s)`). Nothing is opted in by default.
   The file is read from the last commit, so an uncommitted edit cannot widen it,
   and a person commits it with git: `sync` never does. The opt-in never carries
-  `CLAUDE.md`, `AGENTS.md` or `CONVENTIONS.md`, a credential-named file, or a
-  note that is reviewed (`maturity` verified or canonical) on disk or in its
-  last commit, so a reviewed note, and any change to one, still goes through
-  the door. A `SYNC.yaml` that is not a list of directories inside the vault
-  opts nothing in, and `sync` says so. An opted-in commit that does not take
-  is named with git's message (`commit_error`), and its notes stay on disk,
-  left behind.
+  an instruction file (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
+  `CONVENTIONS.md`, or anything under a dot directory such as `.claude/`), a
+  credential-named file, a symbolic link, or a note that is reviewed
+  (`maturity` verified or canonical) on disk or in its last commit, so a
+  reviewed note, and any change to one, still goes through the door. A note it
+  cannot read stays on disk, left behind, and `sync` names it. A `SYNC.yaml`
+  that is not a list of directories inside the vault opts nothing in, and
+  `sync` says so: each listed path names one directory by its path, so one
+  that is the vault itself (`.`, `./.`), holds `*`, `?` or `[`, or starts with
+  `:` is refused. An opted-in commit that does not take is named with git's
+  message (`commit_error`), and its notes stay on disk, left behind. The
+  opt-in reads each changed note under the listed directories before its one
+  commit, so a SessionEnd hook that reaches its agent CLI's time cap (three
+  seconds in all for Codex) during a first run over a large directory commits
+  none of those notes and does not push: they stay on disk, left behind, for a
+  later sync. Run the first sync after listing a large directory from the CLI
+  (`claudron sync`); later runs read only the notes changed since.
 - **The vault-root `.gitignore` keeps machine droppings out of history** (#182,
   F9) when files are committed by hand: `**/runtime/` (any depth, a nested
   fleet's `runtime/` too), `**/data/events/fleet-*.jsonl`,

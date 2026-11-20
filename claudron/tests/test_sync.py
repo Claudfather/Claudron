@@ -2548,8 +2548,10 @@ def _reviewed_note(maturity: str) -> str:
 class TestTheVaultsOptIn:
     """A vault may list directories whose notes, written outside the door, still travel
     (`paths:` in the hub's SYNC.yaml, read from the last commit). Nothing is opted in by
-    default, and the opt-in never carries CLAUDE.md, AGENTS.md or CONVENTIONS.md, a file
-    that is not a note or has a credential name, or a reviewed note or a change to one."""
+    default, a listed path is one directory by its path, and the opt-in never carries an
+    instruction file (CLAUDE.md, CLAUDE.local.md, AGENTS.md, CONVENTIONS.md, anything under
+    a dot directory), a file that is not a note or has a credential name, a symbolic link,
+    a note it cannot read, or a reviewed note or a change to one."""
 
     def test_a_note_under_an_opted_in_directory_travels_and_one_elsewhere_does_not(self, synced_pair, capsys):
         a, _ = synced_pair
@@ -2590,7 +2592,9 @@ class TestTheVaultsOptIn:
         a, _ = synced_pair
         _opt_in(a, "paths: [crew]\n")
         (a / "crew" / "sub").mkdir(parents=True)
-        names = ["crew/CLAUDE.md", "crew/AGENTS.md", "crew/CONVENTIONS.md", "crew/sub/claude.md"]
+        (a / "crew" / ".claude" / "commands").mkdir(parents=True)
+        names = ["crew/CLAUDE.md", "crew/AGENTS.md", "crew/CONVENTIONS.md", "crew/sub/claude.md",
+                 "crew/CLAUDE.local.md", "crew/.claude/commands/run.md"]
         for rel in names:
             (a / rel).write_text("Follow these steps first.\n")
         (a / "crew" / "plain.md").write_text(_BY_HAND)
@@ -2654,3 +2658,85 @@ class TestTheVaultsOptIn:
             result = sync(detect(a), pull=False, push=True)
             assert "nothing opted in: _shared/SYNC.yaml" in result.detail and said in result.detail
             assert "crew/note.md" not in _remote_files(a)
+
+    def test_a_note_called_star_md_travels_alone(self, synced_pair):
+        """git takes each opted-in note as a literal path: a note called `*.md` carries itself,
+        never a changed reviewed note or CLAUDE.md that the name would match as a glob."""
+        a, _ = synced_pair
+        crew = a / "crew"
+        crew.mkdir()
+        (crew / "checked.md").write_text(_reviewed_note("verified"))
+        (crew / "CLAUDE.md").write_text("Committed instructions.\n")
+        _git(a, "add", "crew")
+        _git(a, "commit", "-m", "committed by a person")
+        _opt_in(a, "paths: [crew]\n")
+        (crew / "checked.md").write_text(_BY_HAND)
+        (crew / "CLAUDE.md").write_text("Changed on disk.\n")
+        (crew / "*.md").write_text(_BY_HAND)
+
+        sync(detect(a), pull=False, push=True)
+
+        assert "crew/*.md" in _remote_files(a)
+        assert "maturity: verified" in _git(a, "show", "origin/main:crew/checked.md").stdout
+        assert _git(a, "show", "origin/main:crew/CLAUDE.md").stdout == "Committed instructions.\n"
+
+    @pytest.mark.parametrize("listed", ["./.", ".//.", "*", "cr*", ":/", ":(top)"])
+    def test_a_listed_path_that_is_not_one_directory_opts_nothing_in(self, synced_pair, listed):
+        a, _ = synced_pair
+        (a / "crew").mkdir()
+        (a / "crew" / "note.md").write_text(_BY_HAND)
+        (a / "_shared" / "knowledge" / "by-hand.md").write_text(_BY_HAND)
+        _opt_in(a, f"paths: [{json.dumps(listed)}]\n")
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert f"nothing opted in: _shared/SYNC.yaml: {listed!r}" in result.detail, result.detail
+        assert not {"crew/note.md", "_shared/knowledge/by-hand.md"} & _remote_files(a)
+
+    def test_a_symbolic_link_stays_left_behind(self, synced_pair, tmp_path):
+        a, _ = synced_pair
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        (tmp_path / "outside.md").write_text(_BY_HAND)
+        (a / "crew" / "x.md").symlink_to(tmp_path / "outside.md")
+        (a / "crew" / "folder.md").symlink_to(tmp_path)
+        (a / "crew" / "plain.md").write_text(_BY_HAND)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        remote = _remote_files(a)
+        assert "crew/plain.md" in remote and not {"crew/x.md", "crew/folder.md"} & remote
+        assert {"crew/x.md", "crew/folder.md"} <= set(result.left_behind), result.left_behind
+
+    @pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() == 0,
+                        reason="root reads a file whatever its mode")
+    def test_a_note_sync_cannot_read_is_named_and_stays_left_behind(self, synced_pair):
+        a, _ = synced_pair
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        locked = a / "crew" / "locked.md"
+        locked.write_text(_BY_HAND)
+        (a / "crew" / "plain.md").write_text(_BY_HAND)
+        locked.chmod(0)
+        try:
+            result = sync(detect(a), pull=False, push=True)
+        finally:
+            locked.chmod(0o644)
+
+        assert "not opted in, could not be read: crew/locked.md" in result.detail, result.detail
+        remote = _remote_files(a)
+        assert "crew/plain.md" in remote and "crew/locked.md" not in remote
+        assert "crew/locked.md" in result.left_behind
+
+    def test_the_left_behind_line_names_sync_yaml_only_for_a_note_it_could_carry(self, synced_pair, capsys):
+        a, _ = synced_pair
+        (a / "scratch.txt").write_text("not a note\n")
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 0
+        err = capsys.readouterr().err
+        assert "left behind: 1 file(s)" in err and "SYNC.yaml" not in err, err
+
+        (a / "_shared" / "knowledge" / "by-hand.md").write_text(_BY_HAND)
+        assert main(["--vault", str(a), "sync"]) == 0
+        assert "list a note's directory in SYNC.yaml" in capsys.readouterr().err

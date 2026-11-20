@@ -569,7 +569,9 @@ vendor source; support for unobserved events is not promised by this snippet.
   logs the same line). They are not `detail`, so they never fail a run. The
   vault's opt-in (`SYNC.yaml`, VAULT-STRUCTURE.md) adds the notes written
   around the door under the directories it lists, in a commit of its own; a
-  `SYNC.yaml` that cannot be used is named in `detail`.
+  `SYNC.yaml` that cannot be used (a listed path that is not one directory
+  inside the vault, by its path) is named in `detail`, and so is each note
+  under a listed directory that `sync` cannot read, which is not carried.
   `data.commit_error` is set when a commit sync makes does not take (a failing
   hook or signing step): git's message, then the files. Files the write door
   staged stay staged for the next sync and are not in `left_behind`; opted-in

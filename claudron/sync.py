@@ -666,11 +666,13 @@ def name_paths(shown: list[str], total: int | None = None) -> str:
 
 
 def left_behind_line(result: SyncResult) -> str:
-    """The left-behind files as one line, for the CLI's stderr and the hook log."""
+    """The left-behind files as one line, for the CLI's stderr and the hook log. It points at
+    SYNC.yaml only when a file it shows is a note the opt-in could carry."""
+    opt_in = (f", or list a note's directory in {SYNC_FILE}"
+              if any(_opt_in_may_carry(rel) for rel in result.left_behind) else "")
     return (f"{result.left_behind_count} file(s) not committed, written outside the write door: "
             f"{name_paths(result.left_behind, result.left_behind_count)} "
-            "(a person commits them with git; or write them through the door, or list their "
-            f"directory in {SYNC_FILE})")
+            f"(a person commits them with git; or write them through the door{opt_in})")
 
 
 #: The vault's opt-in for notes written outside the write door: ``paths:`` in the
@@ -680,8 +682,19 @@ def left_behind_line(result: SyncResult) -> str:
 #: person commits it with git: `sync` never does (it is not a vault file).
 SYNC_FILE = "SYNC.yaml"
 #: Never carried by the opt-in, wherever they sit: files an agent CLI or the
-#: session brief reads as instructions (matched case-blind on the name).
-NEVER_OPTED_IN = frozenset({"claude.md", "agents.md", "conventions.md"})
+#: session brief reads as instructions (matched case-blind on the name). Nor is
+#: anything under a dot directory (``.claude/``, ``.github/`` and the like), where
+#: agent CLIs keep theirs (:func:`_opt_in_may_carry`).
+NEVER_OPTED_IN = frozenset({"claude.md", "claude.local.md", "agents.md", "conventions.md"})
+
+
+def _opt_in_may_carry(rel: str) -> bool:
+    """True when the opt-in may carry *rel* by its name: a note (``*.md``) that is not an
+    instruction file and has no credential name."""
+    path = PurePosixPath(rel)
+    name = path.name.lower()
+    return (name.endswith(".md") and name not in NEVER_OPTED_IN and may_commit(rel)
+            and not any(part.startswith(".") for part in path.parts[:-1]))
 
 
 def _opted_in_dirs(vault: Vault, t: float) -> tuple[list[str], str]:
@@ -704,44 +717,51 @@ def _opted_in_dirs(vault: Vault, t: float) -> tuple[list[str], str]:
     for raw in paths:
         name = raw.strip().rstrip("/")
         path = PurePosixPath(name)
-        if not name or name == "." or path.is_absolute() or ".." in path.parts:
-            return [], f"{rel}: {raw!r} is not a directory inside the vault"
+        # One directory inside the vault, named by its path: never the vault itself once
+        # normalized ("./." is "."), and never a pattern or pathspec magic.
+        if (not path.parts or path.is_absolute() or ".." in path.parts
+                or name.startswith(":") or any(ch in name for ch in "*?[")):
+            return [], (f"{rel}: {raw!r} is not a directory inside the vault (one directory by "
+                        "its path: not the vault itself, a pattern or a leading ':')")
         dirs.append(path.as_posix())
     return dirs, ""
 
 
-def _carried_by_opt_in(vault: Vault, entries: list[tuple[str, str, str]], t: float) -> tuple[list[str], str]:
-    """The notes written outside the door that the vault's opt-in carries, and ``""``; or
-    none and what is wrong with SYNC.yaml.
+def _carried_by_opt_in(vault: Vault, entries: list[tuple[str, str, str]],
+                       t: float) -> tuple[list[str], str, list[str]]:
+    """The notes written outside the door that the vault's opt-in carries, ``""``, and the
+    notes it could not read; or none, what is wrong with SYNC.yaml, and none.
 
     A changed, new or deleted note (``*.md``) under an opted-in directory travels,
-    except: CLAUDE.md, AGENTS.md and CONVENTIONS.md; a credential-shaped name; and a
-    note that is reviewed (maturity verified or canonical) in its copy on disk OR in
-    its last commit, so neither a reviewed note nor a change to one goes without the
-    door."""
+    except: an instruction file (:func:`_opt_in_may_carry`); a credential-shaped name;
+    a symbolic link; a note it cannot read, which it names instead; and a note that is
+    reviewed (maturity verified or canonical) in its copy on disk OR in its last commit,
+    so neither a reviewed note nor a change to one goes without the door."""
     if not any(y != " " for _x, y, _p in entries):
-        return [], ""
+        return [], "", []
     dirs, problem = _opted_in_dirs(vault, t)
     if problem or not dirs:
-        return [], problem
+        return [], problem, []
     root = vault.root
     scoped, _said = _status(root, t, untracked="all", paths=dirs)
-    carried = []
+    carried, unreadable = [], []
     for x, y, rel in scoped or []:
-        name = PurePosixPath(rel).name.lower()
-        if y == " " or not name.endswith(".md") or name in NEVER_OPTED_IN or not may_commit(rel):
+        path = root / rel
+        if y == " " or not _opt_in_may_carry(rel) or path.is_symlink():
             continue
-        copies = []
-        if (root / rel).is_file():
-            copies.append((root / rel).read_text(encoding="utf-8", errors="replace"))
-        if x != "?":
-            committed = run_git(root, "show", f"HEAD:{rel}", timeout=t)
-            if committed.returncode == 0:
-                copies.append(committed.stdout)
+        try:
+            copies = [path.read_text(encoding="utf-8", errors="replace")] if path.is_file() else []
+            if x != "?":
+                committed = run_git(root, "show", f"HEAD:{rel}", timeout=t)
+                if committed.returncode == 0:
+                    copies.append(committed.stdout)
+        except (OSError, UnicodeDecodeError):
+            unreadable.append(rel)  # not carried: it stays on disk, left behind
+            continue
         if any(_declares_reviewed(text) for text in copies):
             continue
         carried.append(rel)
-    return carried, ""
+    return carried, "", unreadable
 
 
 def _declares_reviewed(text: str) -> bool:
@@ -1097,9 +1117,11 @@ def sync(
             door_failed = bool(committing) and not result.committed
             # The vault's opt-in, in a commit of its own (countable like the
             # door's): notes written outside the door under the paths it lists.
-            carried, problem = ([], "") if door_failed else _carried_by_opt_in(vault, entries, t)
+            carried, problem, unreadable = ([], "", []) if door_failed else _carried_by_opt_in(vault, entries, t)
             if problem:
                 standing.append(f"nothing opted in: {problem}")
+            if unreadable:
+                standing.append(f"not opted in, could not be read: {name_paths(sorted(unreadable))}")
             if carried:
                 added = run_git(root, "add", "-A", "--", *carried, timeout=t)
                 outcome = (commit_staged(root, f"vault sync: {len(carried)} opted-in file(s) from "
