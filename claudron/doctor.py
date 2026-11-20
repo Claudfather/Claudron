@@ -41,7 +41,6 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -366,8 +365,8 @@ def diagnose(vault: Vault, *,
     if report.git is not None:
         tracked = _tracked_but_ignored(vault)
         if tracked:
-            shown = ", ".join(tracked[:5]) + (f" (+{len(tracked) - 5} more)"
-                                               if len(tracked) > 5 else "")
+            shown = ", ".join(map(_printable, tracked[:5])) + (f" (+{len(tracked) - 5} more)"
+                                                                if len(tracked) > 5 else "")
             report.findings.append(_finding(
                 "D008", "warning",
                 f"{len(tracked)} tracked file(s) match the ignore rules, so they keep "
@@ -567,16 +566,24 @@ def _resolution(event: str, command: str, address: str | None, root: str, hint: 
     return out
 
 
+def _printable(path: str) -> str:
+    """*path* for D008's message: a byte of a file name that is not UTF-8 (a lone
+    surrogate, as :func:`claudron.sync.run_git` reads one) as ``\\udcNN``, the escape
+    stderr writes, so the message prints on any stdout."""
+    return path.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def _tracked_but_ignored(vault: Vault) -> list[str]:
     """Files git tracks that the ignore rules now match (read-only query).
     Ignore rules never untrack a file, so after m002 (or m004) these are exactly
-    the tracked files the rules did not take out of history."""
+    the tracked files the rules did not take out of history. The read goes through
+    :func:`claudron.sync.run_git`, which takes a ``-z`` call's output as bytes: a
+    name that is not UTF-8 arrives with a lone surrogate for each such byte."""
+    from .sync import SyncError, run_git
+
     try:
-        out = subprocess.run(
-            ["git", "-C", str(vault.root), "ls-files", "-ci", "--exclude-standard", "-z"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
+        out = run_git(vault.root, "ls-files", "-ci", "--exclude-standard", "-z", timeout=10)
+    except (SyncError, OSError):
         return []
     if out.returncode != 0:
         return []

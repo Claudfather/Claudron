@@ -28,6 +28,7 @@
 ### Fixed
 - **Git takes every path the engine names literally.** The write door's commit and stage, `doctor --fix`, the first commit of `init --personal` and `sync`'s unstage pass each path as a literal pathspec (`:(literal)`), so a file or directory name with `*`, `?` or `[` in it, or a relative path that starts with `:`, names that one path and is never read as a glob or as pathspec magic: a door write to a note called `*.md` commits that note alone. Tests: `claudron/tests/test_sync.py`, `claudron/tests/test_personal.py`.
 - **The agent instruction files match the package.** The root `CLAUDE.md` maps all 21 modules, `amend`, `contract`, `navigation`, `ops`, `runs`, `subjects` and `tags` among them, and `claudron/CLAUDE.md` counts those seven among the engine modules that never print. `PROJECT_MISSION.md` gives bug fixes in the indexer and CLI as standing work: no MCP server exists to fix, since decision C parks it.
+- **`doctor` reads a tracked file whose name is not UTF-8.** Its check for tracked files the ignore rules match (D008) names such a file as any other, a byte that is not UTF-8 written as `\udcNN`, in its text and in `--json`.
 
 ## [0.10.1] - 2026-11-07
 

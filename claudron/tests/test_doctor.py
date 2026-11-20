@@ -4,8 +4,10 @@ idempotent migration runner behind `--fix`."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -606,3 +608,44 @@ def test_notes_about_secrets_and_credentials_stay_trackable(tmp_path):
     assert _ignored(fresh, notes) == []
     assert all(may_commit(rel) for rel in notes) and not is_secret_name("Secrets.md")
     assert is_secret_name("deploy/secrets.yaml") and is_secret_name("aws/credentials")
+
+
+class TestATrackedNameThatIsNotUtf8:
+    """git ls-files -z writes a tracked file's name as its bytes, which need not be UTF-8. D008
+    names a tracked file the ignore rules match whose name is not UTF-8 as any other: the byte
+    is written as \\udcff in its message, in --json and in doctor's text on a strict stdout."""
+
+    @staticmethod
+    def _vault(root: Path) -> Path:
+        assert main(["init", str(root)]) == 0
+        try:
+            fd = os.open(os.fsencode(root) + b"/note-\xff.bak", os.O_WRONLY | os.O_CREAT, 0o644)
+        except OSError as exc:
+            pytest.skip(f"this file system refuses the name: {exc}")
+        os.write(fd, b"x\n")
+        os.close(fd)
+        _git(root, "init", "-q", "--initial-branch=main")
+        _git(root, "add", "-A")
+        _git(root, "add", "-f", os.fsdecode(b"note-\xff.bak"))
+        _git(root, "commit", "-qm", "seed")
+        return root
+
+    def test_doctor_json_names_it(self, tmp_path, capsys):
+        root = self._vault(tmp_path / "v")
+        capsys.readouterr()
+
+        assert main(["--vault", str(root), "doctor", "--json"]) == 0
+
+        env = json.loads(capsys.readouterr().out)
+        d008 = [w for w in env["warnings"] if w["code"] == "D008"]
+        assert d008 and "note-\\udcff.bak" in d008[0]["message"], env["warnings"]
+
+    def test_doctor_text_prints_it_on_a_strict_stdout(self, tmp_path):
+        root = self._vault(tmp_path / "v")
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8:strict"}
+
+        out = subprocess.run([sys.executable, "-m", "claudron.cli", "--vault", str(root), "doctor"],
+                             capture_output=True, env=env, timeout=60)
+
+        assert out.returncode == 0, out.stderr
+        assert b"[D008] warning" in out.stdout and b"note-\\udcff.bak" in out.stdout, out.stdout
