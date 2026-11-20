@@ -31,10 +31,13 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
+import yaml
 
 from .locking import vault_write_lock
-from .vault import Vault, is_secret_name, scan_quarantine, split_commit_refusals
+from .schema import is_reviewed, parse_note
+from .vault import Vault, is_secret_name, may_commit, scan_quarantine, split_commit_refusals
 
 
 @dataclass
@@ -68,11 +71,11 @@ class SyncResult:
     left_behind: list[str] = field(default_factory=list)
     #: How many files that is in all (``left_behind`` shows at most 20 of them).
     left_behind_count: int = 0
-    #: Why sync's own commit of the staged files did not take (a failing hook or
-    #: signing step): git's message, then those files, which stay staged for the
-    #: next sync. Empty when it took or none was needed. NOT `detail`, for the
-    #: reason `left_behind` is not; and those files are not `left_behind`: the
-    #: write door staged them.
+    #: Why a commit sync made did not take (a failing hook or signing step):
+    #: git's message, then the files. Files the write door staged stay staged for
+    #: the next sync and are not `left_behind`; opted-in notes go back out of the
+    #: index and are. Empty when every commit took or none was needed. NOT
+    #: `detail`, for the reason `left_behind` is not.
     commit_error: str = ""
 
     @property
@@ -612,14 +615,16 @@ def commit_staged(root: Path, message: str, *, timeout: float | None = None) -> 
     return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
 
 
-def _status(root: Path, t: float, *, untracked: str = "normal") -> tuple[list[tuple[str, str, str]] | None, str]:
-    """``(index, worktree, path)`` for every uncommitted path, from one ``git status -z``
-    (a rename as a delete plus an add), and ``""``; or ``None`` and git's own message.
+def _status(root: Path, t: float, *, untracked: str = "normal",
+            paths: list[str] | None = None) -> tuple[list[tuple[str, str, str]] | None, str]:
+    """``(index, worktree, path)`` for every uncommitted path (under *paths*, when given),
+    from one ``git status -z`` (a rename as a delete plus an add), and ``""``; or ``None``
+    and git's own message.
 
     ``untracked`` is git's ``--untracked-files`` mode: ``normal`` keeps an untracked
     directory one entry ("dir/"), so a sync never walks one; ``all`` lists every file."""
     out = run_git(root, "status", "--porcelain=v1", "-z", "--no-renames",
-                  f"--untracked-files={untracked}", timeout=t)
+                  f"--untracked-files={untracked}", *(["--", *paths] if paths else []), timeout=t)
     if out.returncode != 0:
         said = (out.stderr or out.stdout or "").strip()[:200]
         return None, said or f"exit {out.returncode}"
@@ -664,7 +669,85 @@ def left_behind_line(result: SyncResult) -> str:
     """The left-behind files as one line, for the CLI's stderr and the hook log."""
     return (f"{result.left_behind_count} file(s) not committed, written outside the write door: "
             f"{name_paths(result.left_behind, result.left_behind_count)} "
-            "(commit them with git, or write them through the door)")
+            "(a person commits them with git; or write them through the door, or list their "
+            f"directory in {SYNC_FILE})")
+
+
+#: The vault's opt-in for notes written outside the write door: ``paths:`` in the
+#: hub's SYNC.yaml lists vault-relative directories whose notes `sync` commits
+#: even though nothing staged them. No file, or no paths, opts nothing in. It is
+#: read from the last commit, so an uncommitted edit cannot widen it, and a
+#: person commits it with git: `sync` never does (it is not a vault file).
+SYNC_FILE = "SYNC.yaml"
+#: Never carried by the opt-in, wherever they sit: files an agent CLI or the
+#: session brief reads as instructions (matched case-blind on the name).
+NEVER_OPTED_IN = frozenset({"claude.md", "agents.md", "conventions.md"})
+
+
+def _opted_in_dirs(vault: Vault, t: float) -> tuple[list[str], str]:
+    """The directories the committed SYNC.yaml opts in, and ``""``; or none and what is
+    wrong with the file."""
+    rel = (vault.shared / SYNC_FILE).relative_to(vault.root).as_posix()
+    out = run_git(vault.root, "show", f"HEAD:{rel}", timeout=t)
+    if out.returncode != 0:
+        return [], ""            # not committed (or no commit yet): nothing is opted in
+    try:
+        data = yaml.safe_load(out.stdout)
+    except yaml.YAMLError:
+        return [], f"{rel} is not YAML"
+    if data is None:
+        return [], ""
+    paths = data.get("paths") if isinstance(data, dict) else None
+    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
+        return [], f"{rel} needs `paths:`, a list of directories"
+    dirs = []
+    for raw in paths:
+        name = raw.strip().rstrip("/")
+        path = PurePosixPath(name)
+        if not name or name == "." or path.is_absolute() or ".." in path.parts:
+            return [], f"{rel}: {raw!r} is not a directory inside the vault"
+        dirs.append(path.as_posix())
+    return dirs, ""
+
+
+def _carried_by_opt_in(vault: Vault, entries: list[tuple[str, str, str]], t: float) -> tuple[list[str], str]:
+    """The notes written outside the door that the vault's opt-in carries, and ``""``; or
+    none and what is wrong with SYNC.yaml.
+
+    A changed, new or deleted note (``*.md``) under an opted-in directory travels,
+    except: CLAUDE.md, AGENTS.md and CONVENTIONS.md; a credential-shaped name; and a
+    note that is reviewed (maturity verified or canonical) in its copy on disk OR in
+    its last commit, so neither a reviewed note nor a change to one goes without the
+    door."""
+    if not any(y != " " for _x, y, _p in entries):
+        return [], ""
+    dirs, problem = _opted_in_dirs(vault, t)
+    if problem or not dirs:
+        return [], problem
+    root = vault.root
+    scoped, _said = _status(root, t, untracked="all", paths=dirs)
+    carried = []
+    for x, y, rel in scoped or []:
+        name = PurePosixPath(rel).name.lower()
+        if y == " " or not name.endswith(".md") or name in NEVER_OPTED_IN or not may_commit(rel):
+            continue
+        copies = []
+        if (root / rel).is_file():
+            copies.append((root / rel).read_text(encoding="utf-8", errors="replace"))
+        if x != "?":
+            committed = run_git(root, "show", f"HEAD:{rel}", timeout=t)
+            if committed.returncode == 0:
+                copies.append(committed.stdout)
+        if any(_declares_reviewed(text) for text in copies):
+            continue
+        carried.append(rel)
+    return carried, ""
+
+
+def _declares_reviewed(text: str) -> bool:
+    """True when a note's frontmatter says it is reviewed (maturity verified or canonical)."""
+    fm = parse_note(text)[0]
+    return bool(fm) and is_reviewed(fm.get("maturity"))
 
 
 def _reap_integration(root: Path, wt: Path | None, branch: str | None,
@@ -1011,8 +1094,38 @@ def sync(
                     why = " ".join(outcome.error.split())  # one line: the hook log takes it too
                     result.commit_error = (f"{why}; {len(committing)} staged file(s) stay staged "
                                            f"for the next sync: {name_paths(sorted(committing))}")
-            # Left behind: every change outside the index, and the refused files.
-            left = sorted({p for _x, y, p in entries if y != " "} | set(refused))
+            door_failed = bool(committing) and not result.committed
+            # The vault's opt-in, in a commit of its own (countable like the
+            # door's): notes written outside the door under the paths it lists.
+            carried, problem = ([], "") if door_failed else _carried_by_opt_in(vault, entries, t)
+            if problem:
+                standing.append(f"nothing opted in: {problem}")
+            if carried:
+                added = run_git(root, "add", "-A", "--", *carried, timeout=t)
+                outcome = (commit_staged(root, f"vault sync: {len(carried)} opted-in file(s) from "
+                                         f"{socket.gethostname()}", timeout=t)
+                           if added.returncode == 0 else None)
+                if outcome is not None and outcome.ok:
+                    result.committed = True
+                else:
+                    # Not committed: the notes go back out of the index (git's index is the
+                    # record of what the door wrote) and stay on disk, left behind, with
+                    # git's message named beside them as for the door's own commit.
+                    why = " ".join((outcome or CommitOutcome("add", added)).error.split())
+                    unstaged = _unstage(root, carried, t)
+                    kept = "" if unstaged.returncode == 0 else " (and they could not be unstaged)"
+                    result.commit_error = (f"{why}; {len(carried)} opted-in file(s) not committed{kept}, "
+                                           f"left behind: {name_paths(sorted(carried))}")
+                    carried = []
+            if carried:
+                # The opt-in committed files the snapshot above still lists: read
+                # again, and everything still uncommitted is left behind.
+                fresh, _said = _status(root, t)
+                left = (sorted({p for _x, _y, p in fresh}) if fresh is not None
+                        else sorted(({p for _x, y, p in entries if y != " "} | set(refused)) - set(carried)))
+            else:
+                # Left behind: every change outside the index, and the refused files.
+                left = sorted({p for _x, y, p in entries if y != " "} | set(refused))
             if left:
                 result.left_behind = left[:LEFT_BEHIND_SHOWN]
                 result.left_behind_count = len(left)

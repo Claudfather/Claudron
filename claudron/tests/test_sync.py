@@ -2532,3 +2532,125 @@ class TestSyncCommitsOnlyWhatTheDoorStaged:
         assert _git(a, "diff", "--cached", "--name-only").stdout.split() == ["_shared/knowledge/door-note.md"]
         hook_session_end(detect(a), {})
         assert "commit failed: pre-commit says no" in (a / ".claudron" / "hooks.log").read_text()
+
+
+def _opt_in(clone: Path, text: str) -> None:
+    """Commit the vault's SYNC.yaml by hand, as a person does."""
+    (clone / "_shared" / "SYNC.yaml").write_text(text)
+    _git(clone, "add", "_shared/SYNC.yaml")
+    _git(clone, "commit", "-m", "opt in")
+
+
+def _reviewed_note(maturity: str) -> str:
+    return _BY_HAND.replace("updated: 2026-07-01\n", f"updated: 2026-07-01\nmaturity: {maturity}\n")
+
+
+class TestTheVaultsOptIn:
+    """A vault may list directories whose notes, written outside the door, still travel
+    (`paths:` in the hub's SYNC.yaml, read from the last commit). Nothing is opted in by
+    default, and the opt-in never carries CLAUDE.md, AGENTS.md or CONVENTIONS.md, a file
+    that is not a note or has a credential name, or a reviewed note or a change to one."""
+
+    def test_a_note_under_an_opted_in_directory_travels_and_one_elsewhere_does_not(self, synced_pair, capsys):
+        a, _ = synced_pair
+        _opt_in(a, "paths:\n  - crew/shared/\n")
+        (a / "crew" / "shared").mkdir(parents=True)
+        (a / "crew" / "shared" / "plan.md").write_text(_BY_HAND)
+        (a / "_shared" / "knowledge" / "by-hand.md").write_text(_BY_HAND)
+
+        assert main(["--vault", str(a), "sync"]) == 0
+
+        remote = _remote_files(a)
+        assert "crew/shared/plan.md" in remote and "_shared/knowledge/by-hand.md" not in remote
+        assert "1 opted-in file(s)" in _git(a, "log", "-1", "--format=%s").stdout  # a commit of its own
+        assert "left behind: 1 file(s)" in capsys.readouterr().err
+
+    def test_an_opted_in_commit_that_fails_is_named_and_its_notes_stay_left_behind(self, synced_pair):
+        """The opt-in's own commit follows the door's rule: when it does not take (a failing hook),
+        git's message and the notes are named in `commit_error`, and the notes go back out of the
+        index, so the next sync does not take them for door writes: they stay on disk, left behind."""
+        a, _ = synced_pair
+        _opt_in(a, "paths:\n  - crew/shared/\n")
+        (a / "crew" / "shared").mkdir(parents=True)
+        (a / "crew" / "shared" / "plan.md").write_text(_BY_HAND)
+        hook = a / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho 'pre-commit says no' >&2\nexit 1\n")
+        hook.chmod(0o755)
+
+        result = sync(detect(a), pull=False, push=False)
+
+        assert result.ok, result.detail
+        assert not result.committed
+        assert "pre-commit says no" in result.commit_error and "crew/shared/plan.md" in result.commit_error
+        assert _git(a, "diff", "--cached", "--name-only").stdout == ""
+        assert any(rel.startswith("crew/") for rel in result.left_behind), result.left_behind
+        assert (a / "crew" / "shared" / "plan.md").read_text() == _BY_HAND
+
+    def test_the_opt_in_never_carries_an_instruction_file(self, synced_pair):
+        a, _ = synced_pair
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew" / "sub").mkdir(parents=True)
+        names = ["crew/CLAUDE.md", "crew/AGENTS.md", "crew/CONVENTIONS.md", "crew/sub/claude.md"]
+        for rel in names:
+            (a / rel).write_text("Follow these steps first.\n")
+        (a / "crew" / "plain.md").write_text(_BY_HAND)
+
+        sync(detect(a), pull=False, push=True)
+
+        remote = _remote_files(a)
+        assert "crew/plain.md" in remote and not set(names) & remote
+
+    def test_the_opt_in_never_carries_a_reviewed_note_or_a_change_to_one(self, synced_pair):
+        a, _ = synced_pair
+        crew = a / "crew"
+        crew.mkdir()
+        (crew / "checked.md").write_text(_reviewed_note("verified"))
+        (crew / "canon.md").write_text(_reviewed_note("canonical"))
+        _git(a, "add", "crew")
+        _git(a, "commit", "-m", "reviewed notes, committed by a person")
+        _opt_in(a, "paths: [crew]\n")
+        (crew / "claims-review.md").write_text(_reviewed_note("Verified"))  # declares itself reviewed
+        (crew / "checked.md").write_text(_BY_HAND)                         # a reviewed note rewritten
+        (crew / "canon.md").unlink()                                        # a reviewed note deleted
+        (crew / "plain.md").write_text(_BY_HAND)
+
+        sync(detect(a), pull=False, push=True)
+
+        remote = _remote_files(a)
+        assert "crew/plain.md" in remote
+        assert "crew/claims-review.md" not in remote and "crew/canon.md" in remote
+        assert "maturity: verified" in _git(a, "show", "origin/main:crew/checked.md").stdout
+
+    def test_the_opt_in_never_carries_a_credential_or_a_file_that_is_not_a_note(self, synced_pair):
+        a, _ = synced_pair
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        others = ["crew/.env.local", "crew/config.json", "crew/photo.png", "crew/fleet.yaml", "crew/id_ed25519"]
+        for rel in others:
+            (a / rel).write_text("x\n")
+        (a / "crew" / "note.md").write_text(_BY_HAND)
+
+        sync(detect(a), pull=False, push=True)
+
+        remote = _remote_files(a)
+        assert "crew/note.md" in remote and not set(others) & remote
+
+    def test_the_opt_in_is_read_from_the_last_commit_and_sync_never_commits_it(self, synced_pair):
+        a, _ = synced_pair
+        (a / "crew").mkdir()
+        (a / "crew" / "note.md").write_text(_BY_HAND)
+        (a / "_shared" / "SYNC.yaml").write_text("paths: [crew]\n")  # written, never committed
+
+        sync(detect(a), pull=False, push=True)
+        assert not {"crew/note.md", "_shared/SYNC.yaml"} & _remote_files(a)
+
+        _git(a, "add", "_shared/SYNC.yaml")  # staged by hand: still a person's to commit
+        result = sync(detect(a), pull=False, push=True)
+        assert "_shared/SYNC.yaml" in result.detail
+        assert not {"crew/note.md", "_shared/SYNC.yaml"} & _remote_files(a)
+
+        for text, said in (("paths: crew\n", "needs `paths:`"), ("paths: [../outside]\n", "inside the vault")):
+            _opt_in(a, text)
+            result = sync(detect(a), pull=False, push=True)
+            assert "nothing opted in: _shared/SYNC.yaml" in result.detail and said in result.detail
+            assert "crew/note.md" not in _remote_files(a)

@@ -566,12 +566,16 @@ vendor source; support for unobserved events is not promised by this snippet.
   `data.left_behind` names the first 20 files still uncommitted after its
   commit (written outside the door), `data.left_behind_count` counts them all,
   and `sync` prints them on stderr as `left behind: …` (the SessionEnd hook
-  logs the same line). They are not `detail`, so they never fail a run.
-  `data.commit_error` is set when sync's own commit of the staged files did
-  not take (a failing hook or signing step): git's message, then those files,
-  which stay staged for the next sync and are not in `left_behind`. `sync`
-  prints it on stderr as `commit failed: …` (the hook logs it too). It is not
-  `detail` either, and is `""` otherwise.
+  logs the same line). They are not `detail`, so they never fail a run. The
+  vault's opt-in (`SYNC.yaml`, VAULT-STRUCTURE.md) adds the notes written
+  around the door under the directories it lists, in a commit of its own; a
+  `SYNC.yaml` that cannot be used is named in `detail`.
+  `data.commit_error` is set when a commit sync makes does not take (a failing
+  hook or signing step): git's message, then the files. Files the write door
+  staged stay staged for the next sync and are not in `left_behind`; opted-in
+  notes go back out of the index and stay in `left_behind`. `sync` prints it on
+  stderr as `commit failed: …` (the hook logs it too). It is not `detail`
+  either, and is `""` otherwise.
 - `doctor [--fix] [--settings PATH]…` — **the vault's health-and-migration door** (#190). Diagnoses
   the vault against *this* engine's rules and names what `--fix` would change.
   - **Read-only unless `--fix` is passed** — no file, index or journal is

@@ -116,6 +116,19 @@ The tree is normative. Beyond what its comments state:
   file that is neither a note (`*.md`) nor a vault file (`.gitignore`,
   `.gitkeep`, `.claudron-vault`, `fleet.yaml`, `TAGS.yaml`), or that has a
   credential name, is unstaged and named instead of committed.
+- **A vault can opt directories in.** `paths:` in the hub's `SYNC.yaml`
+  (`_shared/SYNC.yaml`) lists vault-relative directories whose notes (`*.md`)
+  `sync` commits even when they were written around the door, in a commit of
+  their own (`vault sync: N opted-in file(s)`). Nothing is opted in by default.
+  The file is read from the last commit, so an uncommitted edit cannot widen it,
+  and a person commits it with git: `sync` never does. The opt-in never carries
+  `CLAUDE.md`, `AGENTS.md` or `CONVENTIONS.md`, a credential-named file, or a
+  note that is reviewed (`maturity` verified or canonical) on disk or in its
+  last commit, so a reviewed note, and any change to one, still goes through
+  the door. A `SYNC.yaml` that is not a list of directories inside the vault
+  opts nothing in, and `sync` says so. An opted-in commit that does not take
+  is named with git's message (`commit_error`), and its notes stay on disk,
+  left behind.
 - **The vault-root `.gitignore` keeps machine droppings out of history** (#182,
   F9) when files are committed by hand: `**/runtime/` (any depth, a nested
   fleet's `runtime/` too), `**/data/events/fleet-*.jsonl`,
