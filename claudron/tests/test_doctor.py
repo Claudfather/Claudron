@@ -559,7 +559,9 @@ class TestWalkScope:
 
 
 _CREDENTIAL_NAMES = [".env.local", "fleet/.env.production", ".netrc", "keys/id_ed25519", "tls/server.pem",
-                     "tls/server.key", "gcp-credentials.json", "client_secret_123.json"]
+                     "tls/server.key", "gcp-credentials.json", "client_secret_123.json", "aws/credentials",
+                     "secrets.yaml", "app/secrets.json", ".npmrc", "pkg/.pypirc", "keys/release.jks",
+                     "android/debug.keystore", "gcp/service-account.json", "gcp/service-account-ci.json"]
 
 
 def _ignored(root: Path, names: list[str]) -> list[str]:
@@ -569,8 +571,9 @@ def _ignored(root: Path, names: list[str]) -> list[str]:
 
 
 def test_credential_names_are_ignored_in_a_new_vault_and_added_to_an_older_one(tmp_path, capsys):
-    """Key files, `.env.*`, `.netrc` and credential JSON never become history: `init` writes the
-    rules into a new vault, and `doctor --fix` adds them to a vault from before them (m004)."""
+    """Key files and keystores, `.env.*`, `.netrc`, registry configs, `credentials`, `secrets.*` and
+    credential JSON never become history: `init` writes the rules into a new vault, and `doctor
+    --fix` adds them to a vault from before them (m004)."""
     from claudron.vault import IDENTITY_FILE, identity_text
 
     fresh = tmp_path / "fresh"
@@ -589,3 +592,17 @@ def test_credential_names_are_ignored_in_a_new_vault_and_added_to_an_older_one(t
     assert main(["--vault", str(older), "doctor", "--fix", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["data"]["applied"] == ["m004"]
     assert _ignored(older, _CREDENTIAL_NAMES) == _CREDENTIAL_NAMES
+
+
+def test_notes_about_secrets_and_credentials_stay_trackable(tmp_path):
+    """`secrets.*` and `credentials` are credential names; a note called `secrets.md` and a folder
+    of notes called `credentials/` are not, so neither is ignored or refused."""
+    from claudron.vault import is_secret_name, may_commit
+
+    fresh = tmp_path / "fresh"
+    assert main(["init", str(fresh)]) == 0
+    _git(fresh, "init", "-q", "--initial-branch=main")
+    notes = ["_shared/knowledge/secrets.md", "_shared/knowledge/credentials/rotation.md"]
+    assert _ignored(fresh, notes) == []
+    assert all(may_commit(rel) for rel in notes) and not is_secret_name("Secrets.md")
+    assert is_secret_name("deploy/secrets.yaml") and is_secret_name("aws/credentials")

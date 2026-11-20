@@ -96,10 +96,13 @@ The tree is normative. Beyond what its comments state:
   per-machine secrets. `fleet add` scaffolds each fleet's `.env`+`.gitignore`;
   `init` writes (or, on `--adopt`, augments) the vault-root `.gitignore`; a
   root `.env` is the operator's to create. The credential names are ignored
-  too, at any depth: `.env.*`, `.netrc`, `_netrc`, `.git-credentials`, key
-  files (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `id_rsa`, `id_dsa`, `id_ecdsa`,
-  `id_ed25519`) and credential JSON (`*credential*.json`,
-  `client_secret*.json`). Nothing the engine commits takes a file with such a
+  too, at any depth: `.env.*`, `.netrc`, `_netrc`, `.git-credentials`,
+  `credentials`, `.npmrc`, `.pypirc`, `secrets.*`, key files and keystores
+  (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa`,
+  `id_dsa`, `id_ecdsa`, `id_ed25519`) and credential JSON
+  (`*credential*.json`, `client_secret*.json`, `service-account*.json`). A
+  note called `secrets.md` and a folder of notes called `credentials` stay
+  trackable. Nothing the engine commits takes a file with such a
   name, however it was staged, and `sync` does not push a commit that adds or
   changes one.
 - **`sync` commits what the write door staged, and nothing else.** A door
@@ -107,7 +110,9 @@ The tree is normative. Beyond what its comments state:
   `new`, `index --navigation`, `fleet add`, `init --adopt` in a repository of
   its own) is staged, and the next `sync` commits it. A file written around
   the door, by hand or by any process, stays on disk uncommitted until a person
-  commits it with git; each `sync` names such files (`left_behind`). A staged
+  commits it with git; each `sync` names such files (`left_behind`). When
+  sync's own commit does not take, it names git's message instead
+  (`commit_error`), and the staged files stay staged for the next sync. A staged
   file that is neither a note (`*.md`) nor a vault file (`.gitignore`,
   `.gitkeep`, `.claudron-vault`, `fleet.yaml`, `TAGS.yaml`), or that has a
   credential name, is unstaged and named instead of committed.

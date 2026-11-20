@@ -518,13 +518,15 @@ class TestRefusesToStartABadRebase:
         assert _git(a, "rev-parse", "HEAD").stdout.strip() == head_before
         assert _git(a, "status", "--porcelain").stdout.strip(), "change was consumed"
 
-    def test_a_failed_commit_no_longer_stops_the_pull_and_its_files_are_named(
+    def test_a_failed_commit_no_longer_stops_the_pull_and_keeps_git_s_message(
         self, synced_pair, monkeypatch
     ):
         """Defect 2 was a rebase started against a dirty tree. Integration runs
         off the live tree now, and the live tree moves only where git's own
-        refusals allow, so a commit that did not take no longer stops the pull:
-        its files stay on disk, staged, and are named as left behind."""
+        refusals allow, so a commit that did not take no longer stops the pull.
+        Its files stay staged for the next sync, and git's message is kept in
+        `commit_error`: they are not `left_behind` (the write door staged them),
+        and the run stays ok."""
         from claudron import sync as sync_mod
 
         a, _ = synced_pair
@@ -542,8 +544,9 @@ class TestRefusesToStartABadRebase:
 
         assert result.ok, result.detail
         assert not result.committed and result.pulled
-        assert result.left_behind == ["_shared/knowledge/pending.md"]
-        assert (a / "_shared" / "knowledge" / "pending.md").is_file()
+        assert result.left_behind == [] and result.left_behind_count == 0
+        assert "refused" in result.commit_error and "_shared/knowledge/pending.md" in result.commit_error
+        assert _git(a, "diff", "--cached", "--name-only").stdout.split() == ["_shared/knowledge/pending.md"]
 
     def test_branch_without_upstream_skips_pull_but_still_pushes(self, synced_pair):
         """A never-pushed branch has nothing to rebase onto. The old refspec
@@ -2276,17 +2279,20 @@ class TestSyncCommitsOnlyWhatTheDoorStaged:
         assert _git(a, "diff", "--cached", "--name-only").stdout == ""
         assert (a / "id_ed25519").is_file() and (a / "diagram.png").is_file()
 
-    def test_the_push_stops_on_a_commit_that_adds_a_credential_shaped_name(self, synced_pair, capsys):
+    @pytest.mark.parametrize("rel", ["_shared/.env.local", "_shared/service-account.json", "deploy/secrets.yaml",
+                                     "keys/release.jks", "aws/credentials"])
+    def test_the_push_stops_on_a_commit_that_adds_a_credential_shaped_name(self, synced_pair, capsys, rel):
         a, _ = synced_pair
-        (a / "_shared" / ".env.local").write_text("TOKEN=not-real\n")
-        _git(a, "add", "-f", "_shared/.env.local")
+        (a / rel).parent.mkdir(parents=True, exist_ok=True)
+        (a / rel).write_text("TOKEN=not-real\n")
+        _git(a, "add", "-f", rel)
         _git(a, "commit", "-m", "committed by hand")
         capsys.readouterr()
 
         assert main(["--vault", str(a), "sync"]) == 1
 
-        assert "_shared/.env.local" in capsys.readouterr().err
-        assert "_shared/.env.local" not in _remote_files(a)
+        assert rel in capsys.readouterr().err
+        assert rel not in _remote_files(a)
 
     @pytest.mark.parametrize("writer", ["new", "index --navigation", "fleet add", "init --adopt"])
     def test_every_door_write_is_staged_for_the_next_sync(self, tmp_path, writer, capsys):
@@ -2341,3 +2347,30 @@ class TestSyncCommitsOnlyWhatTheDoorStaged:
         assert "left behind: 25 file(s)" in capsys.readouterr().err and "and 5 more" not in result.detail
         hook_session_end(detect(a), {})
         assert "left behind: 25 file(s)" in (a / ".claudron" / "hooks.log").read_text()
+
+    def test_a_failed_sync_commit_names_git_s_message_beside_the_left_behind_line(self, synced_pair, capsys):
+        """A failing pre-commit hook (or signing step) stops sync's own commit. The run stays ok
+        (exit 0) and the staged file stays staged for the next sync; git's message and the file are
+        named on stderr, in --json (`commit_error`) and in the hook log, never as a file written
+        outside the write door."""
+        from claudron.hooks import hook_session_end
+
+        a, _ = synced_pair
+        hook = a / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\necho 'pre-commit says no' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        assert main(["--vault", str(a), "capture", "--type", "knowledge", "--title", "Door Note",
+                     "--body", "Written through the door.", "--owner", "t", "--no-commit"]) == 0
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync", "--json"]) == 0
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert "pre-commit says no" in data["commit_error"]
+        assert "_shared/knowledge/door-note.md" in data["commit_error"]
+        assert data["committed"] is False and data["left_behind_count"] == 0
+        assert main(["--vault", str(a), "sync"]) == 0
+        err = capsys.readouterr().err
+        assert "commit failed: pre-commit says no" in err and "written outside the write door" not in err
+        assert _git(a, "diff", "--cached", "--name-only").stdout.split() == ["_shared/knowledge/door-note.md"]
+        hook_session_end(detect(a), {})
+        assert "commit failed: pre-commit says no" in (a / ".claudron" / "hooks.log").read_text()

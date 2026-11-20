@@ -68,6 +68,12 @@ class SyncResult:
     left_behind: list[str] = field(default_factory=list)
     #: How many files that is in all (``left_behind`` shows at most 20 of them).
     left_behind_count: int = 0
+    #: Why sync's own commit of the staged files did not take (a failing hook or
+    #: signing step): git's message, then those files, which stay staged for the
+    #: next sync. Empty when it took or none was needed. NOT `detail`, for the
+    #: reason `left_behind` is not; and those files are not `left_behind`: the
+    #: write door staged them.
+    commit_error: str = ""
 
     @property
     def ok(self) -> bool:
@@ -83,6 +89,7 @@ class SyncResult:
             "local_ahead": self.local_ahead,
             "left_behind": self.left_behind,
             "left_behind_count": self.left_behind_count,
+            "commit_error": self.commit_error,
         }
 
 
@@ -973,10 +980,12 @@ def sync(
                 outcome = commit_staged(
                     root, f"vault sync: {len(committing)} straggler(s) from {socket.gethostname()}", timeout=t)
                 result.committed = outcome.ok
-            # Left behind: every change outside the index, the refused files, and
-            # what was staged when its commit did not take.
-            left = sorted({p for _x, y, p in entries if y != " "} | set(refused)
-                          | (committing if committing and not result.committed else set()))
+                if not outcome.ok:
+                    why = " ".join(outcome.error.split())  # one line: the hook log takes it too
+                    result.commit_error = (f"{why}; {len(committing)} staged file(s) stay staged "
+                                           f"for the next sync: {name_paths(sorted(committing))}")
+            # Left behind: every change outside the index, and the refused files.
+            left = sorted({p for _x, y, p in entries if y != " "} | set(refused))
             if left:
                 result.left_behind = left[:LEFT_BEHIND_SHOWN]
                 result.left_behind_count = len(left)

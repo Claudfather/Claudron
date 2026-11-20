@@ -202,6 +202,8 @@ def hook_session_end(vault: Vault, payload: dict, *, agent_cli: str = "claude") 
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
         if result.left_behind_count:
             _log(vault, "session-end", f"sync --push left behind: {left_behind_line(result)}")
+        if result.commit_error:
+            _log(vault, "session-end", f"sync --push commit failed: {result.commit_error}")
     # Deliberate, not a residual guard the boundary makes redundant: a
     # vault without a working git setup raises SyncError on every push, so
     # this is the expected-degradation logger ("skipped", symmetric with the

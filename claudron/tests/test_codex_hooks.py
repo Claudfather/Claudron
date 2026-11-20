@@ -180,22 +180,23 @@ def test_codex_doctor_other_vault_remedy_keeps_agent_cli(vault_dir, tmp_path):
 @pytest.mark.parametrize('degraded', [False, True])
 def test_actual_session_end_dispatch_selects_budget_and_fails_open(vault_dir, monkeypatch, capsys, agent_cli, expected, degraded):
     """Exercise the CLI -> dispatch -> real handler seam, not renderer self-parity."""
-    from types import SimpleNamespace
-    from claudron.sync import SyncError
+    from claudron.sync import SyncError, SyncResult
     calls = []
     def checked_sync(vault, *, pull, push, timeout):
         calls.append((vault.root, pull, push, timeout))
         if degraded:
             raise SyncError('synthetic push timeout')
-        return SimpleNamespace(ok=True, detail='')
+        return SyncResult()  # the real type: a field the handler reads cannot be missing
     monkeypatch.setattr(hooks, 'sync', checked_sync)
     monkeypatch.setattr('sys.stdin', io.StringIO('{"session_id":"budget-session","reason":"other"}'))
     assert main(['--vault', str(vault_dir), '--agent-cli', agent_cli, 'hook', 'session-end']) == 0
     assert calls == [(vault_dir, False, True, expected)]
     captured = capsys.readouterr()
     assert captured.out == captured.err == ''
+    log = vault_dir / '.claudron/hooks.log'
+    assert 'hook failed open' not in (log.read_text() if log.exists() else '')
     if degraded:
-        assert 'synthetic push timeout' in (vault_dir / '.claudron/hooks.log').read_text()
+        assert 'synthetic push timeout' in log.read_text()
 
 
 def test_codex_session_end_uses_supported_native_timeout():

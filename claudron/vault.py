@@ -153,18 +153,25 @@ def iter_markdown_files(base: Path, *, skip_non_notes: bool = True):
 
 
 #: Credential file names beyond `.env` (which the F9 rules below already
-#: ignore), in any directory: matched on the name alone, case-blind.
+#: ignore), in any directory: matched on the name alone, case-blind. m004 adds
+#: them to an older vault's .gitignore, so a name added after a release needs a
+#: migration of its own.
 CREDENTIAL_NAME_PATTERNS: tuple[str, ...] = (
-    ".env.*", ".netrc", "_netrc", ".git-credentials",
-    "*.pem", "*.key", "*.p12", "*.pfx", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
-    "*credential*.json", "client_secret*.json",
+    ".env.*", ".netrc", "_netrc", ".git-credentials", "credentials", ".npmrc", ".pypirc",
+    "secrets.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore",
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+    "*credential*.json", "client_secret*.json", "service-account*.json",
 )
 #: Every credential-shaped name. The default ignore rules carry them; nothing the
 #: engine commits (`sync`, `init --personal`) stages one; and `sync` does not
 #: push a commit that adds one.
 SECRET_NAME_PATTERNS: tuple[str, ...] = (".env", *CREDENTIAL_NAME_PATTERNS)
-#: Names those patterns match that are templates, not credentials: tracked as usual.
-NOT_SECRET_NAMES: tuple[str, ...] = (".env.example", ".env.sample", ".env.template")
+#: Names those patterns match that are not credentials, tracked as usual: the
+#: templates, and a note called `secrets.md`.
+NOT_SECRET_NAMES: tuple[str, ...] = (".env.example", ".env.sample", ".env.template", "secrets.md")
+#: Directories a pattern above names (an ignore rule with no slash matches a
+#: directory too): a folder of notes called `credentials` stays trackable.
+NOT_SECRET_DIRS: tuple[str, ...] = ("credentials",)
 
 #: The files a vault holds besides its notes (``*.md``): the ones the engine
 #: writes or reads by name. A staged file that is neither a note nor one of
@@ -204,11 +211,12 @@ F9_IGNORE_RULES: tuple[str, ...] = (
     "**/runtime/", "**/data/events/fleet-*.jsonl", "**/data/.last-tool-call", "**/data/.idle",
     "*.bak", ".env", ".claudron/",
 )
-#: The credential names (m004), the templates' exceptions last. `sync` commits
-#: only what the write door staged, so these rules are what keep such files out
-#: of a commit somebody makes by hand with git.
+#: The credential names (m004), the exceptions last. `sync` commits only what the
+#: write door staged, so these rules are what keep such files out of a commit
+#: somebody makes by hand with git.
 CREDENTIAL_IGNORE_RULES: tuple[str, ...] = (
-    *CREDENTIAL_NAME_PATTERNS, *(f"!{name}" for name in NOT_SECRET_NAMES))
+    *CREDENTIAL_NAME_PATTERNS, *(f"!{name}" for name in NOT_SECRET_NAMES),
+    *(f"!{name}/" for name in NOT_SECRET_DIRS))
 #: The rules every vault's .gitignore must carry (`init` writes them all; `doctor
 #: --fix` adds missing ones: m002 the F9 set, m004 the credential names).
 GITIGNORE_RULES: tuple[str, ...] = F9_IGNORE_RULES + CREDENTIAL_IGNORE_RULES

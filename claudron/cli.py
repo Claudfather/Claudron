@@ -1099,6 +1099,8 @@ def cmd_sync(args) -> int:
             print(result.detail, file=sys.stderr)
         if result.left_behind_count:
             print(f"left behind: {left_behind_line(result)}", file=sys.stderr)
+        if result.commit_error:
+            print(f"commit failed: {result.commit_error}", file=sys.stderr)
         # A failed integration names notes it COULD NOT INTEGRATE (the live
         # copy is untouched and still served); a clean pull names notes that
         # arrived carrying markers (excluded from search until resolved).
