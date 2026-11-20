@@ -2292,6 +2292,104 @@ def _remote_files(clone: Path) -> set[str]:
     return set(_git(clone, "ls-tree", "-r", "--name-only", "origin/main").stdout.split())
 
 
+#: A note's path with a byte that is not UTF-8 (0xff) in its file name.
+_NOT_UTF8 = b"_shared/knowledge/by-hand-\xff.md"
+
+
+def _remote_raw(clone: Path) -> set[bytes]:
+    """Every path on origin/main, as git's bytes."""
+    out = subprocess.run(["git", "-C", str(clone), "ls-tree", "-r", "-z", "--name-only", "origin/main"],
+                         capture_output=True, check=True)
+    return set(out.stdout.split(b"\0")) - {b""}
+
+
+class TestANameReadsAsItsBytes:
+    """After -z, git writes a file name as its bytes: they need not be UTF-8, and they may hold
+    a carriage return. Such a name syncs as any other: the status read names it left behind,
+    exactly, the push path's name check lets it through, and a credential-shaped one is still
+    refused. A byte that is not UTF-8 reads as Python's surrogate escape (byte 0xff is U+DCFF),
+    goes back to git as the same byte, and prints as \\udcff on stderr, in --json and in the
+    hook log."""
+
+    @staticmethod
+    def _write(clone: Path, raw: bytes, text: str = _BY_HAND) -> str:
+        try:
+            fd = os.open(os.fsencode(clone) + b"/" + raw, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        except OSError as exc:
+            pytest.skip(f"this file system refuses the name: {exc}")
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        return os.fsdecode(raw)
+
+    def test_one_in_a_tracked_directory_syncs_and_is_named_left_behind(self, synced_pair):
+        a, _ = synced_pair
+        rel = self._write(a, _NOT_UTF8)
+
+        result = sync(detect(a))
+
+        assert result.ok, result.detail
+        assert result.left_behind == [rel] and result.left_behind_count == 1
+        assert os.fsencode(result.left_behind[0]) == _NOT_UTF8
+        assert _NOT_UTF8 not in _remote_raw(a)
+
+    def test_one_with_a_carriage_return_is_named_left_behind_exactly(self, synced_pair):
+        a, _ = synced_pair
+        rel = self._write(a, b"_shared/knowledge/by-hand-\r.md")
+
+        result = sync(detect(a))
+
+        assert result.ok, result.detail
+        assert result.left_behind == [rel] == ["_shared/knowledge/by-hand-\r.md"]
+
+    def test_one_committed_by_hand_is_pushed(self, synced_pair):
+        a, _ = synced_pair
+        rel = self._write(a, _NOT_UTF8)
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "committed by hand")
+
+        result = sync(detect(a))
+
+        assert result.ok, result.detail
+        assert result.pushed and _NOT_UTF8 in _remote_raw(a)
+
+    def test_a_credential_shaped_one_is_still_refused(self, synced_pair):
+        a, _ = synced_pair
+        raw = b"keys/release-\xff.jks"
+        (a / "keys").mkdir()
+        rel = self._write(a, raw, "not a real key\n")
+        _git(a, "add", "-f", rel)
+        _git(a, "commit", "-m", "committed by hand")
+
+        result = sync(detect(a))
+
+        assert not result.ok and not result.pushed
+        assert "push refused" in result.detail and rel in result.detail, result.detail
+        assert raw not in _remote_raw(a)
+
+    def test_stderr_the_json_envelope_and_the_hook_log_print_it(self, synced_pair):
+        """PYTHONIOENCODING makes stdout strict, as a UTF-8 locale does. sync prints names on
+        stderr only, which Python writes with backslashreplace whatever the locale."""
+        from claudron.hooks import hook_session_end
+
+        a, _ = synced_pair
+        rel = self._write(a, _NOT_UTF8)
+        cli = [sys.executable, "-m", "claudron.cli", "--vault", str(a), "sync"]
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8:strict"}
+
+        text = subprocess.run(cli, capture_output=True, env=env, timeout=60)
+        assert text.returncode == 0, text.stderr
+        assert b"left behind: 1 file(s)" in text.stderr and b"by-hand-\\udcff.md" in text.stderr
+
+        as_json = subprocess.run([*cli, "--json"], capture_output=True, env=env, timeout=60)
+        assert as_json.returncode == 0, as_json.stderr
+        assert as_json.stdout.isascii()
+        assert json.loads(as_json.stdout)["data"]["left_behind"] == [rel]
+
+        assert hook_session_end(detect(a), {}) == 0
+        log = (a / ".claudron" / "hooks.log").read_text()
+        assert "left behind: 1 file(s)" in log and "by-hand-\\udcff.md" in log, log
+
+
 class TestSyncCommitsOnlyWhatTheDoorStaged:
     """sync commits what the write door staged, and nothing written around it. A file written by
     hand or by any other process stays on disk, uncommitted, and is named; a staged file with a

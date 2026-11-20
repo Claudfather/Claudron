@@ -70,6 +70,10 @@ One shape, every command:
   `{broken: [{src, target}], orphans: [path]}` (both keys always present in
   `--json`; the `--broken`/`--orphans` flags filter human output only).
 - `ok` is `errors == []` (warnings don't flip it).
+- The envelope is ASCII: a character outside ASCII is written as a JSON
+  escape. A file name need not be UTF-8, and a byte in it that is not
+  travels as Python's surrogate escape: byte 0xff arrives as `\udcff`, and
+  `json.loads` then `os.fsencode` give back the name's bytes.
 
 > Breaking change at 0.2.0: `status --json`, `lookup --json`, and
 > `config --json` previously emitted three ad-hoc shapes; all now emit the

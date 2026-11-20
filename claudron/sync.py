@@ -178,19 +178,31 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     (:func:`_literal_paths`): a file or directory name with ``*``, ``?`` or
     ``[`` in it, or a relative path that starts with ``:``, names that one
     path. Not ``GIT_LITERAL_PATHSPECS``, which git hands on to the vault's
-    own hooks."""
+    own hooks.
+
+    A call with ``-z`` takes git's output as bytes and decodes it with
+    :func:`os.fsdecode`: after ``-z`` git writes each file name as its bytes,
+    unquoted, and a name need not be UTF-8. Such a byte reads as a lone
+    surrogate (byte 0xff is U+DCFF), a carriage return stays one, and the name
+    goes back to git as the same bytes when it is passed as an argument
+    (subprocess encodes it with :func:`os.fsencode`). Every other call is
+    decoded as text, strictly."""
     prefix: list[str] = []
     if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
         prefix = list(_FALLBACK_IDENTITY)
+    nul = "-z" in (args[:args.index("--")] if "--" in args else args)
     try:
-        return subprocess.run(
+        out = subprocess.run(
             ["git", "-C", str(root), *prefix, *_literal_paths(args)],
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=not nul, timeout=timeout,
         )
     except (FileNotFoundError, PermissionError) as exc:
         raise SyncError(f"git is unavailable: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise SyncTimeout(f"git {' '.join(args)} timed out") from exc
+    if nul:
+        out.stdout, out.stderr = os.fsdecode(out.stdout), os.fsdecode(out.stderr)
+    return out
 
 
 def _changed_md(root: Path, spec: list[str]) -> list[str]:

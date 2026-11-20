@@ -47,7 +47,10 @@ SESSION_END_PUSH_TIMEOUT = 10.0  # Claude default bounded teardown — a hang is
 
 def _log(vault: Vault | None, event: str, message: str) -> None:
     """Append to hooks.log; never raise (logging failures stay silent —
-    fail-open applies to the logger too)."""
+    fail-open applies to the logger too). What the file's encoding cannot
+    hold is written as a backslash escape: a file name that is not UTF-8
+    arrives as a lone surrogate (byte 0xff is U+DCFF) and is written as
+    ``\\udcff``."""
     try:
         if vault is not None:
             log_dir = vault.root / ".claudron"
@@ -56,7 +59,7 @@ def _log(vault: Vault | None, event: str, message: str) -> None:
         else:
             log_path = Path(tempfile.gettempdir()) / "claudron-hooks.log"
         stamp = datetime.now().isoformat(timespec="seconds")
-        with log_path.open("a") as fh:
+        with log_path.open("a", errors="backslashreplace") as fh:
             fh.write(f"{stamp} [{event}] {message}\n")
     except OSError:
         pass
