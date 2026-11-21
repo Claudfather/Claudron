@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import re
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 
 from . import ops
 from .locking import vault_write_lock
@@ -101,6 +102,25 @@ def _already_reverted(vault: Vault) -> set[str]:
     return shas
 
 
+#: A revert or a cherry-pick a person left stopped part-way, by the file or directory git keeps
+#: for it in the git directory. revert-run refuses each before its own revert starts: that revert
+#: would fail on it, and the cleanup's ``git revert --abort`` would take the state, the index and
+#: the person's half-done resolution with it.
+_STOPPED_PICKS = (
+    ("REVERT_HEAD", "a revert is stopped part-way"),
+    ("CHERRY_PICK_HEAD", "a cherry-pick is stopped part-way"),
+    ("sequencer", "a revert or a cherry-pick of several commits is stopped part-way"),
+)
+
+
+def _stopped_pick(git_dir: Path) -> str | None:
+    """Why a revert or a cherry-pick is stopped part-way in this repository, or None."""
+    for mark, what in _STOPPED_PICKS:
+        if (git_dir / mark).exists():
+            return what
+    return None
+
+
 def revert_run(vault: Vault, run_id: str) -> RunResult:
     """Revert every commit of the run not yet reverted, newest first, as one commit — or none."""
     from .engine import _commit_subject
@@ -112,7 +132,7 @@ def revert_run(vault: Vault, run_id: str) -> RunResult:
         git_dir = _git_dir(vault.root, t)
         if git_dir is None:
             raise RunError("revert-run needs a git vault: a plain directory keeps no runs to revert")
-        if interrupted := _interrupted_state(vault.root, git_dir, t):
+        if interrupted := _interrupted_state(vault.root, git_dir, t) or _stopped_pick(git_dir):
             raise RunError(f"refusing to revert: {interrupted} — resolve the tree first")
         commits = _commits(vault, run_id)
         if not commits:
