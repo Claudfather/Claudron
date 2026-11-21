@@ -2470,6 +2470,90 @@ class TestANameReadsAsItsBytes:
         with pytest.raises(UnicodeDecodeError):
             run_git(root, "-c", "core.quotePath=false", "diff", "--cached", "--name-only")
 
+    @pytest.mark.parametrize("pull", ["sync", "ff-only"])
+    def test_a_pulled_one_reads_under_quote_path_false(self, synced_pair, pull):
+        """With core.quotePath=false git writes a file name as its bytes in a fast-forward's
+        summary too: the pull runs the merge quietly and reads what it changed with -z."""
+        a, b = synced_pair
+        _git(b, "config", "core.quotePath", "false")
+        raw = b"_shared/knowledge/by-hand-\xff.md"
+        rel = self._write(a, raw)
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "committed by hand")
+        _git(a, "push", "origin", "HEAD")
+
+        result = sync(detect(b), push=False) if pull == "sync" else pull_ff_only(detect(b))
+
+        assert result.ok and result.pulled, result.detail
+        assert os.path.exists(os.fsencode(b) + b"/" + raw)
+
+    def test_a_conflict_on_one_is_reported_with_its_exact_name(self, synced_pair):
+        """A rebase that conflicts on a file whose name is not UTF-8 writes the name as its bytes
+        in its Auto-merging and CONFLICT lines on stdout, -q or not: sync reads those lines as
+        messages and the unmerged list with -z, and reports the conflict by the exact name while
+        the live copy stays as it was."""
+        a, b = synced_pair
+        raw = b"_shared/knowledge/by-hand-\xff.md"
+        rel = self._write(a, raw, "one\n")
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "base")
+        _git(a, "push", "origin", "HEAD")
+        _git(b, "pull", "-q", "origin", "main")
+        with open(os.fsencode(a) + b"/" + raw, "w") as fh:
+            fh.write("from A\n")
+        _git(a, "commit", "-am", "A's line")
+        _git(a, "push", "origin", "HEAD")
+        with open(os.fsencode(b) + b"/" + raw, "w") as fh:
+            fh.write("from B\n")
+        _git(b, "commit", "-am", "B's line")
+
+        result = sync(detect(b), push=False)
+
+        assert not result.ok and result.quarantined == [rel], (result.detail, result.quarantined)
+        assert "integration conflicted" in result.detail, result.detail
+        with open(os.fsencode(b) + b"/" + raw) as fh:
+            assert fh.read() == "from B\n"
+
+    def test_the_killed_rebase_check_reads_a_conflicted_one_under_quote_path_false(self, tmp_path):
+        """With core.quotePath=false git writes an unmerged file's name as its bytes: the check
+        that tells a killed rebase from a conflicted one reads the unmerged list with -z, so a
+        conflict still reads as one."""
+        from claudron.sync import _killed_rebase
+
+        root = tmp_path / "r"
+        _git(tmp_path, "init", "--initial-branch=main", str(root))
+        raw = b"n-\xff.md"
+        rel = self._write(root, raw, "one\n")
+        _git(root, "add", rel)
+        _git(root, "commit", "-m", "base")
+        _git(root, "checkout", "-q", "-b", "other")
+        with open(os.fsencode(root) + b"/" + raw, "w") as fh:
+            fh.write("two\n")
+        _git(root, "commit", "-am", "other")
+        _git(root, "checkout", "-q", "main")
+        with open(os.fsencode(root) + b"/" + raw, "w") as fh:
+            fh.write("three\n")
+        _git(root, "commit", "-am", "main")
+        merged = subprocess.run(["git", "-C", str(root), "merge", "other"], capture_output=True,
+                                env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                     "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        assert merged.returncode == 1, merged
+        (root / ".git" / "rebase-merge").mkdir()  # a rebase's state, stopped on no commit
+        _git(root, "config", "core.quotePath", "false")
+
+        assert _killed_rebase(root, root / ".git", 10.0) is False
+
+    def test_the_check_counts_and_ages_one_by_its_bytes(self, synced_pair):
+        """The check reads the uncommitted list with -z: a file whose name is not ASCII is counted
+        and aged like any other, and one that is not UTF-8 reads under core.quotePath=false too."""
+        a, _ = synced_pair
+        for raw in (b"_shared/knowledge/caf\xc3\xa9.md", b"_shared/knowledge/by-hand-\xff.md"):
+            self._write(a, raw)
+        for quote in ("true", "false"):
+            _git(a, "config", "core.quotePath", quote)
+            r = check(detect(a))
+            assert r.uncommitted == 2 and r.uncommitted_oldest_age_s is not None, (quote, r)
+
     def test_a_control_character_is_written_as_its_escape(self):
         """ESC, CR, LF, TAB, DEL, a C1 character and the Unicode line separator each print as
         their escape; every other character, a lone surrogate included, is kept as it is."""
@@ -2929,6 +3013,25 @@ class TestTheVaultsOptIn:
         result = sync(detect(a), pull=False, push=True)
 
         assert result.ok and result.left_behind_count == 0, result.detail
+        assert b"crew/\xff.md" in _remote_raw(a)
+
+    def test_a_note_whose_name_is_not_utf8_travels_under_quote_path_false(self, synced_pair):
+        """With core.quotePath=false a commit's summary writes the file's name as its bytes: sync
+        commits quietly, and the note travels."""
+        a, _ = synced_pair
+        _git(a, "config", "core.quotePath", "false")
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        try:
+            fd = os.open(os.fsencode(a / "crew") + b"/\xff.md", os.O_WRONLY | os.O_CREAT, 0o644)
+        except OSError as exc:
+            pytest.skip(f"this file system refuses the name: {exc}")
+        os.write(fd, _BY_HAND.encode())
+        os.close(fd)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert result.ok and result.pushed and result.left_behind_count == 0, result.detail
         assert b"crew/\xff.md" in _remote_raw(a)
 
     def test_a_note_whose_name_holds_a_carriage_return_travels_with_the_others(self, synced_pair):

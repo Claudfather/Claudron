@@ -588,8 +588,8 @@ vendor source; support for unobserved events is not promised by this snippet.
   separators) as its escape (`\x1b`, `\r`, `\n`, `\u2028`), in a file name
   and in git's own message alike, so a name cannot move the cursor or start
   a line of its own. A file `sync` lists in `detail` or `commit_error` is
-  escaped the same way in `--json`, and `data.left_behind` holds each name
-  exactly.
+  escaped the same way in `--json`, and `data.left_behind` and
+  `data.quarantined` hold each name exactly.
 - `doctor [--fix] [--settings PATH]…` — **the vault's health-and-migration door** (#190). Diagnoses
   the vault against *this* engine's rules and names what `--fix` would change.
   - **Read-only unless `--fix` is passed** — no file, index or journal is

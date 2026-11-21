@@ -178,7 +178,8 @@ def _line_ends(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
-def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
+def run_git(root: Path, *args: str, timeout: float | None = None,
+            stdout_is_data: bool = True) -> subprocess.CompletedProcess:
     """The package git invoker: guarded subprocess with SyncError-typed
     environment failures (git missing/not executable, timeouts). Every
     *vault-scoped* git call goes through this — the one deliberate
@@ -206,7 +207,10 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     a CR as one LF. Every call reads stderr with :func:`os.fsdecode` and the
     same line ends, because git's messages quote a file by its name's bytes
     (with ``core.autocrlf``, ``add`` warns that a file's line ends will change,
-    by its name)."""
+    by its name). ``stdout_is_data=False`` is for a call whose stdout holds only
+    git's messages: a rebase writes its Auto-merging and CONFLICT lines there,
+    naming a file by its bytes whatever ``-q`` or ``core.quotePath`` say, so
+    that stdout is read as stderr is."""
     prefix: list[str] = []
     if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
         prefix = list(_FALLBACK_IDENTITY)
@@ -220,8 +224,12 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
         raise SyncError(f"git is unavailable: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise SyncTimeout(f"git {' '.join(args)} timed out") from exc
-    out.stdout = (os.fsdecode(out.stdout) if nul
-                  else _line_ends(out.stdout.decode(locale.getpreferredencoding(False))))
+    if nul:
+        out.stdout = os.fsdecode(out.stdout)
+    elif stdout_is_data:
+        out.stdout = _line_ends(out.stdout.decode(locale.getpreferredencoding(False)))
+    else:
+        out.stdout = _line_ends(os.fsdecode(out.stdout))
     out.stderr = _line_ends(os.fsdecode(out.stderr))
     return out
 
@@ -323,7 +331,7 @@ def _killed_rebase(root: Path, git_dir: Path | None, t: float) -> bool:
     # plain `diff` may refresh and rewrite the index, and this predicate is
     # reached from the read-only health door as well as from `sync`.
     unmerged = run_git(root, "--no-optional-locks", "diff", "--name-only",
-                       "--diff-filter=U", timeout=t)
+                       "--diff-filter=U", "-z", timeout=t)
     if unmerged.returncode != 0 or unmerged.stdout.strip():
         # Either there are conflicted paths, or the question could not be
         # answered — both mean "do not abort".
@@ -616,7 +624,7 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
         # Hand the ADD's failure back, not a commit that was never attempted:
         # naming the cause rather than the symptom is why sync stopped here too.
         return CommitOutcome("add", added)
-    return CommitOutcome("commit", run_git(root, "commit", "-m", message, *pathspec, timeout=t))
+    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, *pathspec, timeout=t))
 
 
 def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) -> subprocess.CompletedProcess:
@@ -631,7 +639,7 @@ def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) 
 def commit_staged(root: Path, message: str, *, timeout: float | None = None) -> CommitOutcome:
     """Commit what is staged and nothing else: sync's own commit."""
     t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
-    return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
+    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, timeout=t))
 
 
 def _status(root: Path, t: float, *, untracked: str = "normal",
@@ -935,7 +943,7 @@ def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
     # SD card is a cost this design must not add to the ordinary path.
     if run_git(root, "merge-base", "--is-ancestor", start, up,
                timeout=t).returncode == 0:
-        ff = run_git(root, "merge", "--ff-only", up, timeout=t)
+        ff = run_git(root, "merge", "--ff-only", "-q", up, timeout=t)
         if ff.returncode != 0:
             said = (ff.stderr or ff.stdout).strip()[:200]
             return False, f"fast-forward failed: {said}", []
@@ -959,7 +967,7 @@ def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
             return False, f"could not start the integration branch: {said}", []
 
         try:
-            rebased = run_git(wt, "rebase", up, timeout=t)
+            rebased = run_git(wt, "rebase", up, timeout=t, stdout_is_data=False)
         except SyncTimeout:
             # THE KILL PATH, and the reason this design exists: the live tree was
             # never touched, so there is nothing to abort, nothing to repair, and
@@ -968,11 +976,11 @@ def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
                            "never touched — no markers, nothing to repair"), []
 
         if rebased.returncode != 0:
-            unmerged = run_git(wt, "diff", "--name-only", "--diff-filter=U",
-                               timeout=t).stdout.split()
+            unmerged = [p for p in run_git(wt, "diff", "--name-only", "--diff-filter=U", "-z",
+                                           timeout=t).stdout.split("\0") if p]
             return False, ("integration conflicted; the live tree was never touched "
                            "(no markers) — resolve on the default branch and re-run: "
-                           f"{', '.join(unmerged) or 'unknown paths'}"), unmerged
+                           f"{name_paths(unmerged) or 'unknown paths'}"), unmerged
 
         tip = run_git(wt, "rev-parse", "HEAD", timeout=t).stdout.strip()
         if not tip:
@@ -1446,7 +1454,7 @@ def pull_ff_only(vault: Vault, *, timeout: float | None = None) -> SyncResult:
             )
             return result
 
-        merged = run_git(root, "merge", "--ff-only", ref, timeout=t)
+        merged = run_git(root, "merge", "--ff-only", "-q", ref, timeout=t)
         if merged.returncode == 0:
             result.pulled = True
             return result
@@ -1570,24 +1578,28 @@ def _uncommitted(root: Path, t: float) -> tuple[int, int | None]:
     essentially every call: the exact defect it was built to remove from
     `status --json`, rebuilt inside its replacement.
     """
-    out = run_git(root, "--no-optional-locks", "status", "--porcelain", timeout=t)
+    out = run_git(root, "--no-optional-locks", "status", "--porcelain", "-z", timeout=t)
     if out.returncode != 0:
         return 0, None
-    lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
+    # After -z each entry is `XY path`, the name as its bytes and never quoted; a rename or a copy
+    # is followed by the path it came from, which is not counted.
+    fields = iter(out.stdout.split("\0"))
+    paths = []
+    for entry in fields:
+        if len(entry) > 3:
+            paths.append(entry[3:])
+            if {"R", "C"} & set(entry[:2]):
+                next(fields, None)
     oldest: float | None = None
     now = time.time()
-    for ln in lines:
-        rel = ln[3:].strip()
-        if " -> " in rel:                       # a rename: take the destination
-            rel = rel.split(" -> ", 1)[1]
-        rel = rel.strip('"')
+    for rel in paths:
         try:
             mtime = os.path.getmtime(root / rel)
         except OSError:
             continue                            # deleted, or an unreadable path
         age = now - mtime
         oldest = age if oldest is None else max(oldest, age)
-    return len(lines), (int(oldest) if oldest is not None else None)
+    return len(paths), (int(oldest) if oldest is not None else None)
 
 
 def check(vault: Vault, *, timeout: float | None = None,
