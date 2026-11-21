@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from claudron.amend import AmendError, amend, fact_id
 from claudron.cli import main
 from claudron.runs import RunError, revert_run
 from claudron.subjects import resolve, subjects
+from claudron.sync import SyncTimeout, sync
 from claudron.vault import detect
 
 from .test_capture import _cgit, git_vault  # noqa: F401 - the fixture
@@ -330,6 +332,89 @@ def test_a_revert_that_conflicts_reverts_nothing(gvault):
     with pytest.raises(RunError, match="nothing was reverted"):
         revert_run(gvault, "r1")
     assert _note(gvault) == before and len(_log(gvault)) == head
+    assert _cgit(gvault.root, "status", "--porcelain", "--untracked-files=no").stdout.strip() == ""
+
+
+#: A note's path with a byte that is not UTF-8 (0xff) in its file name.
+_NOT_UTF8 = b"_shared/knowledge/run-\xff.md"
+
+
+def _write_raw(root: Path, raw: bytes, text: str) -> str:
+    """Write *text* to the file whose name is the bytes *raw*; an engine write never makes one."""
+    try:
+        with open(os.fsencode(root) + b"/" + raw, "w") as fh:
+            fh.write(text)
+    except OSError as exc:
+        pytest.skip(f"this file system refuses the name: {exc}")
+    return os.fsdecode(raw)
+
+
+@pytest.mark.parametrize("quote", [None, "false"])
+def test_a_revert_that_conflicts_on_a_name_that_is_not_utf8_reverts_nothing(gvault, quote):
+    """A revert writes its Auto-merging and CONFLICT lines on stdout with the file's bytes,
+    whatever core.quotePath says: revert-run reads them as git's messages, takes the revert back
+    and refuses, so the vault is never left mid-revert and the next sync runs."""
+    rel = _write_raw(gvault.root, _NOT_UTF8, "one\n")
+    _cgit(gvault.root, "add", rel)
+    _cgit(gvault.root, "commit", "-qm", "base")
+    _write_raw(gvault.root, _NOT_UTF8, "two\n")
+    _cgit(gvault.root, "commit", "-qam", "harvested line\n\nClaudron-Run: raw-run")
+    _write_raw(gvault.root, _NOT_UTF8, "three\n")
+    _cgit(gvault.root, "commit", "-qam", "a person edits the harvested line")
+    if quote:
+        _cgit(gvault.root, "config", "core.quotePath", quote)
+    head = _cgit(gvault.root, "rev-parse", "HEAD").stdout
+
+    with pytest.raises(RunError, match="nothing was reverted"):
+        revert_run(gvault, "raw-run")
+
+    assert _cgit(gvault.root, "rev-parse", "HEAD").stdout == head
+    assert not (gvault.root / ".git" / "REVERT_HEAD").exists()
+    assert _cgit(gvault.root, "status", "--porcelain", "--untracked-files=no").stdout.strip() == ""
+    with open(os.fsencode(gvault.root) + b"/" + _NOT_UTF8) as fh:
+        assert fh.read() == "three\n"
+    after = sync(gvault, pull=False, push=False)
+    assert after.ok and after.commit_error == "", (after.detail, after.commit_error)
+
+
+def test_a_run_whose_commit_added_a_name_that_is_not_utf8_is_reverted_under_quote_path_false(gvault):
+    """With core.quotePath=false `git commit` lists the file a revert deletes by its bytes in its
+    summary: revert-run commits through sync's own commit, which runs quietly and reads its
+    stdout as git's messages, and the run is reverted."""
+    rel = _write_raw(gvault.root, _NOT_UTF8, "harvested\n")
+    _cgit(gvault.root, "add", rel)
+    _cgit(gvault.root, "commit", "-qm", "harvested note\n\nClaudron-Run: raw-add")
+    _cgit(gvault.root, "config", "core.quotePath", "false")
+
+    result = revert_run(gvault, "raw-add")
+
+    assert result.action == "reverted" and len(result.commits) == 1, result
+    assert not os.path.exists(os.fsencode(gvault.root) + b"/" + _NOT_UTF8)
+    assert not (gvault.root / ".git" / "REVERT_HEAD").exists()
+
+
+def test_an_error_after_the_revert_starts_takes_the_revert_back(gvault, monkeypatch):
+    """Whatever stops revert-run once the revert has started (here a commit that times out),
+    `git revert --abort` runs before the error goes on: the note, the index and HEAD are as
+    they were."""
+    import claudron.sync as sync_module
+
+    amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "T.", "evidence": _ev()},
+          run_id="slow-run")
+    before, head = _note(gvault), len(_log(gvault))
+    real = sync_module.run_git
+
+    def commit_times_out(root, *args, **kwargs):
+        if args[:1] == ("commit",):
+            raise SyncTimeout("git commit timed out")
+        return real(root, *args, **kwargs)
+
+    monkeypatch.setattr(sync_module, "run_git", commit_times_out)
+    with pytest.raises(SyncTimeout):
+        revert_run(gvault, "slow-run")
+
+    assert _note(gvault) == before and len(_log(gvault)) == head
+    assert not (gvault.root / ".git" / "REVERT_HEAD").exists()
     assert _cgit(gvault.root, "status", "--porcelain", "--untracked-files=no").stdout.strip() == ""
 
 

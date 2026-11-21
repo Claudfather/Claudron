@@ -208,10 +208,10 @@ def run_git(root: Path, *args: str, timeout: float | None = None,
     same line ends, because git's messages quote a file by its name's bytes
     (with ``core.autocrlf``, ``add`` warns that a file's line ends will change,
     by its name). ``stdout_is_data=False`` is for a call whose stdout holds only
-    git's messages: a rebase writes its Auto-merging and CONFLICT lines there,
-    and a commit a ``U`` line for each unmerged file, each naming a file by
-    its bytes whatever ``-q`` or ``core.quotePath`` say (and a commit with
-    nothing to commit writes the status block there, a file by its bytes
+    git's messages: a rebase or a revert writes its Auto-merging and CONFLICT
+    lines there, and a commit a ``U`` line for each unmerged file, each naming
+    a file by its bytes whatever ``-q`` or ``core.quotePath`` say (and a commit
+    with nothing to commit writes the status block there, a file by its bytes
     under ``core.quotePath=false``), so that stdout is read as stderr is."""
     prefix: list[str] = []
     if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
@@ -640,7 +640,7 @@ def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) 
 
 
 def commit_staged(root: Path, message: str, *, timeout: float | None = None) -> CommitOutcome:
-    """Commit what is staged and nothing else: sync's own commit."""
+    """Commit what is staged and nothing else: sync's own commit, and revert-run's."""
     t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
     return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, timeout=t,
                                            stdout_is_data=False))

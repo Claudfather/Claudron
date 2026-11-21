@@ -14,6 +14,7 @@ window #157 closed would reopen.
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import asdict, dataclass, field
 
@@ -61,10 +62,10 @@ def trailer(run_id: str | None) -> str:
     return f"\n\n{TRAILER}: {run_id}" if run_id else ""
 
 
-def _git(vault: Vault, *args: str):
+def _git(vault: Vault, *args: str, stdout_is_data: bool = True):
     from .sync import DEFAULT_GIT_TIMEOUT, run_git
 
-    return run_git(vault.root, *args, timeout=DEFAULT_GIT_TIMEOUT)
+    return run_git(vault.root, *args, timeout=DEFAULT_GIT_TIMEOUT, stdout_is_data=stdout_is_data)
 
 
 def _commits(vault: Vault, run_id: str) -> list[str]:
@@ -103,7 +104,7 @@ def _already_reverted(vault: Vault) -> set[str]:
 def revert_run(vault: Vault, run_id: str) -> RunResult:
     """Revert every commit of the run not yet reverted, newest first, as one commit — or none."""
     from .engine import _commit_subject
-    from .sync import DEFAULT_GIT_TIMEOUT, _git_dir, _interrupted_state
+    from .sync import DEFAULT_GIT_TIMEOUT, _git_dir, _interrupted_state, commit_staged
 
     t = DEFAULT_GIT_TIMEOUT
     check_run_id(run_id)
@@ -122,18 +123,27 @@ def revert_run(vault: Vault, run_id: str) -> RunResult:
             return RunResult(run_id, "unchanged", commits, reason="already reverted")
         # Staged, not committed, one after another: if any conflicts, `--abort`
         # takes the tree and index back to before the first, so the run is
-        # undone whole or not at all.
-        proc = _git(vault, "revert", "--no-commit", *todo)
-        if proc.returncode != 0:
-            _git(vault, "revert", "--abort")
-            said = (proc.stderr or proc.stdout or "").strip()[:200]
-            raise RunError(f"reverting run {run_id} conflicts with later edits; nothing was reverted ({said})")
-        message = (f"{_commit_subject(REVERT_VERB, run_id)}\n\n"
-                   + "\n".join(f"This reverts commit {sha}." for sha in todo))
-        done = _git(vault, "commit", "-m", message)
-        if done.returncode != 0:
-            _git(vault, "revert", "--abort")
-            raise RunError(f"the revert of run {run_id} could not be committed: {done.stderr.strip()[:200]}")
+        # undone whole or not at all. The revert's Auto-merging and CONFLICT
+        # lines name a file by its bytes, so its stdout is read as git's
+        # messages; the commit is sync's commit of what is staged, which reads
+        # its own the same way. Whatever stops the run once the revert has
+        # started (a conflict, a commit git refuses, a timeout, an interrupt),
+        # the abort runs before the error goes on, so the vault is never left
+        # mid-revert.
+        try:
+            proc = _git(vault, "revert", "--no-commit", *todo, stdout_is_data=False)
+            if proc.returncode != 0:
+                said = (proc.stderr or proc.stdout or "").strip()[:200]
+                raise RunError(f"reverting run {run_id} conflicts with later edits; nothing was reverted ({said})")
+            message = (f"{_commit_subject(REVERT_VERB, run_id)}\n\n"
+                       + "\n".join(f"This reverts commit {sha}." for sha in todo))
+            done = commit_staged(vault.root, message, timeout=t)
+            if not done.ok:
+                raise RunError(f"the revert of run {run_id} could not be committed: {done.error}")
+        except BaseException:
+            with contextlib.suppress(Exception):  # the error that stopped the run is the one reported
+                _git(vault, "revert", "--abort")
+            raise
         head = _git(vault, "rev-parse", "HEAD").stdout.strip()
     ops.record(vault, "run.reverted", run_id=run_id, commits=len(todo), revert=head)
     # The reverted notes are newer than the index now, so the next read rebuilds it (mtime staleness).
