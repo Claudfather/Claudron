@@ -70,6 +70,10 @@ One shape, every command:
   `{broken: [{src, target}], orphans: [path]}` (both keys always present in
   `--json`; the `--broken`/`--orphans` flags filter human output only).
 - `ok` is `errors == []` (warnings don't flip it).
+- The envelope is ASCII: a character outside ASCII is written as a JSON
+  escape. A file name need not be UTF-8, and a byte in it that is not
+  travels as Python's surrogate escape: byte 0xff arrives as `\udcff`, and
+  `json.loads` then `os.fsencode` give back the name's bytes.
 
 > Breaking change at 0.2.0: `status --json`, `lookup --json`, and
 > `config --json` previously emitted three ad-hoc shapes; all now emit the
@@ -227,6 +231,7 @@ observed behavior.
 | **A stale `index.lock` expires; a live one is refused** | Git never expires `index.lock`, so one that outlives its process blocks every git WRITE while every git READ keeps working — which is why the last one went unnoticed for ten days: `status --porcelain` needs no lock, so the tree read "merely dirty" and `sync` blamed the dirty tree. `sync` now checks before its first write. A lock that is **both** older than 600 s **and** provably unheld is removed, and `detail` records `expired stale index.lock (age Ns, no owner)`. Anything else — fresh, held, or ownership unprobeable — returns `ok=False` with `refusing to sync: .git/index.lock is present (age Ns, owner held\|no owner\|unknown) — another git process may be running; nothing was written`. **Unknown ownership is never treated as no owner**: deleting a live lock corrupts the index, so ambiguity resolves to refusing. Ownership is read from the kernel (`lsof`, or GNU `fuser` only where `--version` says psmisc — BSD `fuser` exits 0 for an unheld file and so proves nothing), never from the lock file, which holds no pid. |
 | **`sync --check` is THE git-health probe, and it never writes** | One bounded, read-only, offline verdict on the clone, for consumers that need to ask "is this healthy" without changing it. `status --json` cannot be that probe: it walks every note and rebuilds and WRITES the index, so asking mutates the subject and cannot be asked of a wedged or read-only tree — it is a **capability** probe, not a health probe. `--check` runs only query commands (`--no-optional-locks` included, because a plain `status` refreshes and rewrites the index), touches neither the index nor the journal, and answers with no network unless `--reach` is passed. Verdicts, in precedence order: `unknown` `stale-lock` `rebase-conflict` `rebase-killed` `merge` `detached` `side-branch` `dirty` `divergent` `behind` `ahead` `unreachable` `clean`. A side branch with and without an upstream share `side-branch`; the `upstream` field (name or `null`) tells them apart. **`unknown` means the check could not run** (git missing, a call timed out) and must never be read as healthy — a reader that cannot reach its source must not answer the same as one that found nothing wrong. **Every verdict exits 0**, including the bad ones: the state is in the envelope, never in the exit code, so "the check ran" and "the clone is healthy" stay separable. `--check` beside `--pull`/`--push` is a usage error (2); a vault that is not a git repository is an environment error (3). |
 | **A failed `git add` names git's own message** | Previously an unchecked `add` fell through to a failing `commit`, and the porcelain re-read then reported `the working tree is not clean after the pre-pull commit` — true, useless, and pointing at the tree rather than the cause. `sync` now returns at the failed `add` with git's stderr in `detail`. |
+| **Git takes every path literally** | Each path the engine hands git (the write door's commit and stage, `doctor --fix`, `init --personal`'s first commit, `sync`'s unstage, and the opt-in's status, add and unstage) is a literal pathspec (`:(literal)`): a file or directory name with `*`, `?` or `[` in it, or a relative path that starts with `:`, names that one path and is never read as a glob or as pathspec magic, so a door write never stages or commits another file by pattern. |
 | **Multi-writer exclusion** | **Out of scope, by constraint.** Guaranteeing at-most-one writer across hosts requires a coordinating daemon; the engine is a CLI over markdown + git and will not grow one. Writer topology is fleet policy, expressed by the composer's grants — not by the engine. |
 
 **Stated limits.** `flock` is a no-op where `fcntl` is unavailable (Windows)
@@ -554,6 +559,27 @@ vendor source; support for unobserved events is not promised by this snippet.
   `already up to date`. A clean run exits 0 with `ok: true` and no errors.
   Branch on `ok` or the exit code; `detail` is prose. `sync --check` is
   unaffected: every verdict exits 0 (§Exit codes).
+  **`sync` commits what the write door staged, and nothing else**
+  (VAULT-STRUCTURE.md). A staged file with a credential name or that is not a
+  vault file is unstaged and named in `detail`; so are the credential-named
+  files that commits not yet pushed add or change, and that push does not run.
+  `data.left_behind` names the first 20 files still uncommitted after its
+  commit (written outside the door), `data.left_behind_count` counts them all,
+  and `sync` prints them on stderr as `left behind: …` (the SessionEnd hook
+  logs the same line). They are not `detail`, so they never fail a run. The
+  vault's opt-in (`SYNC.yaml`, VAULT-STRUCTURE.md) adds the notes written
+  around the door under the directories it lists, in a commit of its own; a
+  `SYNC.yaml` that cannot be used (a listed path that is not one directory
+  inside the vault, by its path) is named in `detail`, and so is each note
+  under a listed directory that `sync` cannot read, which is not carried, and
+  each listed directory git cannot list (its notes are not carried; the other
+  directories' notes are).
+  `data.commit_error` is set when a commit sync makes does not take (a failing
+  hook or signing step): git's message, then the files. Files the write door
+  staged stay staged for the next sync and are not in `left_behind`; opted-in
+  notes go back out of the index and stay in `left_behind`. `sync` prints it on
+  stderr as `commit failed: …` (the hook logs it too). It is not `detail`
+  either, and is `""` otherwise.
 - `doctor [--fix] [--settings PATH]…` — **the vault's health-and-migration door** (#190). Diagnoses
   the vault against *this* engine's rules and names what `--fix` would change.
   - **Read-only unless `--fix` is passed** — no file, index or journal is
@@ -681,16 +707,19 @@ vendor source; support for unobserved events is not promised by this snippet.
   writes one only with `asserted_by: user` (`--asserted-by` or the `--stdin`
   key), else exit 2; `capture --update` of one likewise needs `--asserted-by
   user`, and `amend` refuses a fact or an alias about a person unless the user
-  asserted it (`evidence.asserted_by` / `asserted_by`). Person notes are never
+  asserted it (`evidence.asserted_by` / `asserted_by`). The same holds for any
+  reviewed note (`maturity` verified or canonical): `capture --update` of one
+  needs `--asserted-by user` (else exit 2, nothing written), and `amend` refuses
+  a fact or an alias for one unless the user asserted it. Person notes are never
   `lookup` or `recall` results. A `--project`/`--fleet` that isn't one
   directory name (`../x`, `a/b`) exits 2.
   `subjects` and `resolve` take `--home H` (the same filter as `--type`, and
   exclusive with it) and `--kind K`, and each subject carries `kind` and
-  `relations`. `recall --json` gains `me`: a trusted, person-typed
-  `_personal/person/me.md` as ready-to-render markdown — within its
+  `relations`. `recall --json` gains `me`: a reviewed (verified or canonical),
+  person-typed `_personal/person/me.md` as ready-to-render markdown, within its
   120-token budget by whole lines, quoted line by line (so nothing in it can
   open or swallow a section wherever it is rendered), with a notice when the
-  budget cut it — or `null` (absent, a draft, conflicted, or `BOT_NAME` set).
+  budget cut it; or `null` (absent, not reviewed, conflicted, or `BOT_NAME` set).
   The brief renders it under `## About me`. Person notes are never in
   `notes` or `unverified`, wherever one sits. Gate on
   `"memory-homes" in status --json → data.capabilities`.
@@ -707,15 +736,23 @@ vendor source; support for unobserved events is not promised by this snippet.
     equal score (#247). An **`external`** draft is withheld unless
     **`--include-external`**, and an included one ranks after every other note.
     An authored draft is always included, labelled `(draft)`; an included
-    external one, `(unverified draft)`.
+    external one, `(unverified draft)`. Plain `subjects` and `resolve` output
+    labels a candidate the same way.
   - **`recall --json`** adds `trust`, `trusted` and `source_url` to every note,
-    and two keys to `data`: `unverified` (external drafts, newest first, at most
-    `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how many
-    more exist). An external draft never appears in `notes`.
-  - **The brief** renders `unverified` after everything trusted, under its own
+    and two keys to `data`: `unverified` (every note recall finds that is not
+    reviewed: a draft, an unrated note, a note from outside; newest first, at
+    most `session.UNVERIFIED_LIMIT`, same entry shape) and `unverified_more` (how
+    many more exist). Only a reviewed note (verified or canonical) appears in
+    `notes`. `conventions` is CONVENTIONS.md's body only while the file is
+    reviewed (its own frontmatter says `maturity: verified` or `canonical`);
+    when it is there but not reviewed, `conventions_unreviewed` is its
+    vault-relative path (else `null`).
+  - **The brief** renders `unverified` after everything reviewed, under its own
     header and a "never cite as fact" line, in whatever budget is left. Each line
-    is title, type, path and `source_url`; the body is never shown, since the
-    body is where someone else's instructions would be.
+    is title, type, maturity (or `unrated`), path and `source_url`; the body is
+    never shown, since the body is where someone else's instructions would be.
+    Every field of every note line is one line. A CONVENTIONS.md that is not
+    reviewed is one line saying it is not shown until it is.
   - Gate on `"trust-aware-reads" in status --json → data.capabilities`. On an
     engine without it, `lookup` returns drafts ranked by score alone and
     `recall` has no `unverified` key, so a consumer splits drafts out itself.

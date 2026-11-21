@@ -36,7 +36,7 @@ from pathlib import Path
 
 from . import ops
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, pull_ff_only, sync
+from .sync import SyncError, left_behind_line, pull_ff_only, sync
 from .vault import Vault, detect
 
 SESSION_START_PULL_TIMEOUT = 2.0  # seconds — the SessionStart latency budget
@@ -47,7 +47,10 @@ SESSION_END_PUSH_TIMEOUT = 10.0  # Claude default bounded teardown — a hang is
 
 def _log(vault: Vault | None, event: str, message: str) -> None:
     """Append to hooks.log; never raise (logging failures stay silent —
-    fail-open applies to the logger too)."""
+    fail-open applies to the logger too). What the file's encoding cannot
+    hold is written as a backslash escape: a file name that is not UTF-8
+    arrives as a lone surrogate (byte 0xff is U+DCFF) and is written as
+    ``\\udcff``."""
     try:
         if vault is not None:
             log_dir = vault.root / ".claudron"
@@ -56,7 +59,7 @@ def _log(vault: Vault | None, event: str, message: str) -> None:
         else:
             log_path = Path(tempfile.gettempdir()) / "claudron-hooks.log"
         stamp = datetime.now().isoformat(timespec="seconds")
-        with log_path.open("a") as fh:
+        with log_path.open("a", errors="backslashreplace") as fh:
             fh.write(f"{stamp} [{event}] {message}\n")
     except OSError:
         pass
@@ -200,6 +203,10 @@ def hook_session_end(vault: Vault, payload: dict, *, agent_cli: str = "claude") 
         ops.record(vault, "sync.push", session_id=_session_id(payload), ok=result.ok, detail=str(result.detail or ""))
         if not result.ok:
             _log(vault, "session-end", f"sync --push degraded: {result.detail}")
+        if result.left_behind_count:
+            _log(vault, "session-end", f"sync --push left behind: {left_behind_line(result)}")
+        if result.commit_error:
+            _log(vault, "session-end", f"sync --push commit failed: {result.commit_error}")
     # Deliberate, not a residual guard the boundary makes redundant: a
     # vault without a working git setup raises SyncError on every push, so
     # this is the expected-degradation logger ("skipped", symmetric with the

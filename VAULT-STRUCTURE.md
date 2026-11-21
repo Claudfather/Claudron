@@ -95,16 +95,64 @@ The tree is normative. Beyond what its comments state:
   fleet's own `.gitignore`) and an optional vault-root `.env` for vault-wide
   per-machine secrets. `fleet add` scaffolds each fleet's `.env`+`.gitignore`;
   `init` writes (or, on `--adopt`, augments) the vault-root `.gitignore`; a
-  root `.env` is the operator's to create.
-- **The vault-root `.gitignore` is `sync`'s safety net** (#182, F9). `sync`
-  keeps `git add -A`, so these rules are what stop machine droppings entering
-  history: `**/runtime/` (any depth — a nested fleet's `runtime/` too),
-  `**/data/events/fleet-*.jsonl`, `**/data/.last-tool-call`, `**/data/.idle`,
-  `*.bak`, `.env`, `.claudron/`. `fleet.yaml`, `library/`, `voices/`,
-  `missions/` and `shared/` keep flowing and stay browsable. `claudron doctor
-  --fix` appends any missing rule (migration `m002`) without touching existing
-  lines. An ignore rule never untracks a file already committed; `doctor`
-  names those (`D008`) for a human to `git rm --cached`.
+  root `.env` is the operator's to create. The credential names are ignored
+  too, at any depth: `.env.*`, `.netrc`, `_netrc`, `.git-credentials`,
+  `credentials`, `.npmrc`, `.pypirc`, `secrets.*`, key files and keystores
+  (`*.pem`, `*.key`, `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `id_rsa`,
+  `id_dsa`, `id_ecdsa`, `id_ed25519`) and credential JSON
+  (`*credential*.json`, `client_secret*.json`, `service-account*.json`). A
+  note called `secrets.md` and a folder of notes called `credentials` stay
+  trackable. Nothing the engine commits takes a file with such a
+  name, however it was staged, and `sync` does not push a commit that adds or
+  changes one.
+- **`sync` commits what the write door staged, and nothing else.** A door
+  write that is not committed at once (`--no-commit`, a commit that failed,
+  `new`, `index --navigation`, `fleet add`, `init --adopt` in a repository of
+  its own) is staged, and the next `sync` commits it. A file written around
+  the door, by hand or by any process, stays on disk uncommitted until a person
+  commits it with git; each `sync` names such files (`left_behind`). When
+  sync's own commit does not take, it names git's message instead
+  (`commit_error`), and the staged files stay staged for the next sync. A staged
+  file that is neither a note (`*.md`) nor a vault file (`.gitignore`,
+  `.gitkeep`, `.claudron-vault`, `fleet.yaml`, `TAGS.yaml`), or that has a
+  credential name, is unstaged and named instead of committed.
+- **A vault can opt directories in.** `paths:` in the hub's `SYNC.yaml`
+  (`_shared/SYNC.yaml`) lists vault-relative directories whose notes (`*.md`)
+  `sync` commits even when they were written around the door, in a commit of
+  their own (`vault sync: N opted-in file(s)`). Nothing is opted in by default.
+  The file is read from the last commit, so an uncommitted edit cannot widen it,
+  and a person commits it with git: `sync` never does. The opt-in never carries
+  an instruction file (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`,
+  `AGENTS.override.md`, `AGENT.md`, `GEMINI.md`, `QWEN.md`, `CONVENTIONS.md`, in
+  any case, or anything under a dot directory such as `.claude/`), a
+  credential-named file, a symbolic link (a tracked link that is deleted travels
+  as a deletion), or a note that is reviewed (`maturity` verified or canonical)
+  on disk or in its last commit, so a reviewed note, and any change to one,
+  still goes through the door. A note it cannot read (on disk or in its last
+  commit) stays on disk, left behind, and `sync` names it. A note under a listed
+  directory that git cannot list (a NUL in its path) stays left behind too:
+  `sync` names the directory, and the notes of the other directories still
+  travel. A `SYNC.yaml`
+  that is not a list of directories inside the vault opts nothing in, and
+  `sync` says so: each listed path names one directory by its path, so one
+  that is the vault itself (`.`, `./.`), holds `*`, `?` or `[`, or starts with
+  `:` is refused. An opted-in commit that does not take is named with git's
+  message (`commit_error`), and its notes stay on disk, left behind. The
+  opt-in reads each changed note under the listed directories before its one
+  commit, so a SessionEnd hook that reaches its agent CLI's time cap (three
+  seconds in all for Codex) during a first run over a large directory commits
+  none of those notes and does not push: they stay on disk, left behind, for a
+  later sync. Run the first sync after listing a large directory from the CLI
+  (`claudron sync`); later runs read only the notes changed since.
+- **The vault-root `.gitignore` keeps machine droppings out of history** (#182,
+  F9) when files are committed by hand: `**/runtime/` (any depth, a nested
+  fleet's `runtime/` too), `**/data/events/fleet-*.jsonl`,
+  `**/data/.last-tool-call`, `**/data/.idle`, `*.bak`, `.env`, `.claudron/`,
+  and the credential names above. `fleet.yaml`, `library/`, `voices/`,
+  `missions/` and `shared/` stay trackable and browsable. `claudron doctor
+  --fix` appends any missing rule (migrations `m002`, `m004`) without touching
+  existing lines. An ignore rule never untracks a file already committed;
+  `doctor` names those (`D008`) for a human to `git rm --cached`.
 
 This tree is the full tenant vault; `SCHEMA.md` §Vault directory taxonomy draws
 the same knowledge tiers from the note-filing side. The Claudlobby-injected

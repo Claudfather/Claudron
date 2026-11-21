@@ -41,7 +41,6 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -54,7 +53,8 @@ from .knowledge import index_divergence
 from .locking import vault_write_lock
 from .schema import Finding, validate_path
 from .structure import StructureError, check_structure, fix_structure, is_fixable
-from .vault import (IDENTITY_FILE, VAULT_FORMAT, Vault, _ensure_gitignore, detect, parse_frontmatter,
+from .vault import (CREDENTIAL_IGNORE_RULES, F9_IGNORE_RULES, IDENTITY_FILE, VAULT_FORMAT, Vault,
+                    _ensure_gitignore, detect, parse_frontmatter,
                     identity_text, is_within_root, missing_gitignore_rules,
                     vault_markdown_files)
 
@@ -120,16 +120,25 @@ def _m001_apply(vault: Vault) -> list[Path]:
     return [path]
 
 
-def _m002_needed(vault: Vault) -> bool:
-    return bool(missing_gitignore_rules(vault.root))
+def _gitignore_rules_migration(mid: str, rules: tuple[str, ...]):
+    """``(needed, apply)`` for a migration that appends *rules* to the vault's .gitignore.
+
+    m002 (the F9 rules, #182) and m004 (the credential names). Only the missing
+    rules are appended; existing lines are never touched. A file that is ALREADY
+    tracked stays tracked (ignore rules do not untrack): those are reported by
+    the D008 check for a human to decide."""
+    def needed(vault: Vault) -> bool:
+        return bool(missing_gitignore_rules(vault.root, rules))
+
+    def apply(vault: Vault) -> list[Path]:
+        changed = _ensure_gitignore(vault.root, added_by=f"`claudron doctor --fix` ({mid})", rules=rules)
+        return [vault.root / ".gitignore"] if changed else []
+
+    return needed, apply
 
 
-def _m002_apply(vault: Vault) -> list[Path]:
-    """Append the F9 ignore rules (#182) that are missing — existing lines are
-    never touched. A file that is ALREADY tracked stays tracked (ignore rules do
-    not untrack): those are reported by the D008 check for a human to decide."""
-    changed = _ensure_gitignore(vault.root, added_by="`claudron doctor --fix` (m002)")
-    return [vault.root / ".gitignore"] if changed else []
+_m002_needed, _m002_apply = _gitignore_rules_migration("m002", F9_IGNORE_RULES)
+_m004_needed, _m004_apply = _gitignore_rules_migration("m004", CREDENTIAL_IGNORE_RULES)
 
 
 #: The tag harvested notes carried before SCHEMA.md had ``source_type: session``
@@ -184,6 +193,8 @@ MIGRATIONS: tuple[Migration, ...] = (
               _m002_needed, _m002_apply),
     Migration("m003", 3, "mark pre-`session` harvested drafts source_type: session (#200 §1)",
               _m003_needed, _m003_apply),
+    Migration("m004", 4, "add the credential-name .gitignore rules: key files, .env.*, .netrc, "
+              "credential JSON", _m004_needed, _m004_apply),
 )
 
 
@@ -354,8 +365,8 @@ def diagnose(vault: Vault, *,
     if report.git is not None:
         tracked = _tracked_but_ignored(vault)
         if tracked:
-            shown = ", ".join(tracked[:5]) + (f" (+{len(tracked) - 5} more)"
-                                               if len(tracked) > 5 else "")
+            shown = ", ".join(map(_printable, tracked[:5])) + (f" (+{len(tracked) - 5} more)"
+                                                                if len(tracked) > 5 else "")
             report.findings.append(_finding(
                 "D008", "warning",
                 f"{len(tracked)} tracked file(s) match the ignore rules, so they keep "
@@ -555,16 +566,24 @@ def _resolution(event: str, command: str, address: str | None, root: str, hint: 
     return out
 
 
+def _printable(path: str) -> str:
+    """*path* for D008's message: a byte of a file name that is not UTF-8 (a lone
+    surrogate, as :func:`claudron.sync.run_git` reads one) as ``\\udcNN``, the escape
+    stderr writes, so the message prints on any stdout."""
+    return path.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def _tracked_but_ignored(vault: Vault) -> list[str]:
     """Files git tracks that the ignore rules now match (read-only query).
-    Ignore rules never untrack a file, so after m002 these are exactly the
-    paths the safety net will go on committing."""
+    Ignore rules never untrack a file, so after m002 (or m004) these are exactly
+    the tracked files the rules did not take out of history. The read goes through
+    :func:`claudron.sync.run_git`, which takes a ``-z`` call's output as bytes: a
+    name that is not UTF-8 arrives with a lone surrogate for each such byte."""
+    from .sync import SyncError, run_git
+
     try:
-        out = subprocess.run(
-            ["git", "-C", str(vault.root), "ls-files", "-ci", "--exclude-standard", "-z"],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
+        out = run_git(vault.root, "ls-files", "-ci", "--exclude-standard", "-z", timeout=10)
+    except (SyncError, OSError):
         return []
     if out.returncode != 0:
         return []

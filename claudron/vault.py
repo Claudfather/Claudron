@@ -7,11 +7,12 @@ for ``.git/``).
 
 from __future__ import annotations
 
+import fnmatch
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import date, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import yaml
 
@@ -65,7 +66,7 @@ IDENTITY_FILE = ".claudron-vault"
 # The vault format this engine writes. A vault whose `claudron:` is lower has
 # migrations pending (`claudron doctor`); a vault with no identity file is
 # format 0. Bumped only by the PR that registers the migration reaching it.
-VAULT_FORMAT = 3
+VAULT_FORMAT = 4
 
 
 def identity_text(name: str, hub: str, fmt: int = VAULT_FORMAT) -> str:
@@ -151,38 +152,92 @@ def iter_markdown_files(base: Path, *, skip_non_notes: bool = True):
             yield md
 
 
-# F9 (#182): `sync` keeps `add -A`, so the ignore file is the whole safety net.
-# `runtime/` is any-depth now: a nested fleet's `<system>/<fleet>/runtime/` is
-# not matched by `*/runtime/`. Bot telemetry and `*.bak` droppings never
-# belong in history; `.env` is any-depth because secrets can sit at the root.
-# `fleet.yaml`, `library/`, `voices/`, `missions/` and `shared/` keep flowing.
-_GITIGNORE_CONTENT = """\
-# claudron vault — gitignored runtime, telemetry, backups & secrets
-**/runtime/
-**/data/events/fleet-*.jsonl
-**/data/.last-tool-call
-**/data/.idle
-*.bak
-.env
-.claudron/
-"""
+#: Credential file names beyond `.env` (which the F9 rules below already
+#: ignore), in any directory: matched on the name alone, case-blind. m004 adds
+#: them to an older vault's .gitignore, so a name added after a release needs a
+#: migration of its own.
+CREDENTIAL_NAME_PATTERNS: tuple[str, ...] = (
+    ".env.*", ".netrc", "_netrc", ".git-credentials", "credentials", ".npmrc", ".pypirc",
+    "secrets.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore",
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519",
+    "*credential*.json", "client_secret*.json", "service-account*.json",
+)
+#: Every credential-shaped name. The default ignore rules carry them; nothing the
+#: engine commits (`sync`, `init --personal`) stages one; and `sync` does not
+#: push a commit that adds one.
+SECRET_NAME_PATTERNS: tuple[str, ...] = (".env", *CREDENTIAL_NAME_PATTERNS)
+#: Names those patterns match that are not credentials, tracked as usual: the
+#: templates, and a note called `secrets.md`.
+NOT_SECRET_NAMES: tuple[str, ...] = (".env.example", ".env.sample", ".env.template", "secrets.md")
+#: Directories a pattern above names (an ignore rule with no slash matches a
+#: directory too): a folder of notes called `credentials` stays trackable.
+NOT_SECRET_DIRS: tuple[str, ...] = ("credentials",)
 
-#: The rules every vault's .gitignore must carry (m002 and `init` both apply
-#: exactly these).
-GITIGNORE_RULES: tuple[str, ...] = tuple(
-    ln for ln in _GITIGNORE_CONTENT.splitlines() if ln.strip() and not ln.startswith("#")
+#: The files a vault holds besides its notes (``*.md``): the ones the engine
+#: writes or reads by name. A staged file that is neither a note nor one of
+#: these is not a vault file, and `sync` does not commit it.
+VAULT_FILE_NAMES = frozenset({".gitignore", ".gitkeep", IDENTITY_FILE, "fleet.yaml", "TAGS.yaml"})
+
+
+def is_secret_name(path: str | Path) -> bool:
+    """True when the file's name matches :data:`SECRET_NAME_PATTERNS` (case-blind)."""
+    name = PurePosixPath(str(path)).name.lower()
+    return name not in NOT_SECRET_NAMES and any(
+        fnmatch.fnmatchcase(name, pattern) for pattern in SECRET_NAME_PATTERNS)
+
+
+def may_commit(path: str | Path) -> bool:
+    """True when the engine may commit the vault-relative *path*: a note (``*.md``) or one of
+    :data:`VAULT_FILE_NAMES`, and never a credential-shaped name."""
+    name = PurePosixPath(str(path)).name
+    return not is_secret_name(name) and (name.lower().endswith(".md") or name in VAULT_FILE_NAMES)
+
+
+def split_commit_refusals(paths) -> tuple[list[str], list[str]]:
+    """*paths* as ``(committable, refused)`` by :func:`may_commit`, each in the order given:
+    the one place the rule is applied to a set of files."""
+    committable, refused = [], []
+    for path in paths:
+        (committable if may_commit(path) else refused).append(path)
+    return committable, refused
+
+
+#: F9 (#182, m002): `runtime/` is any-depth (a nested fleet's
+#: `<system>/<fleet>/runtime/` is not matched by `*/runtime/`); bot telemetry
+#: and `*.bak` droppings never belong in history; `.env` is any-depth because
+#: secrets can sit at the root. `fleet.yaml`, `library/`, `voices/`, `missions/`
+#: and `shared/` stay trackable.
+F9_IGNORE_RULES: tuple[str, ...] = (
+    "**/runtime/", "**/data/events/fleet-*.jsonl", "**/data/.last-tool-call", "**/data/.idle",
+    "*.bak", ".env", ".claudron/",
+)
+#: The credential names (m004), the exceptions last. `sync` commits only what the
+#: write door staged, so these rules are what keep such files out of a commit
+#: somebody makes by hand with git.
+CREDENTIAL_IGNORE_RULES: tuple[str, ...] = (
+    *CREDENTIAL_NAME_PATTERNS, *(f"!{name}" for name in NOT_SECRET_NAMES),
+    *(f"!{name}/" for name in NOT_SECRET_DIRS))
+#: The rules every vault's .gitignore must carry (`init` writes them all; `doctor
+#: --fix` adds missing ones: m002 the F9 set, m004 the credential names).
+GITIGNORE_RULES: tuple[str, ...] = F9_IGNORE_RULES + CREDENTIAL_IGNORE_RULES
+_GITIGNORE_CONTENT = (
+    "# claudron vault: gitignored runtime, telemetry, backups & secrets\n"
+    + "".join(f"{rule}\n" for rule in F9_IGNORE_RULES)
+    + "# credential files: never history\n"
+    + "".join(f"{rule}\n" for rule in CREDENTIAL_IGNORE_RULES)
 )
 
 
-def missing_gitignore_rules(root: Path) -> list[str]:
-    """The required rules absent from *root*/.gitignore (line-exact)."""
+def missing_gitignore_rules(root: Path, rules: tuple[str, ...] = GITIGNORE_RULES) -> list[str]:
+    """The *rules* (default: all required ones) absent from *root*/.gitignore (line-exact)."""
     gitignore = root / ".gitignore"
     have = ({ln.strip() for ln in gitignore.read_text().splitlines()}
             if gitignore.is_file() else set())
-    return [ln for ln in GITIGNORE_RULES if ln not in have]
+    return [ln for ln in rules if ln not in have]
 
 
-def _ensure_gitignore(root: Path, *, added_by: str = "`init --adopt`") -> bool:
+def _ensure_gitignore(root: Path, *, added_by: str = "`init --adopt`",
+                      rules: tuple[str, ...] = GITIGNORE_RULES) -> bool:
     """Guarantee the vault's ignore rules are present at *root*/.gitignore.
 
     A fresh vault gets the full template. An *adopted* vault that already has
@@ -197,7 +252,7 @@ def _ensure_gitignore(root: Path, *, added_by: str = "`init --adopt`") -> bool:
         gitignore.write_text(_GITIGNORE_CONTENT)
         return True
     existing = gitignore.read_text()
-    missing = missing_gitignore_rules(root)
+    missing = missing_gitignore_rules(root, rules)
     if missing:
         sep = "" if existing.endswith("\n") else "\n"
         gitignore.write_text(

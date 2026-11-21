@@ -4,8 +4,10 @@ idempotent migration runner behind `--fix`."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -277,12 +279,12 @@ def _legacy_vault(root: Path) -> Path:
 class TestFirstMigrations:
     """#190's own "test it on yourself" flow, on a legacy vault."""
 
-    def test_legacy_vault_lists_m001_and_m002_read_only(self, tmp_path, capsys):
+    def test_legacy_vault_lists_m001_m002_and_m004_read_only(self, tmp_path, capsys):
         v = _repo(_legacy_vault(tmp_path / "legacy"))
         before = _fingerprint(v)
         assert main(["--vault", str(v), "doctor", "--json"]) == 1
         data = json.loads(capsys.readouterr().out)["data"]
-        assert [p["id"] for p in data["pending"]] == ["m001", "m002"]
+        assert [p["id"] for p in data["pending"]] == ["m001", "m002", "m004"]
         assert data["vault_format"] == 0
         assert _fingerprint(v) == before
 
@@ -291,10 +293,10 @@ class TestFirstMigrations:
         head = _git(v, "rev-parse", "HEAD").strip()
         assert main(["--vault", str(v), "doctor", "--fix", "--json"]) == 0
         data = json.loads(capsys.readouterr().out)["data"]
-        assert data["applied"] == ["m001", "m002"] and data["pending"] == []
+        assert data["applied"] == ["m001", "m002", "m004"] and data["pending"] == []
         assert data["vault_format"] == VAULT_FORMAT
         log = _git(v, "log", "--format=%s", f"{head}..HEAD").splitlines()
-        assert log == ["migrate(m001,m002): claudron doctor --fix"]
+        assert log == ["migrate(m001,m002,m004): claudron doctor --fix"]
         changed = set(_git(v, "show", "--name-only", "--format=", "HEAD").split())
         assert changed == {".claudron-vault", ".gitignore"}
 
@@ -344,7 +346,7 @@ class TestFirstMigrations:
         v = _legacy_vault(tmp_path / "legacy")
         (v / ".claudron-vault").write_text("# mine\nclaudron: 1\nname: kept\nhub: _shared\nextra: yes\n")
         report = fix(detect(v))
-        assert report.applied == ["m002"]
+        assert report.applied == ["m002", "m004"]
         text = (v / ".claudron-vault").read_text()
         assert text == f"# mine\nclaudron: {VAULT_FORMAT}\nname: kept\nhub: _shared\nextra: yes\n"
 
@@ -556,3 +558,94 @@ class TestWalkScope:
         runtime = _ignored_checkout(vault_dir)
         assert main(["validate", str(runtime)]) == 1
         assert "guide.md" in capsys.readouterr().out
+
+
+_CREDENTIAL_NAMES = [".env.local", "fleet/.env.production", ".netrc", "keys/id_ed25519", "tls/server.pem",
+                     "tls/server.key", "gcp-credentials.json", "client_secret_123.json", "aws/credentials",
+                     "secrets.yaml", "app/secrets.json", ".npmrc", "pkg/.pypirc", "keys/release.jks",
+                     "android/debug.keystore", "gcp/service-account.json", "gcp/service-account-ci.json"]
+
+
+def _ignored(root: Path, names: list[str]) -> list[str]:
+    out = subprocess.run(["git", "-C", str(root), "check-ignore", "--no-index", *names],
+                         capture_output=True, text=True)
+    return out.stdout.split()
+
+
+def test_credential_names_are_ignored_in_a_new_vault_and_added_to_an_older_one(tmp_path, capsys):
+    """Key files and keystores, `.env.*`, `.netrc`, registry configs, `credentials`, `secrets.*` and
+    credential JSON never become history: `init` writes the rules into a new vault, and `doctor
+    --fix` adds them to a vault from before them (m004)."""
+    from claudron.vault import IDENTITY_FILE, identity_text
+
+    fresh = tmp_path / "fresh"
+    assert main(["init", str(fresh)]) == 0
+    _git(fresh, "init", "-q", "--initial-branch=main")
+    assert _ignored(fresh, _CREDENTIAL_NAMES) == _CREDENTIAL_NAMES
+
+    older = tmp_path / "older"
+    assert main(["init", str(older)]) == 0
+    (older / ".gitignore").write_text("# claudron vault\n**/runtime/\n**/data/events/fleet-*.jsonl\n"
+                                      "**/data/.last-tool-call\n**/data/.idle\n*.bak\n.env\n.claudron/\n")
+    (older / IDENTITY_FILE).write_text(identity_text(older.name, "_shared", fmt=3))
+    _repo(older)
+    assert _ignored(older, _CREDENTIAL_NAMES) == []
+    capsys.readouterr()
+    assert main(["--vault", str(older), "doctor", "--fix", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["data"]["applied"] == ["m004"]
+    assert _ignored(older, _CREDENTIAL_NAMES) == _CREDENTIAL_NAMES
+
+
+def test_notes_about_secrets_and_credentials_stay_trackable(tmp_path):
+    """`secrets.*` and `credentials` are credential names; a note called `secrets.md` and a folder
+    of notes called `credentials/` are not, so neither is ignored or refused."""
+    from claudron.vault import is_secret_name, may_commit
+
+    fresh = tmp_path / "fresh"
+    assert main(["init", str(fresh)]) == 0
+    _git(fresh, "init", "-q", "--initial-branch=main")
+    notes = ["_shared/knowledge/secrets.md", "_shared/knowledge/credentials/rotation.md"]
+    assert _ignored(fresh, notes) == []
+    assert all(may_commit(rel) for rel in notes) and not is_secret_name("Secrets.md")
+    assert is_secret_name("deploy/secrets.yaml") and is_secret_name("aws/credentials")
+
+
+class TestATrackedNameThatIsNotUtf8:
+    """git ls-files -z writes a tracked file's name as its bytes, which need not be UTF-8. D008
+    names a tracked file the ignore rules match whose name is not UTF-8 as any other: the byte
+    is written as \\udcff in its message, in --json and in doctor's text on a strict stdout."""
+
+    @staticmethod
+    def _vault(root: Path) -> Path:
+        assert main(["init", str(root)]) == 0
+        try:
+            fd = os.open(os.fsencode(root) + b"/note-\xff.bak", os.O_WRONLY | os.O_CREAT, 0o644)
+        except OSError as exc:
+            pytest.skip(f"this file system refuses the name: {exc}")
+        os.write(fd, b"x\n")
+        os.close(fd)
+        _git(root, "init", "-q", "--initial-branch=main")
+        _git(root, "add", "-A")
+        _git(root, "add", "-f", os.fsdecode(b"note-\xff.bak"))
+        _git(root, "commit", "-qm", "seed")
+        return root
+
+    def test_doctor_json_names_it(self, tmp_path, capsys):
+        root = self._vault(tmp_path / "v")
+        capsys.readouterr()
+
+        assert main(["--vault", str(root), "doctor", "--json"]) == 0
+
+        env = json.loads(capsys.readouterr().out)
+        d008 = [w for w in env["warnings"] if w["code"] == "D008"]
+        assert d008 and "note-\\udcff.bak" in d008[0]["message"], env["warnings"]
+
+    def test_doctor_text_prints_it_on_a_strict_stdout(self, tmp_path):
+        root = self._vault(tmp_path / "v")
+        env = {**os.environ, "PYTHONIOENCODING": "utf-8:strict"}
+
+        out = subprocess.run([sys.executable, "-m", "claudron.cli", "--vault", str(root), "doctor"],
+                             capture_output=True, env=env, timeout=60)
+
+        assert out.returncode == 0, out.stderr
+        assert b"[D008] warning" in out.stdout and b"note-\\udcff.bak" in out.stdout, out.stdout

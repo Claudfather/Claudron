@@ -174,7 +174,8 @@ def test_recall_served_logs_only_what_the_brief_kept(vault_dir, monkeypatch, cap
     knowledge.mkdir(parents=True, exist_ok=True)
     for n in range(6):
         (knowledge / f"n{n}.md").write_text(f"---\ntitle: Rate limit note {n}\ntype: knowledge\nstatus: current\n"
-                                            f"owner: t\ncreated: 2026-09-01\nupdated: 2026-09-0{n + 1}\n---\n\n"
+                                            f"owner: t\ncreated: 2026-09-01\nupdated: 2026-09-0{n + 1}\n"
+                                            "maturity: verified\n---\n\n"
                                             + "Words about rate limits. " * 30 + "\n")
     monkeypatch.setattr("claudron.hooks.derive_project", lambda: "webapp")
     monkeypatch.setattr("claudron.session.BRIEF_TOKEN_BUDGET", 120)
@@ -188,9 +189,9 @@ def test_a_path_quoted_in_a_summary_is_not_counted_as_shown(vault_dir, monkeypat
     knowledge = vault_dir / "projects" / "webapp"
     knowledge.mkdir(parents=True, exist_ok=True)
     (knowledge / "a.md").write_text("---\ntitle: A\ntype: knowledge\nstatus: current\nowner: t\ncreated: 2026-09-01\n"
-                                    "updated: 2026-09-09\n---\n\nSee `projects/webapp/b.md` for more.\n")
+                                    "updated: 2026-09-09\nmaturity: verified\n---\n\nSee `projects/webapp/b.md` for more.\n")
     (knowledge / "b.md").write_text("---\ntitle: B" + " wordy" * 200 + "\ntype: knowledge\nstatus: current\nowner: t\ncreated: 2026-09-01\n"
-                                    "updated: 2026-09-01\n---\n\n" + "Long words. " * 400 + "\n")
+                                    "updated: 2026-09-01\nmaturity: verified\n---\n\n" + "Long words. " * 400 + "\n")
     monkeypatch.setattr("claudron.hooks.derive_project", lambda: "webapp")
     monkeypatch.setattr("claudron.session.BRIEF_TOKEN_BUDGET", 60)
     hooks_mod.session_start_brief(detect(vault_dir), "sess-3")

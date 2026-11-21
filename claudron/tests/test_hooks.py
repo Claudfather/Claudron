@@ -53,7 +53,7 @@ def fake_home(tmp_path: Path, monkeypatch):
 class TestSessionStartHook:
     def test_emits_brief_on_stdout(self, vault_dir: Path, capsys, monkeypatch):
         (vault_dir / "_shared" / "CONVENTIONS.md").write_text(
-            "# Conventions\n\n- Supersede, never delete.\n"
+            "---\nmaturity: verified\n---\n\n# Conventions\n\n- Supersede, never delete.\n"
         )
         monkeypatch.setattr("sys.stdin", io.StringIO("{}"))
         rc = main(["--vault", str(vault_dir), "hook", "session-start"])
@@ -320,7 +320,7 @@ def hook_pair(tmp_path: Path) -> tuple[Path, Path]:
     _hgit(tmp_path, "clone", str(remote), str(a))
     main(["init", str(a), "--adopt"])
     (a / "_shared" / "CONVENTIONS.md").write_text(
-        "# Conventions\n\n- Supersede, never delete.\n")
+        "---\nmaturity: verified\n---\n\n# Conventions\n\n- Supersede, never delete.\n")
     _hgit(a, "add", "-A"); _hgit(a, "commit", "-m", "seed")
     _hgit(a, "push", "origin", "main")
     _hgit(a, "remote", "set-head", "origin", "--auto")

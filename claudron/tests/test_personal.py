@@ -37,6 +37,34 @@ class TestInitPersonal:
         log = _git(target, "log", "--oneline").stdout
         assert log.strip() != ""
 
+    def test_seed_commit_takes_only_notes_and_vault_files(self, tmp_path: Path, capsys):
+        """The seed commit follows sync's rule: notes and vault files only. A credential-shaped
+        file is ignored by the new vault's rules, and a file that is not a vault file stays on
+        disk, uncommitted, and is named."""
+        folder = tmp_path / "notes"
+        folder.mkdir()
+        (folder / "ideas.md").write_text("# Ideas\n")
+        (folder / ".netrc").write_text("machine example.com login x password y\n")
+        (folder / "credentials.json").write_text("{}\n")
+        (folder / "photo.png").write_bytes(b"\x89PNG\r\n")
+        assert main(["init", str(folder), "--adopt", "--personal", "--owner", "t"]) == 0
+        committed = set(_git(folder, "ls-files").stdout.split())
+        assert {"ideas.md", ".claudron-vault", ".gitignore"} <= committed
+        assert not {".netrc", "credentials.json", "photo.png"} & committed
+        assert "photo.png" in capsys.readouterr().err
+        assert all((folder / name).is_file() for name in (".netrc", "credentials.json", "photo.png"))
+
+    def test_a_name_that_starts_with_a_colon_names_only_its_own_file(self, tmp_path: Path):
+        """git takes each name in the seed commit literally: a note called `:ideas.md` is
+        committed under that name, beside an `ideas.md`, and is never read as pathspec magic."""
+        folder = tmp_path / "notes"
+        folder.mkdir()
+        (folder / "ideas.md").write_text("# Ideas\n")
+        (folder / ":ideas.md").write_text("# Ideas from the margin\n")
+        assert main(["init", str(folder), "--adopt", "--personal", "--owner", "t"]) == 0
+        committed = set(_git(folder, "ls-files").stdout.split())
+        assert {"ideas.md", ":ideas.md"} <= committed, committed
+
     def test_scaffolds_projects_claude_md(self, tmp_path: Path):
         """projects/ ships a CLAUDE.md carrying the vault-vs-repo-plane
         boundary — Claude Code reads it up the tree, so it governs every
@@ -150,16 +178,16 @@ class TestInitPersonal:
         an unconditional success story about a commit that doesn't exist."""
         import subprocess as sp
 
-        import claudron.cli as cli_mod
+        import claudron.sync as sync_mod  # the seed commits through the door's own commit_paths
 
-        real = cli_mod.run_git
+        real = sync_mod.run_git
 
         def _commit_fails(root, *args, **kwargs):
             if args and args[0] == "commit":
                 return sp.CompletedProcess(args, 1, "", "empty ident")
             return real(root, *args, **kwargs)
 
-        monkeypatch.setattr(cli_mod, "run_git", _commit_fails)
+        monkeypatch.setattr(sync_mod, "run_git", _commit_fails)
         rc = main(["init", str(tmp_path / "v"), "--personal",
                    "--owner", "t", "--json"])
         assert rc == 0  # vault is locally usable — not a failure

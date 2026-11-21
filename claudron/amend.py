@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 
-from .engine import PersonEditError, WriteResult, edit_note, yaml_scalar
+from .engine import PersonEditError, ReviewedEditError, WriteResult, edit_note, yaml_scalar
 from .knowledge import ensure_index, fenced_lines, section_headings
 from .schema import TRUST_CLASSES, _as_str_list, claimed_names, set_frontmatter_field, trust_class
 from .vault import Vault
@@ -293,6 +293,9 @@ def amend(vault: Vault, note_path: Path, request: dict, *, run_id: str | None = 
                            asserted_by="user" if _user_asserted(request) else None)
     except PersonEditError as exc:
         raise AmendError("a fact or alias about a person must be user-asserted "
+                         "(evidence.asserted_by, or asserted_by for an alias: user)") from exc
+    except ReviewedEditError as exc:
+        raise AmendError(f"{exc}; a fact or alias in a reviewed note must be user-asserted "
                          "(evidence.asserted_by, or asserted_by for an alias: user)") from exc
     return AmendResult(action=result.action, path=result.path, reason=result.reason, errors=result.errors,
                        warnings=result.warnings, op=op, outcome=done.get("outcome", "") if result.written else "",

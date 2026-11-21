@@ -25,6 +25,7 @@ def _widget_notes(vault: Path, count: int = 40) -> None:
                 status: current
                 owner: t
                 tags: [widget]
+                maturity: verified
                 created: 2026-06-01
                 updated: 2026-06-01
                 ---
@@ -38,10 +39,23 @@ def _widget_notes(vault: Path, count: int = 40) -> None:
 
 
 def _conventions(vault: Path) -> None:
+    """A reviewed CONVENTIONS.md: the brief carries it only at a reviewed maturity."""
     (vault / "_shared" / "CONVENTIONS.md").write_text(
+        "---\nmaturity: verified\n---\n\n"
         "# Vault conventions\n\n- Timezone: America/New_York.\n"
         "- Supersede, never delete.\n"
     )
+
+
+def _reviewed(vault: Path) -> Path:
+    """Mark every note with frontmatter reviewed. The brief carries only reviewed notes as
+    context, and the tests that call this are about tiers, order, budget and shape, not trust."""
+    for md in vault.rglob("*.md"):
+        text = md.read_text()
+        head = text.split("\n---", 1)[0]
+        if text.startswith("---\n") and "\nmaturity:" not in head:
+            md.write_text(text.replace("---\n", "---\nmaturity: verified\n", 1))
+    return vault
 
 
 class TestBrief:
@@ -57,7 +71,7 @@ class TestBrief:
     def test_project_tier_first(self, vault_with_projects: Path, capsys):
         """Project notes are context by membership; they precede shared
         matches in the brief."""
-        _conventions(vault_with_projects)
+        _conventions(_reviewed(vault_with_projects))
         rc = main(["--vault", str(vault_with_projects), "recall",
                    "--project", "storydump", "--query", "auth"])
         assert rc == 0
@@ -87,7 +101,7 @@ class TestBrief:
                     Body of the {name} note.
                 """)
             )
-        rc = main(["--vault", str(vault_dir), "recall", "--project", "myrepo"])
+        rc = main(["--vault", str(_reviewed(vault_dir)), "recall", "--project", "myrepo"])
         assert rc == 0
         out = capsys.readouterr().out
         assert out.index("Newer Note") < out.index("Older Note")
@@ -118,7 +132,7 @@ class TestBrief:
         MCP. One line names both doors."""
         from claudron.session import BRIEF_DISCOVERY_HINT
 
-        rc = main(["--vault", str(vault_dir), "recall", "--query", "auth"])
+        rc = main(["--vault", str(_reviewed(vault_dir)), "recall", "--query", "auth"])
         assert rc == 0
         assert BRIEF_DISCOVERY_HINT in capsys.readouterr().out
 
@@ -199,7 +213,7 @@ class TestBrief:
     def test_json_note_shape_is_stable(self, vault_with_projects: Path, capsys):
         """Every note carries the same key set; score is None for
         membership (project) entries — the null is the signal."""
-        main(["--vault", str(vault_with_projects), "recall",
+        main(["--vault", str(_reviewed(vault_with_projects)), "recall",
               "--project", "storydump", "--query", "auth", "--json"])
         env = json.loads(capsys.readouterr().out)
         notes = env["data"]["notes"]
@@ -230,7 +244,7 @@ class TestBrief:
 
 class TestJsonAndChannels:
     def test_json_envelope(self, vault_with_projects: Path, capsys):
-        _conventions(vault_with_projects)
+        _conventions(_reviewed(vault_with_projects))
         rc = main(["--vault", str(vault_with_projects), "recall",
                    "--project", "storydump", "--query", "auth", "--json"])
         assert rc == 0

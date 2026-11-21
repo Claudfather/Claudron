@@ -402,11 +402,15 @@ bind an integration that ships its **own** capture prompt:
   commit fails (a wedged tree, a rejecting hook) the note is still on disk, the
   result stays `ok`, and a `W108` rides the envelope's `warnings` array — never
   `errors`, because nothing about the write failed. **Do not retry a write on a
-  W108**; the note is there and the next `sync` commits it. And a vault that is
-  not a git repository is silent: no commit, no warning.
+  W108**: the note is there. When the warning says it is staged, the next `sync`
+  commits it. When it says it is not (the stage failed, or the tree was
+  mid-surgery), stage it with git once the cause is gone: `sync` commits only
+  what the write door staged. And a vault that is not a git repository is
+  silent: no commit, no warning.
 
-  `--no-commit` exists for a caller batching several captures and committing
-  them itself. It is an escape hatch, not a default: it restores the window.
+  `--no-commit` stages the note without committing it, for a caller batching
+  several captures; the next `sync` commits them. It is an escape hatch, not a
+  default: it restores the window.
 
 - **A hook never rewrites history, and never syncs a side branch.** SessionStart
   fetches and `merge --ff-only`; it does not commit and does not rebase. If you
