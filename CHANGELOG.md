@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+Upgrading a vault that 0.11.0 has not migrated (vault format 3 or older): `claudron doctor` exits 1, with a `D001` error for each pending migration (`m004`, the credential-name ignore rules, among them), until `claudron doctor --fix` applies them, so a script or health check that runs `doctor` fails until then.
+
 ### Fixed
 - **`sync` reads git's messages whatever bytes a file's name holds.** Git quotes a file by its name's bytes in its messages: with `core.autocrlf` set, `git add` warns that a note's line ends will change, by its name. `sync` reads what every git call writes on stderr with `os.fsdecode`, a byte that is not UTF-8 as `\udcNN`, so a note under an opted-in directory whose name is not UTF-8 travels as any other; what git writes on stdout is still read strictly. The commit-identity check and the default owner read only `git config`'s stdout. Tests: `claudron/tests/test_sync.py`.
 - **`sync` does not push a commit that adds a credential-shaped file whose name ends in a carriage return.** A file written from a list with CRLF line ends gets a CR at the end of its name; the push path reads each name without a CR or LF at either end, so `id_rsa` and a CR is refused as `id_rsa` is, and the refusal quotes the name as it is. Tests: `claudron/tests/test_sync.py`.
