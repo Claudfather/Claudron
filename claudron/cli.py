@@ -735,10 +735,10 @@ def _derive_owner(args) -> str:
         return args.owner
     import subprocess
 
+    from .sync import git_config
+
     try:
-        name = subprocess.run(
-            ["git", "config", "user.name"], capture_output=True, text=True, timeout=5
-        ).stdout.strip()
+        name = git_config("user.name", timeout=5).stdout.strip()
         if name:
             return name
     except (OSError, subprocess.TimeoutExpired):

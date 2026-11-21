@@ -23,6 +23,7 @@ and fail open on any nonzero outcome.
 from __future__ import annotations
 
 import json
+import locale
 import os
 import shutil
 import socket
@@ -139,16 +140,23 @@ _FALLBACK_IDENTITY = ("-c", "user.name=Claudron", "-c", "user.email=claudron@cla
 _WRITES_COMMITS = frozenset({"commit", "rebase", "pull"})
 
 
+def git_config(key: str, root: Path | None = None, *,
+               timeout: float | None = None) -> subprocess.CompletedProcess:
+    """``git config KEY`` (for *root*'s repository, when given), its stdout as text. Git's
+    stderr is not kept, so no byte in it can fail the read. Not :func:`run_git`: no commit
+    identity is added and no failure is mapped, so each caller keeps its own guard."""
+    where = ["-C", str(root)] if root is not None else []
+    return subprocess.run(["git", *where, "config", key], stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, text=True, timeout=timeout)
+
+
 def _has_git_identity(root: Path) -> bool:
     """True when a commit identity (user.name AND user.email) is configured for
     *root* at any scope. A plain `git config` read — not run_git — so it never
     recurses through the commit-identity injection below."""
     for key in ("user.name", "user.email"):
         try:
-            got = subprocess.run(
-                ["git", "-C", str(root), "config", key],
-                capture_output=True, text=True,
-            )
+            got = git_config(key, root)
         except (FileNotFoundError, PermissionError):
             return False
         if got.returncode != 0 or not got.stdout.strip():
@@ -163,6 +171,11 @@ def _literal_paths(args: tuple[str, ...]) -> tuple[str, ...]:
         return args
     cut = args.index("--") + 1
     return (*args[:cut], *(f":(literal){arg}" for arg in args[cut:]))
+
+
+def _line_ends(text: str) -> str:
+    """*text* with each CRLF and each CR read as one LF, as ``text=True`` reads a stream."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
@@ -183,13 +196,17 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     path. Not ``GIT_LITERAL_PATHSPECS``, which git hands on to the vault's
     own hooks.
 
-    A call with ``-z`` takes git's output as bytes and decodes it with
+    A call with ``-z`` takes git's stdout as bytes and decodes it with
     :func:`os.fsdecode`: after ``-z`` git writes each file name as its bytes,
     unquoted, and a name need not be UTF-8. Such a byte reads as a lone
     surrogate (byte 0xff is U+DCFF), a carriage return stays one, and the name
     goes back to git as the same bytes when it is passed as an argument
-    (subprocess encodes it with :func:`os.fsencode`). Every other call is
-    decoded as text, strictly."""
+    (subprocess encodes it with :func:`os.fsencode`). Every other call reads
+    stdout as ``text=True`` does: the locale's encoding, strictly, and a CRLF or
+    a CR as one LF. Every call reads stderr with :func:`os.fsdecode` and the
+    same line ends, because git's messages quote a file by its name's bytes
+    (with ``core.autocrlf``, ``add`` warns that a file's line ends will change,
+    by its name)."""
     prefix: list[str] = []
     if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
         prefix = list(_FALLBACK_IDENTITY)
@@ -197,14 +214,15 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     try:
         out = subprocess.run(
             ["git", "-C", str(root), *prefix, *_literal_paths(args)],
-            capture_output=True, text=not nul, timeout=timeout,
+            capture_output=True, timeout=timeout,
         )
     except (FileNotFoundError, PermissionError) as exc:
         raise SyncError(f"git is unavailable: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise SyncTimeout(f"git {' '.join(args)} timed out") from exc
-    if nul:
-        out.stdout, out.stderr = os.fsdecode(out.stdout), os.fsdecode(out.stderr)
+    out.stdout = (os.fsdecode(out.stdout) if nul
+                  else _line_ends(out.stdout.decode(locale.getpreferredencoding(False))))
+    out.stderr = _line_ends(os.fsdecode(out.stderr))
     return out
 
 

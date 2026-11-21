@@ -138,7 +138,7 @@ class TestSyncRoundTrip:
         monkeypatch.setattr(sync_mod, "_has_git_identity", lambda root: False)
         monkeypatch.setattr(
             sync_mod.subprocess, "run",
-            lambda argv, **kw: seen.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
+            lambda argv, **kw: seen.append(argv) or subprocess.CompletedProcess(argv, 0, b"", b""),
         )
         for args in (("commit", "-m", "x"), ("rebase", "abc123"),
                      ("pull", "--rebase"), ("fetch", "origin"), ("merge", "--ff-only", "x")):
@@ -152,6 +152,21 @@ class TestSyncRoundTrip:
             by_cmd[cmd] = "user.name=Claudron" in argv
         assert by_cmd == {"commit": True, "rebase": True, "pull": True,
                           "fetch": False, "merge": False}, by_cmd
+
+    def test_the_git_config_reads_take_any_byte_on_stderr(self, tmp_path, monkeypatch):
+        """The commit-identity check and the default owner read only what `git config` writes
+        on stdout, so a byte that is not UTF-8 on its stderr changes neither."""
+        from claudron.cli import _derive_owner
+        from claudron.sync import _has_git_identity
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "git").write_text("#!/bin/sh\nprintf 'A Person\\n'\nprintf 'warning: \\377\\n' >&2\n")
+        (bin_dir / "git").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+        assert _has_git_identity(tmp_path)
+        assert _derive_owner(object()) == "A Person"  # no --owner
 
     def test_sync_json_envelope(self, synced_pair, capsys):
         a, _ = synced_pair
@@ -2389,6 +2404,24 @@ class TestANameReadsAsItsBytes:
         log = (a / ".claudron" / "hooks.log").read_text()
         assert "left behind: 1 file(s)" in log and "by-hand-\\udcff.md" in log, log
 
+    def test_a_git_message_with_one_reads_and_stdout_is_still_strict(self, tmp_path):
+        """Without -z, git's stderr reads whatever bytes a file name holds (with core.autocrlf,
+        `add` warns that the file's line ends will change, by its name); its stdout is still read
+        strictly."""
+        from claudron.sync import run_git
+
+        root = tmp_path / "r"
+        _git(tmp_path, "init", "--initial-branch=main", str(root))
+        _git(root, "config", "core.autocrlf", "true")
+        rel = self._write(root, b"by-hand-\xff.md")
+
+        added = run_git(root, "add", "--", rel)
+
+        assert added.returncode == 0, added.stderr
+        assert "by-hand-\udcff.md" in added.stderr and "CRLF" in added.stderr, added.stderr
+        with pytest.raises(UnicodeDecodeError):
+            run_git(root, "-c", "core.quotePath=false", "diff", "--cached", "--name-only")
+
 
 class TestSyncCommitsOnlyWhatTheDoorStaged:
     """sync commits what the write door staged, and nothing written around it. A file written by
@@ -2778,6 +2811,25 @@ class TestTheVaultsOptIn:
         assert result.ok and result.left_behind_count == 0, result.detail
         assert b"crew/\xff.md" in _remote_raw(a)
         assert "docs/plan.md" in _remote_files(a)
+
+    def test_a_note_whose_name_is_not_utf8_travels_when_git_warns_about_its_line_ends(self, synced_pair):
+        """With core.autocrlf, `git add` warns on stderr that the note's line ends will change, by
+        its file name's bytes: sync reads the warning, and the note travels."""
+        a, _ = synced_pair
+        _git(a, "config", "core.autocrlf", "true")
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        try:
+            fd = os.open(os.fsencode(a / "crew") + b"/\xff.md", os.O_WRONLY | os.O_CREAT, 0o644)
+        except OSError as exc:
+            pytest.skip(f"this file system refuses the name: {exc}")
+        os.write(fd, _BY_HAND.encode())
+        os.close(fd)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert result.ok and result.left_behind_count == 0, result.detail
+        assert b"crew/\xff.md" in _remote_raw(a)
 
     def test_a_note_whose_name_holds_a_carriage_return_travels_with_the_others(self, synced_pair):
         a, _ = synced_pair

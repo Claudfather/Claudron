@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- **`sync` reads git's messages whatever bytes a file's name holds.** Git quotes a file by its name's bytes in its messages: with `core.autocrlf` set, `git add` warns that a note's line ends will change, by its name. `sync` reads what every git call writes on stderr with `os.fsdecode`, a byte that is not UTF-8 as `\udcNN`, so a note under an opted-in directory whose name is not UTF-8 travels as any other; what git writes on stdout is still read strictly. The commit-identity check and the default owner read only `git config`'s stdout. Tests: `claudron/tests/test_sync.py`.
+
 ## [0.11.0] - 2026-11-21
 
 Upgrading an existing vault: `claudron doctor` lists `m004` (vault format 3 to 4, the credential-name ignore rules) as pending, beside any older migration the vault has not applied, until `claudron doctor --fix` applies them. `sync` commits only what the write door staged, so a hand-written file in a clone stays on disk, uncommitted, and each sync names it as left behind, until a person commits it with git or, for a note, a directory listed under `paths:` in the hub's `SYNC.yaml` opts it in (none is listed by default). The brief carries only reviewed context, so a note with no `maturity`, the usual case in an older vault, drops out of every brief and is listed only under Unverified, by its title line, until a person rates it with `claudron promote NOTE --to verified` (or `canonical`); an unreviewed `CONVENTIONS.md` stays out until a person sets `maturity: verified` in its frontmatter.
