@@ -677,11 +677,25 @@ def _outgoing_secret_names(root: Path, t: float) -> list[str] | None:
     return sorted(path for path in paths if is_secret_name(path.strip("\r\n")))
 
 
+#: Each control character (ESC, CR, LF, TAB, NUL, DEL and the rest of Unicode category Cc)
+#: and the Unicode line and paragraph separators, mapped to its Python escape (``\x1b``,
+#: ``\r``, ``\n``, ``\u2028``): the characters that move a terminal's cursor or end a line.
+_CONTROL_ESCAPES = {code: chr(code).encode("unicode_escape").decode("ascii")
+                    for code in (*range(0x20), *range(0x7F, 0xA0), 0x2028, 0x2029)}
+
+
+def escape_controls(text: str) -> str:
+    """*text* for a terminal or a log line, each control character written as its escape
+    (:data:`_CONTROL_ESCAPES`), so a file name in a message cannot move the cursor or start a
+    line of its own. Every other character is kept as it is."""
+    return text.translate(_CONTROL_ESCAPES)
+
+
 def name_paths(shown: list[str], total: int | None = None) -> str:
     """Paths for a message: at most :data:`LEFT_BEHIND_SHOWN` of *shown*, then how many more
-    there are of *total* (default: all of *shown*)."""
+    there are of *total* (default: all of *shown*), each through :func:`escape_controls`."""
     total = len(shown) if total is None else total
-    listed = shown[:LEFT_BEHIND_SHOWN]
+    listed = [escape_controls(path) for path in shown[:LEFT_BEHIND_SHOWN]]
     rest = total - len(listed)
     return ", ".join(listed) + (f" and {rest} more" if rest > 0 else "")
 

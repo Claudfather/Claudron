@@ -63,7 +63,7 @@ from .amend import AmendError, AmendResult, amend
 from .runs import RunError, revert_run
 from .subjects import resolve, subjects
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, check, left_behind_line, pull_ff_only, run_git, sync
+from .sync import SyncError, check, escape_controls, left_behind_line, pull_ff_only, run_git, sync
 
 
 # ── output contract (CLI_CONTRACT.md) ─────────────────────────────────
@@ -1013,6 +1013,12 @@ def _sync_findings(result) -> list[Finding]:
                     line=None, message=result.detail)]
 
 
+def _sync_stderr(text: str) -> None:
+    """One line of `sync` on stderr, each control character written as its escape, in a file
+    name and in git's own message alike (:func:`claudron.sync.escape_controls`)."""
+    print(escape_controls(text), file=sys.stderr)
+
+
 def cmd_sync(args) -> int:
     vault = _resolve_vault(args)
 
@@ -1025,14 +1031,14 @@ def cmd_sync(args) -> int:
             result = check(vault, timeout=args.timeout,
                            reach=getattr(args, "reach", False))
         except SyncError as exc:
-            print(str(exc), file=sys.stderr)
+            _sync_stderr(str(exc))
             return 3  # environment error (CLI contract)
         if args.json:
             _emit_json("sync", result.to_dict())
         else:
             print(_check_line(result))
             if result.detail:
-                print(result.detail, file=sys.stderr)
+                _sync_stderr(result.detail)
         return 0
 
     if getattr(args, "ff_only", False):
@@ -1042,7 +1048,7 @@ def cmd_sync(args) -> int:
         try:
             result = pull_ff_only(vault, timeout=args.timeout)
         except SyncError as exc:
-            print(str(exc), file=sys.stderr)
+            _sync_stderr(str(exc))
             return 3  # environment error (CLI contract)
         if args.json:
             _emit_json("sync", result.to_dict(), _sync_findings(result))
@@ -1059,7 +1065,7 @@ def cmd_sync(args) -> int:
             else:
                 print("sync --ff-only: already up to date")
             if result.detail:
-                print(result.detail, file=sys.stderr)
+                _sync_stderr(result.detail)
         return 0 if result.ok else 1
 
     if args.pull_only:
@@ -1072,7 +1078,7 @@ def cmd_sync(args) -> int:
         result = sync(vault, pull=pull, push=push, timeout=args.timeout,
                       branch=getattr(args, "branch", None))
     except SyncError as exc:
-        print(str(exc), file=sys.stderr)
+        _sync_stderr(str(exc))
         return 3  # environment error (CLI contract)
 
     if args.json:
@@ -1096,17 +1102,17 @@ def cmd_sync(args) -> int:
             done_txt = ", ".join(parts) if parts else "nothing completed"
             print(f"sync: {done_txt} — needs attention (see stderr)")
         if result.detail:
-            print(result.detail, file=sys.stderr)
+            _sync_stderr(result.detail)
         if result.left_behind_count:
-            print(f"left behind: {left_behind_line(result)}", file=sys.stderr)
+            _sync_stderr(f"left behind: {left_behind_line(result)}")
         if result.commit_error:
-            print(f"commit failed: {result.commit_error}", file=sys.stderr)
+            _sync_stderr(f"commit failed: {result.commit_error}")
         # A failed integration names notes it COULD NOT INTEGRATE (the live
         # copy is untouched and still served); a clean pull names notes that
         # arrived carrying markers (excluded from search until resolved).
         label = ("quarantined until resolved" if result.pulled
                  else "not integrated, live copy unchanged")
-        for path in result.quarantined:
+        for path in map(escape_controls, result.quarantined):
             print(f"conflict — {label}: {path}", file=sys.stderr)
     return 0 if result.ok else 1
 

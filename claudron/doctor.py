@@ -569,8 +569,11 @@ def _resolution(event: str, command: str, address: str | None, root: str, hint: 
 def _printable(path: str) -> str:
     """*path* for D008's message: a byte of a file name that is not UTF-8 (a lone
     surrogate, as :func:`claudron.sync.run_git` reads one) as ``\\udcNN``, the escape
-    stderr writes, so the message prints on any stdout."""
-    return path.encode("utf-8", "backslashreplace").decode("utf-8")
+    stderr writes, so the message prints on any stdout, and each control character as
+    its escape (:func:`claudron.sync.escape_controls`)."""
+    from .sync import escape_controls
+
+    return escape_controls(path.encode("utf-8", "backslashreplace").decode("utf-8"))
 
 
 def _tracked_but_ignored(vault: Vault) -> list[str]:

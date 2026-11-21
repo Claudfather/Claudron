@@ -93,6 +93,19 @@ class TestSessionStartHook:
         assert "skipped" in text and "not a git repository" in text, text
 
 
+class TestTheHookLog:
+    def test_an_entry_is_one_line(self, vault_dir: Path):
+        """A control character in an entry (an LF in a file name, or in git's own message) is
+        written as its escape, so each entry is one line of the log."""
+        from claudron.vault import detect
+
+        hooks_mod._log(detect(vault_dir), "session-end", "sync --push degraded: one\ntwo\r\x1b[2J")
+
+        log = (vault_dir / ".claudron" / "hooks.log").read_bytes()
+        assert log.count(b"\n") == 1 and log.endswith(b" [session-end] sync --push degraded: "
+                                                       b"one\\ntwo\\r\\x1b[2J\n"), log
+
+
 class TestPreCompactHook:
     """The retained ownership identity must never block or inject context."""
 

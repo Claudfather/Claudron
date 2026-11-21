@@ -246,6 +246,20 @@ class TestConflictQuarantine:
 
     NOTE = "_shared/knowledge/shared-note.md"
 
+    def test_a_quarantined_path_prints_with_its_control_characters_escaped(self, vault_dir, capsys,
+                                                                            monkeypatch):
+        """Each conflict line prints its path through the escape the other sync lines use."""
+        from claudron import cli as cli_mod
+        from claudron.sync import SyncResult
+
+        monkeypatch.setattr(cli_mod, "sync", lambda *a, **kw: SyncResult(
+            pulled=True, quarantined=["_shared/knowledge/clash-\x1b[2J.md"]))
+
+        assert main(["--vault", str(vault_dir), "sync"]) == 0
+        err = capsys.readouterr().err
+        assert "quarantined until resolved: _shared/knowledge/clash-\\x1b[2J.md" in err, err
+        assert "\x1b" not in err
+
     def _make_conflict(self, synced_pair, capsys) -> tuple[Path, Path]:
         a, b = synced_pair
         (a / self.NOTE).write_text(
@@ -2439,6 +2453,42 @@ class TestANameReadsAsItsBytes:
         with pytest.raises(UnicodeDecodeError):
             run_git(root, "-c", "core.quotePath=false", "diff", "--cached", "--name-only")
 
+    def test_a_control_character_is_written_as_its_escape(self):
+        """ESC, CR, LF, TAB, DEL, a C1 character and the Unicode line separator each print as
+        their escape; every other character, a lone surrogate included, is kept as it is."""
+        from claudron.sync import escape_controls
+
+        assert escape_controls("a\x1b[2Jb\rc\nd\te\x7ff\x85g\u2028h") == (
+            "a\\x1b[2Jb\\rc\\nd\\te\\x7ff\\x85g\\u2028h")
+        assert escape_controls("caf\u00e9 \udcff.md") == "caf\u00e9 \udcff.md"
+
+    def test_a_control_character_in_one_prints_escaped_and_left_behind_keeps_it(self, synced_pair, capsys):
+        """ESC, CR and LF in a file name print as \\x1b, \\r and \\n on stderr and in the hook
+        log, so a name cannot move the cursor or start a line of its own; left_behind keeps
+        each name exactly."""
+        from claudron.hooks import hook_session_end
+
+        a, _ = synced_pair
+        rels = sorted(self._write(a, raw) for raw in (b"_shared/knowledge/by-hand-\x1b[2J.md",
+                                                       b"_shared/knowledge/by-hand-\r.md",
+                                                       b"_shared/knowledge/by-hand-\nx.md"))
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 0
+
+        err = capsys.readouterr().err
+        assert "\x1b" not in err and "\r" not in err, err
+        line = [row for row in err.split("\n") if row.startswith("left behind: 3 file(s)")]
+        assert len(line) == 1, err
+        for shown in ("by-hand-\\x1b[2J.md", "by-hand-\\r.md", "by-hand-\\nx.md"):
+            assert shown in line[0], line
+        assert sync(detect(a)).left_behind == rels
+
+        assert hook_session_end(detect(a), {}) == 0
+        log = (a / ".claudron" / "hooks.log").read_bytes()
+        assert log.count(b"\n") == 1 and b"\r" not in log and b"\x1b" not in log, log
+        assert b"by-hand-\\nx.md" in log, log
+
 
 class TestSyncCommitsOnlyWhatTheDoorStaged:
     """sync commits what the write door staged, and nothing written around it. A file written by
@@ -2582,6 +2632,22 @@ class TestSyncCommitsOnlyWhatTheDoorStaged:
         assert _git(a, "diff", "--cached", "--name-only").stdout.split() == ["_shared/knowledge/door-note.md"]
         hook_session_end(detect(a), {})
         assert "commit failed: pre-commit says no" in (a / ".claudron" / "hooks.log").read_text()
+
+    def test_git_s_own_message_prints_its_control_characters_escaped(self, synced_pair, capsys):
+        """A pre-commit hook writes what it likes into git's message: `commit failed:` prints a
+        control character in it as its escape too."""
+        a, _ = synced_pair
+        hook = a / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nprintf 'pre-commit says \\033[2Jno\\n' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        assert main(["--vault", str(a), "capture", "--type", "knowledge", "--title", "Door Note",
+                     "--body", "Written through the door.", "--owner", "t", "--no-commit"]) == 0
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 0
+
+        err = capsys.readouterr().err
+        assert "commit failed: pre-commit says \\x1b[2Jno" in err and "\x1b" not in err, err
 
 
 def _opt_in(clone: Path, text: str) -> None:

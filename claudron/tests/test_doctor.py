@@ -649,3 +649,21 @@ class TestATrackedNameThatIsNotUtf8:
 
         assert out.returncode == 0, out.stderr
         assert b"[D008] warning" in out.stdout and b"note-\\udcff.bak" in out.stdout, out.stdout
+
+
+def test_d008_lists_a_tracked_file_with_its_control_characters_escaped(tmp_path, capsys):
+    """A tracked file the ignore rules match whose name holds ESC or LF is listed by D008 with each
+    control character as its escape, so the list cannot move the cursor or start a line."""
+    root = tmp_path / "v"
+    assert main(["init", str(root)]) == 0
+    (root / "keys").mkdir()
+    (root / "keys" / "a\x1b[2J\nb.pem").write_text("not a real key\n")
+    _repo(root)
+    _git(root, "add", "-f", "keys/a\x1b[2J\nb.pem")
+    _git(root, "commit", "-qm", "track it")
+    capsys.readouterr()
+
+    assert main(["--vault", str(root), "doctor", "--json"]) == 0
+    d008 = [w for w in json.loads(capsys.readouterr().out)["warnings"] if w["code"] == "D008"]
+    assert d008 and "keys/a\\x1b[2J\\nb.pem" in d008[0]["message"], d008
+    assert "\x1b" not in d008[0]["message"] and "\n" not in d008[0]["message"], d008
