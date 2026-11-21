@@ -684,10 +684,11 @@ def _outgoing_secret_names(root: Path, t: float) -> list[str] | None:
     if out.returncode != 0:
         return None
     paths = {name.strip("\n") for name in out.stdout.split("\0") if name.strip()}
-    # Each is matched without a CR or LF at either end and kept as it is: a file written from a
-    # list with CRLF line ends gets a CR at the end of its name, and `id_rsa` and a CR is refused
-    # as `id_rsa` is.
-    return sorted(path for path in paths if is_secret_name(path.strip("\r\n")))
+    # Each is matched by its file name without whitespace at either end (str.strip: a space, a
+    # tab, a CR, an LF, a no-break space and the rest) and kept as it is: a file written from a
+    # list with CRLF line ends gets a CR at the end of its name, and `id_rsa` with a space or a
+    # CR before or after it is refused as `id_rsa` is.
+    return sorted(path for path in paths if is_secret_name(PurePosixPath(path).name.strip()))
 
 
 #: Each control character (ESC, CR, LF, TAB, NUL, DEL and the rest of Unicode category Cc)

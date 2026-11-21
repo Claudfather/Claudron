@@ -2429,6 +2429,25 @@ class TestANameReadsAsItsBytes:
         assert "push refused" in result.detail and "keys/id_rsa" in result.detail, result.detail
         assert raw not in _remote_raw(a)
 
+    @pytest.mark.parametrize("raw", [b"keys/id_rsa ", b"keys/ id_rsa", b"keys/id_rsa\t", b"keys/\rid_rsa",
+                                     b"keys/id_rsa\xc2\xa0"],
+                             ids=["space-after", "space-before", "tab-after", "cr-before", "nbsp-after"])
+    def test_a_credential_shaped_one_with_whitespace_at_either_end_is_refused(self, synced_pair, raw):
+        """The push path reads each file name without whitespace at either end (a space, a tab,
+        a CR, a no-break space), so `id_rsa` with one before or after it is refused as `id_rsa`
+        is, and the refusal lists the file with a control character in it as its escape."""
+        a, _ = synced_pair
+        (a / "keys").mkdir()
+        rel = self._write(a, raw, "not a real key\n")
+        _git(a, "add", "-f", rel)
+        _git(a, "commit", "-m", "committed by hand")
+
+        result = sync(detect(a))
+
+        assert not result.ok and not result.pushed
+        assert "push refused" in result.detail and sync_mod.name_paths([rel]) in result.detail, result.detail
+        assert raw not in _remote_raw(a)
+
     def test_stderr_the_json_envelope_and_the_hook_log_print_it(self, synced_pair):
         """PYTHONIOENCODING makes stdout strict, as a UTF-8 locale does. sync prints names on
         stderr only, which Python writes with backslashreplace whatever the locale."""
