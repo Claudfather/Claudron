@@ -209,8 +209,10 @@ def run_git(root: Path, *args: str, timeout: float | None = None,
     (with ``core.autocrlf``, ``add`` warns that a file's line ends will change,
     by its name). ``stdout_is_data=False`` is for a call whose stdout holds only
     git's messages: a rebase writes its Auto-merging and CONFLICT lines there,
-    naming a file by its bytes whatever ``-q`` or ``core.quotePath`` say, so
-    that stdout is read as stderr is."""
+    and a commit a ``U`` line for each unmerged file, each naming a file by
+    its bytes whatever ``-q`` or ``core.quotePath`` say (and a commit with
+    nothing to commit writes the status block there, a file by its bytes
+    under ``core.quotePath=false``), so that stdout is read as stderr is."""
     prefix: list[str] = []
     if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
         prefix = list(_FALLBACK_IDENTITY)
@@ -624,7 +626,8 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
         # Hand the ADD's failure back, not a commit that was never attempted:
         # naming the cause rather than the symptom is why sync stopped here too.
         return CommitOutcome("add", added)
-    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, *pathspec, timeout=t))
+    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, *pathspec, timeout=t,
+                                           stdout_is_data=False))
 
 
 def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) -> subprocess.CompletedProcess:
@@ -639,7 +642,8 @@ def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) 
 def commit_staged(root: Path, message: str, *, timeout: float | None = None) -> CommitOutcome:
     """Commit what is staged and nothing else: sync's own commit."""
     t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
-    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, timeout=t))
+    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, timeout=t,
+                                           stdout_is_data=False))
 
 
 def _status(root: Path, t: float, *, untracked: str = "normal",

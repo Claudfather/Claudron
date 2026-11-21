@@ -2543,6 +2543,57 @@ class TestANameReadsAsItsBytes:
 
         assert _killed_rebase(root, root / ".git", 10.0) is False
 
+    @pytest.mark.parametrize("quote", [None, "false"])
+    def test_a_stopped_revert_on_one_leaves_the_commit_failed_not_raised(self, synced_pair, quote):
+        """`git commit` writes a `U` line with the file's bytes on stdout for each unmerged file,
+        whatever core.quotePath says. sync reads a commit's stdout as git's messages, so in a
+        vault where a revert stopped on a conflict (a state sync does not refuse) its commit
+        fails with git's message, and the revert stays as the person left it."""
+        a, _ = synced_pair
+        raw = b"_shared/knowledge/by-hand-\xff.md"
+        rel = self._write(a, raw, "one\n")
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "one")
+        for text in ("two\n", "three\n"):
+            with open(os.fsencode(a) + b"/" + raw, "w") as fh:
+                fh.write(text)
+            _git(a, "commit", "-am", text.strip())
+        stopped = subprocess.run(["git", "-C", str(a), "revert", "--no-edit", "HEAD~1"], capture_output=True,
+                                 env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                      "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        assert stopped.returncode != 0 and (a / ".git" / "REVERT_HEAD").exists(), stopped
+        if quote:
+            _git(a, "config", "core.quotePath", quote)
+        with open(os.fsencode(a) + b"/" + raw, "rb") as fh:
+            before = fh.read()
+
+        result = sync(detect(a), pull=False, push=False)
+
+        assert not result.committed and "unmerged" in result.commit_error, result.commit_error
+        assert (a / ".git" / "REVERT_HEAD").exists()
+        with open(os.fsencode(a) + b"/" + raw, "rb") as fh:
+            assert fh.read() == before
+
+    @pytest.mark.parametrize("door", ["commit_paths", "commit_staged"])
+    def test_a_commit_with_nothing_to_commit_reads_an_untracked_one(self, tmp_path, door):
+        """With nothing to commit, `git commit -q` still writes the status block on stdout, and
+        under core.quotePath=false it lists an untracked file by its bytes: the write door's
+        commit and sync's fail with git's message rather than raise."""
+        root = tmp_path / "r"
+        _git(tmp_path, "init", "--initial-branch=main", str(root))
+        (root / "seed.md").write_text("seed\n")
+        _git(root, "add", "seed.md")
+        _git(root, "commit", "-m", "seed")
+        self._write(root, b"by-hand-\xff.md")
+        _git(root, "config", "core.quotePath", "false")
+        head = _git(root, "rev-parse", "HEAD").stdout
+
+        outcome = (sync_mod.commit_paths(root, [root / "seed.md"], "door commit") if door == "commit_paths"
+                   else sync_mod.commit_staged(root, "sync commit"))
+
+        assert not outcome.ok and outcome.step == "commit", outcome.error
+        assert _git(root, "rev-parse", "HEAD").stdout == head
+
     def test_the_check_counts_and_ages_one_by_its_bytes(self, synced_pair):
         """The check reads the uncommitted list with -z: a file whose name is not ASCII is counted
         and aged like any other, and one that is not UTF-8 reads under core.quotePath=false too."""
