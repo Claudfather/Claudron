@@ -2381,6 +2381,23 @@ class TestANameReadsAsItsBytes:
         assert "push refused" in result.detail and rel in result.detail, result.detail
         assert raw not in _remote_raw(a)
 
+    def test_a_credential_shaped_one_ending_in_a_carriage_return_is_refused(self, synced_pair):
+        """A file written from a list with CRLF line ends gets a CR at the end of its name: the
+        push path reads each name without a CR or LF at either end, so `id_rsa` and a CR is
+        refused as `id_rsa` is."""
+        a, _ = synced_pair
+        raw = b"keys/id_rsa\r"
+        (a / "keys").mkdir()
+        rel = self._write(a, raw, "not a real key\n")
+        _git(a, "add", "-f", rel)
+        _git(a, "commit", "-m", "committed by hand")
+
+        result = sync(detect(a))
+
+        assert not result.ok and not result.pushed
+        assert "push refused" in result.detail and "keys/id_rsa" in result.detail, result.detail
+        assert raw not in _remote_raw(a)
+
     def test_stderr_the_json_envelope_and_the_hook_log_print_it(self, synced_pair):
         """PYTHONIOENCODING makes stdout strict, as a UTF-8 locale does. sync prints names on
         stderr only, which Python writes with backslashreplace whatever the locale."""

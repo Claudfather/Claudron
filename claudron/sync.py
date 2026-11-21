@@ -670,8 +670,11 @@ def _outgoing_secret_names(root: Path, t: float) -> list[str] | None:
                   "HEAD", "--not", "--remotes=origin", timeout=t)
     if out.returncode != 0:
         return None
-    return sorted({name.strip("\n") for name in out.stdout.split("\0")
-                   if name.strip() and is_secret_name(name.strip("\n"))})
+    paths = {name.strip("\n") for name in out.stdout.split("\0") if name.strip()}
+    # Each is matched without a CR or LF at either end and kept as it is: a file written from a
+    # list with CRLF line ends gets a CR at the end of its name, and `id_rsa` and a CR is refused
+    # as `id_rsa` is.
+    return sorted(path for path in paths if is_secret_name(path.strip("\r\n")))
 
 
 def name_paths(shown: list[str], total: int | None = None) -> str:
