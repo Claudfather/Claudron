@@ -227,11 +227,12 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
 
 
 def _changed_md(root: Path, spec: list[str]) -> list[str]:
-    """Vault-relative .md paths from a `git diff --name-only` invocation."""
-    out = run_git(root, "diff", "--name-only", *spec)
+    """Vault-relative .md paths from a `git diff --name-only -z` invocation: after ``-z`` git
+    writes each name as its bytes, never quoted, so a note whose name is not ASCII is listed."""
+    out = run_git(root, "diff", "--name-only", "-z", *spec)
     if out.returncode != 0:
         return []
-    return [p for p in out.stdout.splitlines() if p.endswith(".md")]
+    return [p for p in out.stdout.split("\0") if p.endswith(".md")]
 
 
 def _git_dir(root: Path, t: float) -> Path | None:

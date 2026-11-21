@@ -246,6 +246,23 @@ class TestConflictQuarantine:
 
     NOTE = "_shared/knowledge/shared-note.md"
 
+    def test_a_pulled_note_whose_name_is_not_ascii_is_quarantined_too(self, synced_pair):
+        """The scan after a pull reads what the pull changed with -z, where git does not quote a
+        name that is not ASCII, so such a note that lands with markers is quarantined."""
+        a, b = synced_pair
+        rel = "_shared/knowledge/caf\xe9.md"
+        (a / rel).write_text("---\ntitle: Clash\ntype: knowledge\nstatus: current\nowner: t\n"
+                             "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Clash\n\n"
+                             "<<<<<<< HEAD\nA's truth.\n=======\nB's truth.\n>>>>>>> theirs\n")
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "half-resolved")
+        _git(a, "push", "origin", "HEAD")
+
+        result = sync(detect(b), push=False)
+
+        assert result.ok and result.pulled, result.detail
+        assert result.quarantined == [rel], result.quarantined
+
     def test_a_quarantined_path_prints_with_its_control_characters_escaped(self, vault_dir, capsys,
                                                                             monkeypatch):
         """Each conflict line prints its path through the escape the other sync lines use."""
