@@ -129,9 +129,9 @@ The tree is normative. Beyond what its comments state:
   as a deletion), or a note that is reviewed (`maturity` verified or canonical)
   on disk or in its last commit, so a reviewed note, and any change to one,
   still goes through the door. A note it cannot read (on disk or in its last
-  commit) stays on disk, left behind, and `sync` names it. A note under a listed
-  directory that git cannot list (a NUL in its path) stays left behind too:
-  `sync` names the directory, and the notes of the other directories still
+  commit) stays on disk, left behind, and `sync` reports it. A listed
+  directory that git cannot list (a NUL in its path) opts nothing in: `sync`
+  reports it, and the notes of the other directories still
   travel. A `SYNC.yaml`
   that is not a list of directories inside the vault opts nothing in, and
   `sync` says so: each listed path names one directory by its path, so one

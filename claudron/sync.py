@@ -23,6 +23,7 @@ and fail open on any nonzero outcome.
 from __future__ import annotations
 
 import json
+import locale
 import os
 import shutil
 import socket
@@ -139,16 +140,23 @@ _FALLBACK_IDENTITY = ("-c", "user.name=Claudron", "-c", "user.email=claudron@cla
 _WRITES_COMMITS = frozenset({"commit", "rebase", "pull"})
 
 
+def git_config(key: str, root: Path | None = None, *,
+               timeout: float | None = None) -> subprocess.CompletedProcess:
+    """``git config KEY`` (for *root*'s repository, when given), its stdout as text. Git's
+    stderr is not kept, so no byte in it can fail the read. Not :func:`run_git`: no commit
+    identity is added and no failure is mapped, so each caller keeps its own guard."""
+    where = ["-C", str(root)] if root is not None else []
+    return subprocess.run(["git", *where, "config", key], stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, text=True, timeout=timeout)
+
+
 def _has_git_identity(root: Path) -> bool:
     """True when a commit identity (user.name AND user.email) is configured for
     *root* at any scope. A plain `git config` read — not run_git — so it never
     recurses through the commit-identity injection below."""
     for key in ("user.name", "user.email"):
         try:
-            got = subprocess.run(
-                ["git", "-C", str(root), "config", key],
-                capture_output=True, text=True,
-            )
+            got = git_config(key, root)
         except (FileNotFoundError, PermissionError):
             return False
         if got.returncode != 0 or not got.stdout.strip():
@@ -165,7 +173,13 @@ def _literal_paths(args: tuple[str, ...]) -> tuple[str, ...]:
     return (*args[:cut], *(f":(literal){arg}" for arg in args[cut:]))
 
 
-def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.CompletedProcess:
+def _line_ends(text: str) -> str:
+    """*text* with each CRLF and each CR read as one LF, as ``text=True`` reads a stream."""
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def run_git(root: Path, *args: str, timeout: float | None = None,
+            stdout_is_data: bool = True) -> subprocess.CompletedProcess:
     """The package git invoker: guarded subprocess with SyncError-typed
     environment failures (git missing/not executable, timeouts). Every
     *vault-scoped* git call goes through this — the one deliberate
@@ -183,13 +197,22 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     path. Not ``GIT_LITERAL_PATHSPECS``, which git hands on to the vault's
     own hooks.
 
-    A call with ``-z`` takes git's output as bytes and decodes it with
+    A call with ``-z`` takes git's stdout as bytes and decodes it with
     :func:`os.fsdecode`: after ``-z`` git writes each file name as its bytes,
     unquoted, and a name need not be UTF-8. Such a byte reads as a lone
     surrogate (byte 0xff is U+DCFF), a carriage return stays one, and the name
     goes back to git as the same bytes when it is passed as an argument
-    (subprocess encodes it with :func:`os.fsencode`). Every other call is
-    decoded as text, strictly."""
+    (subprocess encodes it with :func:`os.fsencode`). Every other call reads
+    stdout as ``text=True`` does: the locale's encoding, strictly, and a CRLF or
+    a CR as one LF. Every call reads stderr with :func:`os.fsdecode` and the
+    same line ends, because git's messages quote a file by its name's bytes
+    (with ``core.autocrlf``, ``add`` warns that a file's line ends will change,
+    by its name). ``stdout_is_data=False`` is for a call whose stdout holds only
+    git's messages: a rebase or a revert writes its Auto-merging and CONFLICT
+    lines there, and a commit a ``U`` line for each unmerged file, each naming
+    a file by its bytes whatever ``-q`` or ``core.quotePath`` say (and a commit
+    with nothing to commit writes the status block there, a file by its bytes
+    under ``core.quotePath=false``), so that stdout is read as stderr is."""
     prefix: list[str] = []
     if args and args[0] in _WRITES_COMMITS and not _has_git_identity(root):
         prefix = list(_FALLBACK_IDENTITY)
@@ -197,23 +220,29 @@ def run_git(root: Path, *args: str, timeout: float | None = None) -> subprocess.
     try:
         out = subprocess.run(
             ["git", "-C", str(root), *prefix, *_literal_paths(args)],
-            capture_output=True, text=not nul, timeout=timeout,
+            capture_output=True, timeout=timeout,
         )
     except (FileNotFoundError, PermissionError) as exc:
         raise SyncError(f"git is unavailable: {exc}") from exc
     except subprocess.TimeoutExpired as exc:
         raise SyncTimeout(f"git {' '.join(args)} timed out") from exc
     if nul:
-        out.stdout, out.stderr = os.fsdecode(out.stdout), os.fsdecode(out.stderr)
+        out.stdout = os.fsdecode(out.stdout)
+    elif stdout_is_data:
+        out.stdout = _line_ends(out.stdout.decode(locale.getpreferredencoding(False)))
+    else:
+        out.stdout = _line_ends(os.fsdecode(out.stdout))
+    out.stderr = _line_ends(os.fsdecode(out.stderr))
     return out
 
 
 def _changed_md(root: Path, spec: list[str]) -> list[str]:
-    """Vault-relative .md paths from a `git diff --name-only` invocation."""
-    out = run_git(root, "diff", "--name-only", *spec)
+    """Vault-relative .md paths from a `git diff --name-only -z` invocation: after ``-z`` git
+    writes each name as its bytes, never quoted, so a note whose name is not ASCII is listed."""
+    out = run_git(root, "diff", "--name-only", "-z", *spec)
     if out.returncode != 0:
         return []
-    return [p for p in out.stdout.splitlines() if p.endswith(".md")]
+    return [p for p in out.stdout.split("\0") if p.endswith(".md")]
 
 
 def _git_dir(root: Path, t: float) -> Path | None:
@@ -304,7 +333,7 @@ def _killed_rebase(root: Path, git_dir: Path | None, t: float) -> bool:
     # plain `diff` may refresh and rewrite the index, and this predicate is
     # reached from the read-only health door as well as from `sync`.
     unmerged = run_git(root, "--no-optional-locks", "diff", "--name-only",
-                       "--diff-filter=U", timeout=t)
+                       "--diff-filter=U", "-z", timeout=t)
     if unmerged.returncode != 0 or unmerged.stdout.strip():
         # Either there are conflicted paths, or the question could not be
         # answered — both mean "do not abort".
@@ -597,7 +626,8 @@ def commit_paths(root: Path, paths: list[Path], message: str, *,
         # Hand the ADD's failure back, not a commit that was never attempted:
         # naming the cause rather than the symptom is why sync stopped here too.
         return CommitOutcome("add", added)
-    return CommitOutcome("commit", run_git(root, "commit", "-m", message, *pathspec, timeout=t))
+    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, *pathspec, timeout=t,
+                                           stdout_is_data=False))
 
 
 def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) -> subprocess.CompletedProcess:
@@ -610,9 +640,10 @@ def stage_paths(root: Path, paths: list[Path], *, timeout: float | None = None) 
 
 
 def commit_staged(root: Path, message: str, *, timeout: float | None = None) -> CommitOutcome:
-    """Commit what is staged and nothing else: sync's own commit."""
+    """Commit what is staged and nothing else: sync's own commit, and revert-run's."""
     t = timeout if timeout is not None else DEFAULT_GIT_TIMEOUT
-    return CommitOutcome("commit", run_git(root, "commit", "-m", message, timeout=t))
+    return CommitOutcome("commit", run_git(root, "commit", "-q", "-m", message, timeout=t,
+                                           stdout_is_data=False))
 
 
 def _status(root: Path, t: float, *, untracked: str = "normal",
@@ -652,15 +683,33 @@ def _outgoing_secret_names(root: Path, t: float) -> list[str] | None:
                   "HEAD", "--not", "--remotes=origin", timeout=t)
     if out.returncode != 0:
         return None
-    return sorted({name.strip("\n") for name in out.stdout.split("\0")
-                   if name.strip() and is_secret_name(name.strip("\n"))})
+    paths = {name.strip("\n") for name in out.stdout.split("\0") if name.strip()}
+    # Each is matched by its file name without whitespace at either end (str.strip: a space, a
+    # tab, a CR, an LF, a no-break space and the rest) and kept as it is: a file written from a
+    # list with CRLF line ends gets a CR at the end of its name, and `id_rsa` with a space or a
+    # CR before or after it is refused as `id_rsa` is.
+    return sorted(path for path in paths if is_secret_name(PurePosixPath(path).name.strip()))
+
+
+#: Each control character (ESC, CR, LF, TAB, NUL, DEL and the rest of Unicode category Cc)
+#: and the Unicode line and paragraph separators, mapped to its Python escape (``\x1b``,
+#: ``\r``, ``\n``, ``\u2028``): the characters that move a terminal's cursor or end a line.
+_CONTROL_ESCAPES = {code: chr(code).encode("unicode_escape").decode("ascii")
+                    for code in (*range(0x20), *range(0x7F, 0xA0), 0x2028, 0x2029)}
+
+
+def escape_controls(text: str) -> str:
+    """*text* for a terminal or a log line, each control character written as its escape
+    (:data:`_CONTROL_ESCAPES`), so a file name in a message cannot move the cursor or start a
+    line of its own. Every other character is kept as it is."""
+    return text.translate(_CONTROL_ESCAPES)
 
 
 def name_paths(shown: list[str], total: int | None = None) -> str:
     """Paths for a message: at most :data:`LEFT_BEHIND_SHOWN` of *shown*, then how many more
-    there are of *total* (default: all of *shown*)."""
+    there are of *total* (default: all of *shown*), each through :func:`escape_controls`."""
     total = len(shown) if total is None else total
-    listed = shown[:LEFT_BEHIND_SHOWN]
+    listed = [escape_controls(path) for path in shown[:LEFT_BEHIND_SHOWN]]
     rest = total - len(listed)
     return ", ".join(listed) + (f" and {rest} more" if rest > 0 else "")
 
@@ -899,7 +948,7 @@ def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
     # SD card is a cost this design must not add to the ordinary path.
     if run_git(root, "merge-base", "--is-ancestor", start, up,
                timeout=t).returncode == 0:
-        ff = run_git(root, "merge", "--ff-only", up, timeout=t)
+        ff = run_git(root, "merge", "--ff-only", "-q", up, timeout=t)
         if ff.returncode != 0:
             said = (ff.stderr or ff.stdout).strip()[:200]
             return False, f"fast-forward failed: {said}", []
@@ -923,7 +972,7 @@ def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
             return False, f"could not start the integration branch: {said}", []
 
         try:
-            rebased = run_git(wt, "rebase", up, timeout=t)
+            rebased = run_git(wt, "rebase", up, timeout=t, stdout_is_data=False)
         except SyncTimeout:
             # THE KILL PATH, and the reason this design exists: the live tree was
             # never touched, so there is nothing to abort, nothing to repair, and
@@ -932,11 +981,11 @@ def _integrate_in_worktree(root: Path, t: float) -> tuple[bool, str, list[str]]:
                            "never touched — no markers, nothing to repair"), []
 
         if rebased.returncode != 0:
-            unmerged = run_git(wt, "diff", "--name-only", "--diff-filter=U",
-                               timeout=t).stdout.split()
+            unmerged = [p for p in run_git(wt, "diff", "--name-only", "--diff-filter=U", "-z",
+                                           timeout=t).stdout.split("\0") if p]
             return False, ("integration conflicted; the live tree was never touched "
                            "(no markers) — resolve on the default branch and re-run: "
-                           f"{', '.join(unmerged) or 'unknown paths'}"), unmerged
+                           f"{name_paths(unmerged) or 'unknown paths'}"), unmerged
 
         tip = run_git(wt, "rev-parse", "HEAD", timeout=t).stdout.strip()
         if not tip:
@@ -1410,7 +1459,7 @@ def pull_ff_only(vault: Vault, *, timeout: float | None = None) -> SyncResult:
             )
             return result
 
-        merged = run_git(root, "merge", "--ff-only", ref, timeout=t)
+        merged = run_git(root, "merge", "--ff-only", "-q", ref, timeout=t)
         if merged.returncode == 0:
             result.pulled = True
             return result
@@ -1534,24 +1583,28 @@ def _uncommitted(root: Path, t: float) -> tuple[int, int | None]:
     essentially every call: the exact defect it was built to remove from
     `status --json`, rebuilt inside its replacement.
     """
-    out = run_git(root, "--no-optional-locks", "status", "--porcelain", timeout=t)
+    out = run_git(root, "--no-optional-locks", "status", "--porcelain", "-z", timeout=t)
     if out.returncode != 0:
         return 0, None
-    lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
+    # After -z each entry is `XY path`, the name as its bytes and never quoted; a rename or a copy
+    # is followed by the path it came from, which is not counted.
+    fields = iter(out.stdout.split("\0"))
+    paths = []
+    for entry in fields:
+        if len(entry) > 3:
+            paths.append(entry[3:])
+            if {"R", "C"} & set(entry[:2]):
+                next(fields, None)
     oldest: float | None = None
     now = time.time()
-    for ln in lines:
-        rel = ln[3:].strip()
-        if " -> " in rel:                       # a rename: take the destination
-            rel = rel.split(" -> ", 1)[1]
-        rel = rel.strip('"')
+    for rel in paths:
         try:
             mtime = os.path.getmtime(root / rel)
         except OSError:
             continue                            # deleted, or an unreadable path
         age = now - mtime
         oldest = age if oldest is None else max(oldest, age)
-    return len(lines), (int(oldest) if oldest is not None else None)
+    return len(paths), (int(oldest) if oldest is not None else None)
 
 
 def check(vault: Vault, *, timeout: float | None = None,

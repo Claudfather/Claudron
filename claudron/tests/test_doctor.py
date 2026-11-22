@@ -572,28 +572,46 @@ def _ignored(root: Path, names: list[str]) -> list[str]:
     return out.stdout.split()
 
 
+def _format_3_vault(root: Path) -> Path:
+    """A vault as 0.10 left it: vault format 3 and the ignore rules from before m004, committed."""
+    from claudron.vault import IDENTITY_FILE, identity_text
+
+    assert main(["init", str(root)]) == 0
+    (root / ".gitignore").write_text("# claudron vault\n**/runtime/\n**/data/events/fleet-*.jsonl\n"
+                                     "**/data/.last-tool-call\n**/data/.idle\n*.bak\n.env\n.claudron/\n")
+    (root / IDENTITY_FILE).write_text(identity_text(root.name, "_shared", fmt=3))
+    return _repo(root)
+
+
 def test_credential_names_are_ignored_in_a_new_vault_and_added_to_an_older_one(tmp_path, capsys):
     """Key files and keystores, `.env.*`, `.netrc`, registry configs, `credentials`, `secrets.*` and
     credential JSON never become history: `init` writes the rules into a new vault, and `doctor
     --fix` adds them to a vault from before them (m004)."""
-    from claudron.vault import IDENTITY_FILE, identity_text
-
     fresh = tmp_path / "fresh"
     assert main(["init", str(fresh)]) == 0
     _git(fresh, "init", "-q", "--initial-branch=main")
     assert _ignored(fresh, _CREDENTIAL_NAMES) == _CREDENTIAL_NAMES
 
-    older = tmp_path / "older"
-    assert main(["init", str(older)]) == 0
-    (older / ".gitignore").write_text("# claudron vault\n**/runtime/\n**/data/events/fleet-*.jsonl\n"
-                                      "**/data/.last-tool-call\n**/data/.idle\n*.bak\n.env\n.claudron/\n")
-    (older / IDENTITY_FILE).write_text(identity_text(older.name, "_shared", fmt=3))
-    _repo(older)
+    older = _format_3_vault(tmp_path / "older")
     assert _ignored(older, _CREDENTIAL_NAMES) == []
     capsys.readouterr()
     assert main(["--vault", str(older), "doctor", "--fix", "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["data"]["applied"] == ["m004"]
     assert _ignored(older, _CREDENTIAL_NAMES) == _CREDENTIAL_NAMES
+
+
+def test_a_format_3_vault_exits_1_with_d001_until_doctor_fix(tmp_path, capsys):
+    """The upgrade from 0.10: a vault at format 3 has m004 pending, so `doctor` exits 1 with a
+    D001 error that says to run `doctor --fix`; once that has run, `doctor` exits 0."""
+    older = _format_3_vault(tmp_path / "older")
+    capsys.readouterr()
+
+    assert main(["--vault", str(older), "doctor", "--json"]) == 1
+    errors = json.loads(capsys.readouterr().out)["errors"]
+    assert [e["code"] for e in errors] == ["D001"], errors
+    assert "m004" in errors[0]["message"] and "doctor --fix" in errors[0]["message"], errors
+    assert main(["--vault", str(older), "doctor", "--fix"]) == 0
+    assert main(["--vault", str(older), "doctor"]) == 0
 
 
 def test_notes_about_secrets_and_credentials_stay_trackable(tmp_path):
@@ -649,3 +667,21 @@ class TestATrackedNameThatIsNotUtf8:
 
         assert out.returncode == 0, out.stderr
         assert b"[D008] warning" in out.stdout and b"note-\\udcff.bak" in out.stdout, out.stdout
+
+
+def test_d008_lists_a_tracked_file_with_its_control_characters_escaped(tmp_path, capsys):
+    """A tracked file the ignore rules match whose name holds ESC or LF is listed by D008 with each
+    control character as its escape, so the list cannot move the cursor or start a line."""
+    root = tmp_path / "v"
+    assert main(["init", str(root)]) == 0
+    (root / "keys").mkdir()
+    (root / "keys" / "a\x1b[2J\nb.pem").write_text("not a real key\n")
+    _repo(root)
+    _git(root, "add", "-f", "keys/a\x1b[2J\nb.pem")
+    _git(root, "commit", "-qm", "track it")
+    capsys.readouterr()
+
+    assert main(["--vault", str(root), "doctor", "--json"]) == 0
+    d008 = [w for w in json.loads(capsys.readouterr().out)["warnings"] if w["code"] == "D008"]
+    assert d008 and "keys/a\\x1b[2J\\nb.pem" in d008[0]["message"], d008
+    assert "\x1b" not in d008[0]["message"] and "\n" not in d008[0]["message"], d008

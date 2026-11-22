@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from claudron.amend import AmendError, amend, fact_id
 from claudron.cli import main
 from claudron.runs import RunError, revert_run
 from claudron.subjects import resolve, subjects
+from claudron.sync import SyncTimeout, sync
 from claudron.vault import detect
 
 from .test_capture import _cgit, git_vault  # noqa: F401 - the fixture
@@ -331,6 +333,182 @@ def test_a_revert_that_conflicts_reverts_nothing(gvault):
         revert_run(gvault, "r1")
     assert _note(gvault) == before and len(_log(gvault)) == head
     assert _cgit(gvault.root, "status", "--porcelain", "--untracked-files=no").stdout.strip() == ""
+
+
+#: A note's path with a byte that is not UTF-8 (0xff) in its file name.
+_NOT_UTF8 = b"_shared/knowledge/run-\xff.md"
+
+
+def _write_raw(root: Path, raw: bytes, text: str) -> str:
+    """Write *text* to the file whose name is the bytes *raw*; an engine write never makes one."""
+    try:
+        with open(os.fsencode(root) + b"/" + raw, "w") as fh:
+            fh.write(text)
+    except OSError as exc:
+        pytest.skip(f"this file system refuses the name: {exc}")
+    return os.fsdecode(raw)
+
+
+@pytest.mark.parametrize("quote", [None, "false"])
+def test_a_revert_that_conflicts_on_a_name_that_is_not_utf8_reverts_nothing(gvault, quote):
+    """A revert writes its Auto-merging and CONFLICT lines on stdout with the file's bytes,
+    whatever core.quotePath says: revert-run reads them as git's messages, takes the revert back
+    and refuses, so the vault is never left mid-revert and the next sync runs."""
+    rel = _write_raw(gvault.root, _NOT_UTF8, "one\n")
+    _cgit(gvault.root, "add", rel)
+    _cgit(gvault.root, "commit", "-qm", "base")
+    _write_raw(gvault.root, _NOT_UTF8, "two\n")
+    _cgit(gvault.root, "commit", "-qam", "harvested line\n\nClaudron-Run: raw-run")
+    _write_raw(gvault.root, _NOT_UTF8, "three\n")
+    _cgit(gvault.root, "commit", "-qam", "a person edits the harvested line")
+    if quote:
+        _cgit(gvault.root, "config", "core.quotePath", quote)
+    head = _cgit(gvault.root, "rev-parse", "HEAD").stdout
+
+    with pytest.raises(RunError, match="nothing was reverted"):
+        revert_run(gvault, "raw-run")
+
+    assert _cgit(gvault.root, "rev-parse", "HEAD").stdout == head
+    assert not (gvault.root / ".git" / "REVERT_HEAD").exists()
+    assert _cgit(gvault.root, "status", "--porcelain", "--untracked-files=no").stdout.strip() == ""
+    with open(os.fsencode(gvault.root) + b"/" + _NOT_UTF8) as fh:
+        assert fh.read() == "three\n"
+    after = sync(gvault, pull=False, push=False)
+    assert after.ok and after.commit_error == "", (after.detail, after.commit_error)
+
+
+def test_a_run_whose_commit_added_a_name_that_is_not_utf8_is_reverted_under_quote_path_false(gvault):
+    """With core.quotePath=false `git commit` lists the file a revert deletes by its bytes in its
+    summary: revert-run commits through sync's own commit, which runs quietly and reads its
+    stdout as git's messages, and the run is reverted."""
+    rel = _write_raw(gvault.root, _NOT_UTF8, "harvested\n")
+    _cgit(gvault.root, "add", rel)
+    _cgit(gvault.root, "commit", "-qm", "harvested note\n\nClaudron-Run: raw-add")
+    _cgit(gvault.root, "config", "core.quotePath", "false")
+
+    result = revert_run(gvault, "raw-add")
+
+    assert result.action == "reverted" and len(result.commits) == 1, result
+    assert not os.path.exists(os.fsencode(gvault.root) + b"/" + _NOT_UTF8)
+    assert not (gvault.root / ".git" / "REVERT_HEAD").exists()
+
+
+def test_an_error_after_the_revert_starts_takes_the_revert_back(gvault, monkeypatch):
+    """Whatever stops revert-run once the revert has started (here a commit that times out),
+    `git revert --abort` runs before the error goes on: the note, the index and HEAD are as
+    they were."""
+    import claudron.sync as sync_module
+
+    amend(gvault, _path(gvault), {"op": "append_fact", "section": "Facts", "fact": "T.", "evidence": _ev()},
+          run_id="slow-run")
+    before, head = _note(gvault), len(_log(gvault))
+    real = sync_module.run_git
+
+    def commit_times_out(root, *args, **kwargs):
+        if args[:1] == ("commit",):
+            raise SyncTimeout("git commit timed out")
+        return real(root, *args, **kwargs)
+
+    monkeypatch.setattr(sync_module, "run_git", commit_times_out)
+    with pytest.raises(SyncTimeout):
+        revert_run(gvault, "slow-run")
+
+    assert _note(gvault) == before and len(_log(gvault)) == head
+    assert not (gvault.root / ".git" / "REVERT_HEAD").exists()
+    assert _cgit(gvault.root, "status", "--porcelain", "--untracked-files=no").stdout.strip() == ""
+
+
+#: The note a person's own revert or cherry-pick stops on, beside the run's commit.
+_PICKED = "_shared/knowledge/picked.md"
+
+
+def _picked_run(gvault) -> str:
+    """The run "picked-run" changes the note from one to two; returns its commit."""
+    (gvault.root / _PICKED).write_text("one\n")
+    _cgit(gvault.root, "add", _PICKED)
+    _cgit(gvault.root, "commit", "-qm", "base")
+    (gvault.root / _PICKED).write_text("two\n")
+    _cgit(gvault.root, "commit", "-qam", "harvested line\n\nClaudron-Run: picked-run")
+    return _cgit(gvault.root, "rev-parse", "HEAD").stdout.strip()
+
+
+def _side_branch(gvault, run: str) -> None:
+    """Two commits on a branch from before the run: an edit of the run's line, then a new note."""
+    _cgit(gvault.root, "checkout", "-q", "-b", "side", f"{run}~1")
+    (gvault.root / _PICKED).write_text("from a side branch\n")
+    _cgit(gvault.root, "commit", "-qam", "a side edit")
+    (gvault.root / "_shared" / "knowledge" / "side.md").write_text("side\n")
+    _cgit(gvault.root, "add", "_shared/knowledge/side.md")
+    _cgit(gvault.root, "commit", "-qm", "a side note")
+    _cgit(gvault.root, "checkout", "-q", "main")
+
+
+def _stop_a_revert(gvault, run: str) -> None:
+    """A person edits the run's line, then reverts the run's commit: git stops on the conflict,
+    and the person's half-done resolution is in the tree."""
+    (gvault.root / _PICKED).write_text("three\n")
+    _cgit(gvault.root, "commit", "-qam", "a person edits the harvested line")
+    assert _cgit(gvault.root, "revert", "--no-edit", run).returncode != 0
+    (gvault.root / _PICKED).write_text("half resolved by a person\n")
+
+
+def _stop_a_cherry_pick(gvault, run: str) -> None:
+    """A person cherry-picks a side edit of the run's line: git stops on the conflict, and the
+    person's half-done resolution is in the tree."""
+    _side_branch(gvault, run)
+    assert _cgit(gvault.root, "cherry-pick", "side~1").returncode != 0
+    (gvault.root / _PICKED).write_text("half resolved by a person\n")
+
+
+def _stop_a_sequence(gvault, run: str) -> None:
+    """A person cherry-picks two side commits, resolves the first one's conflict and commits it
+    by hand: git keeps the rest of the sequence to do, with no CHERRY_PICK_HEAD."""
+    _side_branch(gvault, run)
+    assert _cgit(gvault.root, "cherry-pick", "side~1", "side").returncode != 0
+    (gvault.root / _PICKED).write_text("two, and from a side branch\n")
+    _cgit(gvault.root, "add", _PICKED)
+    _cgit(gvault.root, "commit", "-q", "--no-edit")
+
+
+#: The file or directory git keeps for a stopped revert, cherry-pick or sequence of them.
+_PICK_MARKS = ("REVERT_HEAD", "CHERRY_PICK_HEAD", "sequencer")
+
+
+def _person_state(root: Path) -> dict[str, str]:
+    """A person's stopped revert or cherry-pick: what git keeps for it, HEAD, the index's entries
+    with their stages, and the note in the tree."""
+    git_dir = root / ".git"
+    state = {}
+    for mark in _PICK_MARKS:
+        path = git_dir / mark
+        files = sorted(path.rglob("*")) if path.is_dir() else [path]
+        state.update({p.relative_to(git_dir).as_posix(): p.read_text() for p in files if p.is_file()})
+    state["HEAD"] = _cgit(root, "rev-parse", "HEAD").stdout
+    state["index"] = _cgit(root, "ls-files", "--stage").stdout
+    state["tree"] = (root / _PICKED).read_text()
+    return state
+
+
+@pytest.mark.parametrize(("stop", "mark", "why"), [
+    (_stop_a_revert, "REVERT_HEAD", "a revert is stopped part-way"),
+    (_stop_a_cherry_pick, "CHERRY_PICK_HEAD", "a cherry-pick is stopped part-way"),
+    (_stop_a_sequence, "sequencer", "a revert or a cherry-pick of several commits is stopped part-way"),
+], ids=["revert", "cherry-pick", "sequence"])
+def test_a_revert_or_cherry_pick_a_person_left_stopped_is_refused_and_kept(gvault, stop, mark, why):
+    """revert-run refuses before its revert starts where a person's revert or cherry-pick is
+    stopped part-way: its own revert would fail on that state, and the cleanup's
+    `git revert --abort` would take the state, the index and the half-done resolution with it.
+    Nothing is reverted, and all of it stays exactly as it was."""
+    run = _picked_run(gvault)
+    stop(gvault, run)
+    before = _person_state(gvault.root)
+    assert {m for m in _PICK_MARKS if (gvault.root / ".git" / m).exists()} == {mark}
+
+    with pytest.raises(RunError) as refused:
+        revert_run(gvault, "picked-run")
+
+    assert _person_state(gvault.root) == before
+    assert f"refusing to revert: {why}" in str(refused.value)
 
 
 def test_revert_run_works_without_a_git_identity(gvault, monkeypatch):

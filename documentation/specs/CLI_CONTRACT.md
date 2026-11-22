@@ -438,7 +438,9 @@ gate against this block** (register rule R3).
 git, a stalled network, an exception class nobody anticipated — the hook emits
 nothing on stdout, appends a line to `.claudron/hooks.log`, and exits **0**.
 This is why hook stdout can be injected verbatim: the only thing that ever
-reaches it is a brief or the compact-start capture instruction.
+reaches it is a brief or the compact-start capture instruction. A control
+character in an entry is written as its escape (`\x1b`, `\r`, `\n`), so
+each entry is one line of the log.
 
 Fail-open alone does not save a *stalled* call, so the two hooks that touch the
 network use bounded Git subprocesses (Claude defaults below; Codex
@@ -580,6 +582,14 @@ vendor source; support for unobserved events is not promised by this snippet.
   notes go back out of the index and stay in `left_behind`. `sync` prints it on
   stderr as `commit failed: …` (the hook logs it too). It is not `detail`
   either, and is `""` otherwise.
+  Every line `sync` writes on stderr (`detail`, `commit failed: …`,
+  `left behind: …`, the conflict lines) writes a control character (ESC,
+  CR, LF and the rest of Unicode category Cc, and the line and paragraph
+  separators) as its escape (`\x1b`, `\r`, `\n`, `\u2028`), in a file name
+  and in git's own message alike, so a name cannot move the cursor or start
+  a line of its own. A file `sync` lists in `detail` or `commit_error` is
+  escaped the same way in `--json`, and `data.left_behind` and
+  `data.quarantined` hold each name exactly.
 - `doctor [--fix] [--settings PATH]…` — **the vault's health-and-migration door** (#190). Diagnoses
   the vault against *this* engine's rules and names what `--fix` would change.
   - **Read-only unless `--fix` is passed** — no file, index or journal is

@@ -36,7 +36,7 @@ from pathlib import Path
 
 from . import ops
 from .session import derive_project, recall, render_brief
-from .sync import SyncError, left_behind_line, pull_ff_only, sync
+from .sync import SyncError, escape_controls, left_behind_line, pull_ff_only, sync
 from .vault import Vault, detect
 
 SESSION_START_PULL_TIMEOUT = 2.0  # seconds — the SessionStart latency budget
@@ -50,7 +50,9 @@ def _log(vault: Vault | None, event: str, message: str) -> None:
     fail-open applies to the logger too). What the file's encoding cannot
     hold is written as a backslash escape: a file name that is not UTF-8
     arrives as a lone surrogate (byte 0xff is U+DCFF) and is written as
-    ``\\udcff``."""
+    ``\\udcff``. A control character in the message (an LF in a file name,
+    say) is written as its escape too (:func:`~claudron.sync.escape_controls`),
+    so each entry is one line."""
     try:
         if vault is not None:
             log_dir = vault.root / ".claudron"
@@ -60,7 +62,7 @@ def _log(vault: Vault | None, event: str, message: str) -> None:
             log_path = Path(tempfile.gettempdir()) / "claudron-hooks.log"
         stamp = datetime.now().isoformat(timespec="seconds")
         with log_path.open("a", errors="backslashreplace") as fh:
-            fh.write(f"{stamp} [{event}] {message}\n")
+            fh.write(f"{stamp} [{event}] {escape_controls(message)}\n")
     except OSError:
         pass
 

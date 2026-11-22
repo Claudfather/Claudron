@@ -138,7 +138,7 @@ class TestSyncRoundTrip:
         monkeypatch.setattr(sync_mod, "_has_git_identity", lambda root: False)
         monkeypatch.setattr(
             sync_mod.subprocess, "run",
-            lambda argv, **kw: seen.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""),
+            lambda argv, **kw: seen.append(argv) or subprocess.CompletedProcess(argv, 0, b"", b""),
         )
         for args in (("commit", "-m", "x"), ("rebase", "abc123"),
                      ("pull", "--rebase"), ("fetch", "origin"), ("merge", "--ff-only", "x")):
@@ -152,6 +152,21 @@ class TestSyncRoundTrip:
             by_cmd[cmd] = "user.name=Claudron" in argv
         assert by_cmd == {"commit": True, "rebase": True, "pull": True,
                           "fetch": False, "merge": False}, by_cmd
+
+    def test_the_git_config_reads_take_any_byte_on_stderr(self, tmp_path, monkeypatch):
+        """The commit-identity check and the default owner read only what `git config` writes
+        on stdout, so a byte that is not UTF-8 on its stderr changes neither."""
+        from claudron.cli import _derive_owner
+        from claudron.sync import _has_git_identity
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "git").write_text("#!/bin/sh\nprintf 'A Person\\n'\nprintf 'warning: \\377\\n' >&2\n")
+        (bin_dir / "git").chmod(0o755)
+        monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+
+        assert _has_git_identity(tmp_path)
+        assert _derive_owner(object()) == "A Person"  # no --owner
 
     def test_sync_json_envelope(self, synced_pair, capsys):
         a, _ = synced_pair
@@ -230,6 +245,37 @@ class TestConflictQuarantine:
     another machine) — detection is stateless, on the file's content."""
 
     NOTE = "_shared/knowledge/shared-note.md"
+
+    def test_a_pulled_note_whose_name_is_not_ascii_is_quarantined_too(self, synced_pair):
+        """The scan after a pull reads what the pull changed with -z, where git does not quote a
+        name that is not ASCII, so such a note that lands with markers is quarantined."""
+        a, b = synced_pair
+        rel = "_shared/knowledge/caf\xe9.md"
+        (a / rel).write_text("---\ntitle: Clash\ntype: knowledge\nstatus: current\nowner: t\n"
+                             "created: 2026-07-01\nupdated: 2026-07-01\n---\n\n# Clash\n\n"
+                             "<<<<<<< HEAD\nA's truth.\n=======\nB's truth.\n>>>>>>> theirs\n")
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "half-resolved")
+        _git(a, "push", "origin", "HEAD")
+
+        result = sync(detect(b), push=False)
+
+        assert result.ok and result.pulled, result.detail
+        assert result.quarantined == [rel], result.quarantined
+
+    def test_a_quarantined_path_prints_with_its_control_characters_escaped(self, vault_dir, capsys,
+                                                                            monkeypatch):
+        """Each conflict line prints its path through the escape the other sync lines use."""
+        from claudron import cli as cli_mod
+        from claudron.sync import SyncResult
+
+        monkeypatch.setattr(cli_mod, "sync", lambda *a, **kw: SyncResult(
+            pulled=True, quarantined=["_shared/knowledge/clash-\x1b[2J.md"]))
+
+        assert main(["--vault", str(vault_dir), "sync"]) == 0
+        err = capsys.readouterr().err
+        assert "quarantined until resolved: _shared/knowledge/clash-\\x1b[2J.md" in err, err
+        assert "\x1b" not in err
 
     def _make_conflict(self, synced_pair, capsys) -> tuple[Path, Path]:
         a, b = synced_pair
@@ -2366,6 +2412,42 @@ class TestANameReadsAsItsBytes:
         assert "push refused" in result.detail and rel in result.detail, result.detail
         assert raw not in _remote_raw(a)
 
+    def test_a_credential_shaped_one_ending_in_a_carriage_return_is_refused(self, synced_pair):
+        """A file written from a list with CRLF line ends gets a CR at the end of its name: the
+        push path reads each name without a CR or LF at either end, so `id_rsa` and a CR is
+        refused as `id_rsa` is."""
+        a, _ = synced_pair
+        raw = b"keys/id_rsa\r"
+        (a / "keys").mkdir()
+        rel = self._write(a, raw, "not a real key\n")
+        _git(a, "add", "-f", rel)
+        _git(a, "commit", "-m", "committed by hand")
+
+        result = sync(detect(a))
+
+        assert not result.ok and not result.pushed
+        assert "push refused" in result.detail and "keys/id_rsa" in result.detail, result.detail
+        assert raw not in _remote_raw(a)
+
+    @pytest.mark.parametrize("raw", [b"keys/id_rsa ", b"keys/ id_rsa", b"keys/id_rsa\t", b"keys/\rid_rsa",
+                                     b"keys/id_rsa\xc2\xa0"],
+                             ids=["space-after", "space-before", "tab-after", "cr-before", "nbsp-after"])
+    def test_a_credential_shaped_one_with_whitespace_at_either_end_is_refused(self, synced_pair, raw):
+        """The push path reads each file name without whitespace at either end (a space, a tab,
+        a CR, a no-break space), so `id_rsa` with one before or after it is refused as `id_rsa`
+        is, and the refusal lists the file with a control character in it as its escape."""
+        a, _ = synced_pair
+        (a / "keys").mkdir()
+        rel = self._write(a, raw, "not a real key\n")
+        _git(a, "add", "-f", rel)
+        _git(a, "commit", "-m", "committed by hand")
+
+        result = sync(detect(a))
+
+        assert not result.ok and not result.pushed
+        assert "push refused" in result.detail and sync_mod.name_paths([rel]) in result.detail, result.detail
+        assert raw not in _remote_raw(a)
+
     def test_stderr_the_json_envelope_and_the_hook_log_print_it(self, synced_pair):
         """PYTHONIOENCODING makes stdout strict, as a UTF-8 locale does. sync prints names on
         stderr only, which Python writes with backslashreplace whatever the locale."""
@@ -2388,6 +2470,195 @@ class TestANameReadsAsItsBytes:
         assert hook_session_end(detect(a), {}) == 0
         log = (a / ".claudron" / "hooks.log").read_text()
         assert "left behind: 1 file(s)" in log and "by-hand-\\udcff.md" in log, log
+
+    def test_a_git_message_with_one_reads_and_stdout_is_still_strict(self, tmp_path):
+        """Without -z, git's stderr reads whatever bytes a file name holds (with core.autocrlf,
+        `add` warns that the file's line ends will change, by its name); its stdout is still read
+        strictly."""
+        from claudron.sync import run_git
+
+        root = tmp_path / "r"
+        _git(tmp_path, "init", "--initial-branch=main", str(root))
+        _git(root, "config", "core.autocrlf", "true")
+        rel = self._write(root, b"by-hand-\xff.md")
+
+        added = run_git(root, "add", "--", rel)
+
+        assert added.returncode == 0, added.stderr
+        assert "by-hand-\udcff.md" in added.stderr and "CRLF" in added.stderr, added.stderr
+        with pytest.raises(UnicodeDecodeError):
+            run_git(root, "-c", "core.quotePath=false", "diff", "--cached", "--name-only")
+
+    @pytest.mark.parametrize("pull", ["sync", "ff-only"])
+    def test_a_pulled_one_reads_under_quote_path_false(self, synced_pair, pull):
+        """With core.quotePath=false git writes a file name as its bytes in a fast-forward's
+        summary too: the pull runs the merge quietly and reads what it changed with -z."""
+        a, b = synced_pair
+        _git(b, "config", "core.quotePath", "false")
+        raw = b"_shared/knowledge/by-hand-\xff.md"
+        rel = self._write(a, raw)
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "committed by hand")
+        _git(a, "push", "origin", "HEAD")
+
+        result = sync(detect(b), push=False) if pull == "sync" else pull_ff_only(detect(b))
+
+        assert result.ok and result.pulled, result.detail
+        assert os.path.exists(os.fsencode(b) + b"/" + raw)
+
+    def test_a_conflict_on_one_is_reported_with_its_exact_name(self, synced_pair):
+        """A rebase that conflicts on a file whose name is not UTF-8 writes the name as its bytes
+        in its Auto-merging and CONFLICT lines on stdout, -q or not: sync reads those lines as
+        messages and the unmerged list with -z, and reports the conflict by the exact name while
+        the live copy stays as it was."""
+        a, b = synced_pair
+        raw = b"_shared/knowledge/by-hand-\xff.md"
+        rel = self._write(a, raw, "one\n")
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "base")
+        _git(a, "push", "origin", "HEAD")
+        _git(b, "pull", "-q", "origin", "main")
+        with open(os.fsencode(a) + b"/" + raw, "w") as fh:
+            fh.write("from A\n")
+        _git(a, "commit", "-am", "A's line")
+        _git(a, "push", "origin", "HEAD")
+        with open(os.fsencode(b) + b"/" + raw, "w") as fh:
+            fh.write("from B\n")
+        _git(b, "commit", "-am", "B's line")
+
+        result = sync(detect(b), push=False)
+
+        assert not result.ok and result.quarantined == [rel], (result.detail, result.quarantined)
+        assert "integration conflicted" in result.detail, result.detail
+        with open(os.fsencode(b) + b"/" + raw) as fh:
+            assert fh.read() == "from B\n"
+
+    def test_the_killed_rebase_check_reads_a_conflicted_one_under_quote_path_false(self, tmp_path):
+        """With core.quotePath=false git writes an unmerged file's name as its bytes: the check
+        that tells a killed rebase from a conflicted one reads the unmerged list with -z, so a
+        conflict still reads as one."""
+        from claudron.sync import _killed_rebase
+
+        root = tmp_path / "r"
+        _git(tmp_path, "init", "--initial-branch=main", str(root))
+        raw = b"n-\xff.md"
+        rel = self._write(root, raw, "one\n")
+        _git(root, "add", rel)
+        _git(root, "commit", "-m", "base")
+        _git(root, "checkout", "-q", "-b", "other")
+        with open(os.fsencode(root) + b"/" + raw, "w") as fh:
+            fh.write("two\n")
+        _git(root, "commit", "-am", "other")
+        _git(root, "checkout", "-q", "main")
+        with open(os.fsencode(root) + b"/" + raw, "w") as fh:
+            fh.write("three\n")
+        _git(root, "commit", "-am", "main")
+        merged = subprocess.run(["git", "-C", str(root), "merge", "other"], capture_output=True,
+                                env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                     "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        assert merged.returncode == 1, merged
+        (root / ".git" / "rebase-merge").mkdir()  # a rebase's state, stopped on no commit
+        _git(root, "config", "core.quotePath", "false")
+
+        assert _killed_rebase(root, root / ".git", 10.0) is False
+
+    @pytest.mark.parametrize("quote", [None, "false"])
+    def test_a_stopped_revert_on_one_leaves_the_commit_failed_not_raised(self, synced_pair, quote):
+        """`git commit` writes a `U` line with the file's bytes on stdout for each unmerged file,
+        whatever core.quotePath says. sync reads a commit's stdout as git's messages, so in a
+        vault where a revert stopped on a conflict (a state sync does not refuse) its commit
+        fails with git's message, and the revert stays as the person left it."""
+        a, _ = synced_pair
+        raw = b"_shared/knowledge/by-hand-\xff.md"
+        rel = self._write(a, raw, "one\n")
+        _git(a, "add", rel)
+        _git(a, "commit", "-m", "one")
+        for text in ("two\n", "three\n"):
+            with open(os.fsencode(a) + b"/" + raw, "w") as fh:
+                fh.write(text)
+            _git(a, "commit", "-am", text.strip())
+        stopped = subprocess.run(["git", "-C", str(a), "revert", "--no-edit", "HEAD~1"], capture_output=True,
+                                 env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                                      "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+        assert stopped.returncode != 0 and (a / ".git" / "REVERT_HEAD").exists(), stopped
+        if quote:
+            _git(a, "config", "core.quotePath", quote)
+        with open(os.fsencode(a) + b"/" + raw, "rb") as fh:
+            before = fh.read()
+
+        result = sync(detect(a), pull=False, push=False)
+
+        assert not result.committed and "unmerged" in result.commit_error, result.commit_error
+        assert (a / ".git" / "REVERT_HEAD").exists()
+        with open(os.fsencode(a) + b"/" + raw, "rb") as fh:
+            assert fh.read() == before
+
+    @pytest.mark.parametrize("door", ["commit_paths", "commit_staged"])
+    def test_a_commit_with_nothing_to_commit_reads_an_untracked_one(self, tmp_path, door):
+        """With nothing to commit, `git commit -q` still writes the status block on stdout, and
+        under core.quotePath=false it lists an untracked file by its bytes: the write door's
+        commit and sync's fail with git's message rather than raise."""
+        root = tmp_path / "r"
+        _git(tmp_path, "init", "--initial-branch=main", str(root))
+        (root / "seed.md").write_text("seed\n")
+        _git(root, "add", "seed.md")
+        _git(root, "commit", "-m", "seed")
+        self._write(root, b"by-hand-\xff.md")
+        _git(root, "config", "core.quotePath", "false")
+        head = _git(root, "rev-parse", "HEAD").stdout
+
+        outcome = (sync_mod.commit_paths(root, [root / "seed.md"], "door commit") if door == "commit_paths"
+                   else sync_mod.commit_staged(root, "sync commit"))
+
+        assert not outcome.ok and outcome.step == "commit", outcome.error
+        assert _git(root, "rev-parse", "HEAD").stdout == head
+
+    def test_the_check_counts_and_ages_one_by_its_bytes(self, synced_pair):
+        """The check reads the uncommitted list with -z: a file whose name is not ASCII is counted
+        and aged like any other, and one that is not UTF-8 reads under core.quotePath=false too."""
+        a, _ = synced_pair
+        for raw in (b"_shared/knowledge/caf\xc3\xa9.md", b"_shared/knowledge/by-hand-\xff.md"):
+            self._write(a, raw)
+        for quote in ("true", "false"):
+            _git(a, "config", "core.quotePath", quote)
+            r = check(detect(a))
+            assert r.uncommitted == 2 and r.uncommitted_oldest_age_s is not None, (quote, r)
+
+    def test_a_control_character_is_written_as_its_escape(self):
+        """ESC, CR, LF, TAB, DEL, a C1 character and the Unicode line separator each print as
+        their escape; every other character, a lone surrogate included, is kept as it is."""
+        from claudron.sync import escape_controls
+
+        assert escape_controls("a\x1b[2Jb\rc\nd\te\x7ff\x85g\u2028h") == (
+            "a\\x1b[2Jb\\rc\\nd\\te\\x7ff\\x85g\\u2028h")
+        assert escape_controls("caf\u00e9 \udcff.md") == "caf\u00e9 \udcff.md"
+
+    def test_a_control_character_in_one_prints_escaped_and_left_behind_keeps_it(self, synced_pair, capsys):
+        """ESC, CR and LF in a file name print as \\x1b, \\r and \\n on stderr and in the hook
+        log, so a name cannot move the cursor or start a line of its own; left_behind keeps
+        each name exactly."""
+        from claudron.hooks import hook_session_end
+
+        a, _ = synced_pair
+        rels = sorted(self._write(a, raw) for raw in (b"_shared/knowledge/by-hand-\x1b[2J.md",
+                                                       b"_shared/knowledge/by-hand-\r.md",
+                                                       b"_shared/knowledge/by-hand-\nx.md"))
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 0
+
+        err = capsys.readouterr().err
+        assert "\x1b" not in err and "\r" not in err, err
+        line = [row for row in err.split("\n") if row.startswith("left behind: 3 file(s)")]
+        assert len(line) == 1, err
+        for shown in ("by-hand-\\x1b[2J.md", "by-hand-\\r.md", "by-hand-\\nx.md"):
+            assert shown in line[0], line
+        assert sync(detect(a)).left_behind == rels
+
+        assert hook_session_end(detect(a), {}) == 0
+        log = (a / ".claudron" / "hooks.log").read_bytes()
+        assert log.count(b"\n") == 1 and b"\r" not in log and b"\x1b" not in log, log
+        assert b"by-hand-\\nx.md" in log, log
 
 
 class TestSyncCommitsOnlyWhatTheDoorStaged:
@@ -2532,6 +2803,22 @@ class TestSyncCommitsOnlyWhatTheDoorStaged:
         assert _git(a, "diff", "--cached", "--name-only").stdout.split() == ["_shared/knowledge/door-note.md"]
         hook_session_end(detect(a), {})
         assert "commit failed: pre-commit says no" in (a / ".claudron" / "hooks.log").read_text()
+
+    def test_git_s_own_message_prints_its_control_characters_escaped(self, synced_pair, capsys):
+        """A pre-commit hook writes what it likes into git's message: `commit failed:` prints a
+        control character in it as its escape too."""
+        a, _ = synced_pair
+        hook = a / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nprintf 'pre-commit says \\033[2Jno\\n' >&2\nexit 1\n")
+        hook.chmod(0o755)
+        assert main(["--vault", str(a), "capture", "--type", "knowledge", "--title", "Door Note",
+                     "--body", "Written through the door.", "--owner", "t", "--no-commit"]) == 0
+        capsys.readouterr()
+
+        assert main(["--vault", str(a), "sync"]) == 0
+
+        err = capsys.readouterr().err
+        assert "commit failed: pre-commit says \\x1b[2Jno" in err and "\x1b" not in err, err
 
 
 def _opt_in(clone: Path, text: str) -> None:
@@ -2778,6 +3065,44 @@ class TestTheVaultsOptIn:
         assert result.ok and result.left_behind_count == 0, result.detail
         assert b"crew/\xff.md" in _remote_raw(a)
         assert "docs/plan.md" in _remote_files(a)
+
+    def test_a_note_whose_name_is_not_utf8_travels_when_git_warns_about_its_line_ends(self, synced_pair):
+        """With core.autocrlf, `git add` warns on stderr that the note's line ends will change, by
+        its file name's bytes: sync reads the warning, and the note travels."""
+        a, _ = synced_pair
+        _git(a, "config", "core.autocrlf", "true")
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        try:
+            fd = os.open(os.fsencode(a / "crew") + b"/\xff.md", os.O_WRONLY | os.O_CREAT, 0o644)
+        except OSError as exc:
+            pytest.skip(f"this file system refuses the name: {exc}")
+        os.write(fd, _BY_HAND.encode())
+        os.close(fd)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert result.ok and result.left_behind_count == 0, result.detail
+        assert b"crew/\xff.md" in _remote_raw(a)
+
+    def test_a_note_whose_name_is_not_utf8_travels_under_quote_path_false(self, synced_pair):
+        """With core.quotePath=false a commit's summary writes the file's name as its bytes: sync
+        commits quietly, and the note travels."""
+        a, _ = synced_pair
+        _git(a, "config", "core.quotePath", "false")
+        _opt_in(a, "paths: [crew]\n")
+        (a / "crew").mkdir()
+        try:
+            fd = os.open(os.fsencode(a / "crew") + b"/\xff.md", os.O_WRONLY | os.O_CREAT, 0o644)
+        except OSError as exc:
+            pytest.skip(f"this file system refuses the name: {exc}")
+        os.write(fd, _BY_HAND.encode())
+        os.close(fd)
+
+        result = sync(detect(a), pull=False, push=True)
+
+        assert result.ok and result.pushed and result.left_behind_count == 0, result.detail
+        assert b"crew/\xff.md" in _remote_raw(a)
 
     def test_a_note_whose_name_holds_a_carriage_return_travels_with_the_others(self, synced_pair):
         a, _ = synced_pair
