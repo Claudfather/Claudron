@@ -289,7 +289,13 @@ contended: `R-capture-prompt`.
   the discovery hint. The fixed capture instruction is a separate role and
   is appended after the recall brief on the first compact start only. It degrades by *dropping notes*, never by truncating one
   mid-thought. The constant is the contract; its value is tuning and may change
-  without a breaking-change entry.
+  without a breaking-change entry. It is counted in `schema.count_tokens`'s
+  unit (UTF-8 bytes over 2.5, rounded up; the `CONVENTIONS.md` budget,
+  `SCHEMA.md` §W105, and the about-me note's use the same unit), on the
+  brief as it is injected: its blank lines and line breaks count,
+  and the Unverified block's line counting what it leaves out does too. A
+  `--limit` of N is N notes per tier: a project's own notes reach the brief
+  through its tier or not at all.
   - **Stated limit.** The cap holds given a `CONVENTIONS.md` within its own
     budget (`SCHEMA.md` §W105). That block is the always-loaded layer and is
     injected unconditionally — past W105's ceiling it can carry the brief over
@@ -889,7 +895,10 @@ vendor source; support for unobserved events is not promised by this snippet.
     (exit 2). **A consumer must not fold provenance into a body
     line** — the first substantive body line is what the recall brief shows as
     a note's summary, so a `Source:` line there both spends the summary and
-    couples the consumer to how that summary is picked.
+    couples the consumer to how that summary is picked. A summary is at most
+    140 characters: a longer line is cut after its last whole word that fits
+    and ends in `…`, and one word longer than that is cut inside it, marked
+    the same.
   - **`tags` takes one grammar on both spellings.** The `--tags` flag and the
     `tags` key of the `--stdin` JSON normalize identically: a string is
     comma-separated (split, whitespace-stripped, empty segments dropped); a

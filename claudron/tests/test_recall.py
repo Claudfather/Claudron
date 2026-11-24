@@ -464,11 +464,18 @@ class TestPerTierLimit:
         assert "Webapp guide" in [n["title"] for n in notes]  # the shared pass still runs
 
     def test_a_shared_match_ranked_below_the_projects_notes_still_comes(self, vault_dir: Path):
-        """The overfetch makes room for the project's notes it now skips."""
+        """The overfetch makes room for the project's notes it now skips. The guide scores as each
+        of them does (on its title alone), and at an equal score a project's note ranks first, so
+        all nine come before it: a window of limit * 2 would hold none but theirs."""
+        from claudron import lookup
+
         for n in range(9):
             _note(vault_dir / "projects" / "webapp" / f"w{n}.md", f"Webapp note {n}", f"2026-09-0{n + 1}")
-        _note(vault_dir / "_shared" / "knowledge" / "webapp-guide.md", "Webapp guide")
-        notes = recall(detect(vault_dir), project="webapp", limit=2)["notes"]
+        _note(vault_dir / "_shared" / "knowledge" / "guide.md", "Webapp guide")
+        vault = detect(vault_dir)
+        ranked = [r.doc.title for r in lookup("webapp", vault, limit=20, tier_b=False)]
+        assert ranked.index("Webapp guide") == 9, ranked  # the premise: below all nine
+        notes = recall(vault, project="webapp", limit=2)["notes"]
         assert [n["tier"] for n in notes].count("project:webapp") == 2
         assert "Webapp guide" in [n["title"] for n in notes]
 

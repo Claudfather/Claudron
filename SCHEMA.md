@@ -272,7 +272,9 @@ deliberately reversing issue #4.
 
 **CONVENTIONS.md** is special: injected unconditionally into session briefs
 (E2), so its body is budgeted at **≤120 tokens** (W105 above 160 — 33%
-grace). Everything else earns injection through relevance.
+grace). A token here is the engine's proxy, `schema.count_tokens`: the
+text's UTF-8 bytes over 2.5, rounded up, so 120 tokens is 300 bytes of body
+and 160 is 400. Everything else earns injection through relevance.
 
 **Tenancy, scope, consumption, and promotion** are specified in
 `VAULT-STRUCTURE.md`, this section's directory sibling.
