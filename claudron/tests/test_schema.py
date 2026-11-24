@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 from pathlib import Path
@@ -185,6 +186,38 @@ class TestConventionsTemplate:
         )
 
         assert count_tokens(CONVENTIONS_TEMPLATE) <= CONVENTIONS_BUDGET
+
+
+class TestCountTokens:
+    """The proxy every budget counts with (#172): UTF-8 bytes over BYTES_PER_TOKEN, rounded up."""
+
+    def test_bytes_over_the_ratio_rounded_up(self):
+        from claudron.schema import BYTES_PER_TOKEN, count_tokens
+
+        assert count_tokens("") == 0
+        assert count_tokens("a") == 1
+        for n in (2, 3, 5, 99, 100, 2250):
+            assert count_tokens("a" * n) == math.ceil(n / BYTES_PER_TOKEN), n
+
+    def test_a_vault_path_is_not_one_token(self):
+        """The bug: a whitespace word count read a vault path in backticks, tens of tokens, as one."""
+        from claudron.schema import count_tokens
+
+        path = "`projects/payments-service/payments-reconciliation-edge-case-10.md`"
+        assert len(path.split()) == 1
+        assert count_tokens(path) > 20
+
+    def test_a_character_outside_ascii_counts_its_bytes(self):
+        """Japanese runs near a token a character: its three bytes count it, where characters would not."""
+        from claudron.schema import count_tokens
+
+        assert count_tokens("\u65e5" * 10) == count_tokens("a" * 30)
+
+    def test_a_lone_surrogate_counts_its_bytes_and_never_raises(self):
+        """A file name's undecodable byte reaches a vault path as a lone surrogate."""
+        from claudron.schema import count_tokens
+
+        assert count_tokens("a\udcff") == count_tokens("a" * 4)
 
 
 class TestParseNote:
