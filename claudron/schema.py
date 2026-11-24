@@ -12,6 +12,7 @@ vault.py / knowledge.py / cli.py can all build on it.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
@@ -328,7 +329,7 @@ def set_frontmatter_field(text: str, field: str, value: str) -> str:
 REQUIRED_ALWAYS = ("title", "type", "created")
 DATE_FIELDS = ("created", "updated", "expires", "last_verified")
 
-# CONVENTIONS.md body budget (whitespace-token proxy; SCHEMA.md §taxonomy).
+# CONVENTIONS.md body budget (in count_tokens's unit; SCHEMA.md §taxonomy).
 CONVENTIONS_BUDGET = 120
 CONVENTIONS_BUDGET_HARD = 160
 
@@ -392,11 +393,21 @@ def has_conflict_markers(text: str) -> bool:
     return bool(_MARKER_OPEN_RE.search(text) and _MARKER_CLOSE_RE.search(text))
 
 
+#: The budgets' unit (#172): UTF-8 bytes per token. Measured against Claude Code's own token
+#: counts: 2.55 to 2.6 bytes a token on recall briefs, CONVENTIONS.md and English prose, 3.1 on
+#: Japanese. 2.5 is under all of them, so the proxy counts a little high, never low.
+BYTES_PER_TOKEN = 2.5
+
+
 def count_tokens(text: str) -> int:
-    """The whitespace-token proxy every budget uses (W105's conventions
-    budget here; the session brief budget in session.py). One home, so the
-    proxies can't diverge."""
-    return len(text.split())
+    """The token proxy every budget uses: W105's CONVENTIONS.md budget here; the session brief's
+    and the about-me note's in session.py. One home, so the proxies can't diverge.
+
+    UTF-8 bytes over :data:`BYTES_PER_TOKEN`, rounded up: for ASCII text, its characters. Bytes,
+    not characters, because a character outside ASCII costs more tokens and its bytes count that.
+    A whitespace word count read a vault path in backticks, tens of tokens, as one (#172). A lone
+    surrogate (a file name's undecodable byte) counts as its three bytes, never an error."""
+    return math.ceil(len(text.encode("utf-8", "surrogatepass")) / BYTES_PER_TOKEN)
 
 # Frontmatter keys that mark a note as skill-shaped (W103) — SKILL.md
 # artifacts, not referential markers. Deliberately narrow: imperative
@@ -664,7 +675,7 @@ def validate_note(
 
 
 def check_conventions(body: str, *, path: str = "") -> list[Finding]:
-    """W105: CONVENTIONS.md body budget (whitespace-token proxy)."""
+    """W105: CONVENTIONS.md body budget (in count_tokens's unit)."""
     count = count_tokens(body)
     if count > CONVENTIONS_BUDGET_HARD:
         return [

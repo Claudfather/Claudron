@@ -20,7 +20,8 @@ from .knowledge import KnowledgeDoc, fenced_lines, lookup, walk_knowledge_tier
 from .schema import MATURITY_VALUES, count_tokens, has_conflict_markers, is_reviewed, parse_note, vocab_value
 from .vault import PERSONAL_HUB, Vault
 
-# Whole-brief hard cap (count_tokens proxy, same as
+# Whole-brief hard cap, in schema.count_tokens's unit and checked on the brief as it is
+# injected, its line breaks included (count_tokens proxy, same as
 # schema.CONVENTIONS_BUDGET — which caps just the conventions component at
 # ≤120 soft / ≤160 hard; this caps the whole brief). Conventions first, then project notes,
 # then shared matches until the budget is spent — the brief competes with
@@ -45,6 +46,8 @@ BRIEF_DISCOVERY_HINT = (
 RECALL_ABSTENTION_FLOOR = 50
 
 _SUMMARY_CHARS = 140
+#: The end of a summary cut to fit, so a cut line never passes for the whole one (#172).
+SUMMARY_CUT_MARK = "\u2026"
 
 # The Unverified block (#200 §1): every note recall finds that nobody has
 # reviewed (a draft, an unrated note, a note from the web or a session
@@ -71,12 +74,17 @@ def derive_project(cwd: Path | None = None) -> str:
 
 
 def _summary(body: str) -> str:
-    """First substantive body line, truncated — the one-line summary the
-    brief shows per note."""
+    """First substantive body line, at most ``_SUMMARY_CHARS`` long: the one-line summary the
+    brief shows per note. A longer line is cut after the last whole word that fits and ends in
+    :data:`SUMMARY_CUT_MARK`; one word longer than that is cut inside it, marked the same."""
     for line in body.splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
-            return line[:_SUMMARY_CHARS]
+            if len(line) <= _SUMMARY_CHARS:
+                return line
+            room = _SUMMARY_CHARS - len(SUMMARY_CUT_MARK)
+            words = re.match(r"(.*\S)\s", line[: room + 1])
+            return (words.group(1) if words else line[:room]) + SUMMARY_CUT_MARK
     return ""
 
 
@@ -173,6 +181,10 @@ def recall(
                 kept += keep(entry)
             elif not is_reviewed(entry["maturity"]):
                 keep(entry)  # past the tier's limit, an unreviewed note still counts toward the block
+        # --limit is per tier: the project's own notes reach the brief through this tier or not at
+        # all. Past its limit, a reviewed one stays out of the shared pass below too, which would
+        # otherwise pick it up again and fill its slots with the same project (#172).
+        seen.update(entry["path"] for entry in entries)
 
     # Shared/fleet tiers: relevance with abstention — weak matches stay out.
     # The implicit default (bare project name) stays index-only: a full-text
@@ -181,9 +193,9 @@ def recall(
     terms = query or project
     if terms:
         shared_added = 0
-        # Overfetch: the floor and project-dedup drop some candidates.
+        # Overfetch: the floor and the notes already filed above drop some candidates.
         for result in lookup(
-            terms, vault, limit=limit * 2, tier_b=query is not None,
+            terms, vault, limit=limit * 2 + len(seen), tier_b=query is not None,
             include_external=True,  # external drafts are routed to their own block, not dropped
         ):
             if result.score < RECALL_ABSTENTION_FLOOR:
@@ -291,16 +303,18 @@ def render_brief(data: dict) -> str:
     """Render recall data as the injectable markdown brief, enforcing the
     whole-brief token budget (drop notes, never truncate mid-thought).
 
+    The budget is checked on the brief as it will be injected, blank lines and
+    line breaks included: count_tokens counts bytes, so two pieces joined cost
+    more than the two apart (#172).
+
     Presentation transforms live here, not in recall(): --json consumers
     get the authentic data (incl. the conventions body's own H1)."""
     sections: list[str] = []
-    spent = 0
 
     if data.get("conventions_unreviewed"):
         block = (f"_({_one_line(data['conventions_unreviewed'])} is not shown until it is reviewed: "
                  "a person sets `maturity: verified` in its frontmatter.)_")
         sections.append(block)
-        spent += count_tokens(block)
 
     if data["conventions"]:
         body = data["conventions"]
@@ -311,22 +325,22 @@ def render_brief(data: dict) -> str:
         if body:
             block = f"## Vault conventions\n\n{body}"
             sections.append(block)
-            spent += count_tokens(block)
 
     if data.get("me"):
         block = "## About me\n\n" + data["me"]
         sections.append(block)
-        spent += count_tokens(block)
 
     header = "## Recalled context" + (
         f" — {data['project']}" if data["project"] else ""
     )
-    spent += count_tokens(header)
+
+    def _section(lines: list[str], hint: bool) -> str:
+        """The recalled-context section holding these note lines, the hint after them."""
+        return "\n\n".join([header, "\n".join(lines), *([BRIEF_DISCOVERY_HINT] if hint else [])])
 
     def _fit(reserve_hint: bool) -> list[str]:
         """Notes that fit, optionally holding back room for the hint."""
-        budget = spent + (count_tokens(BRIEF_DISCOVERY_HINT) if reserve_hint else 0)
-        kept = []
+        kept: list[str] = []
         for note in data["notes"]:
             # Every field on one line: a title (or any value) with line breaks
             # can't open a section of the brief.
@@ -338,11 +352,10 @@ def render_brief(data: dict) -> str:
                 f"- **{note['title']}** ({qualifier}) — "
                 f"{note['summary']} `{note['path']}`"
             )
-            cost = count_tokens(line)
-            if budget + cost > BRIEF_TOKEN_BUDGET:
+            if count_tokens("\n\n".join([*sections, _section([*kept, line], reserve_hint)])) \
+                    > BRIEF_TOKEN_BUDGET:
                 break
             kept.append(line)
-            budget += cost
         return kept
 
     # Reserve the hint's cost up front rather than appending it afterwards: a
@@ -357,31 +370,34 @@ def render_brief(data: dict) -> str:
         lines = _fit(reserve_hint=False)
 
     if lines:
-        parts = [header, "\n".join(lines)]
-        if with_hint:
-            parts.append(BRIEF_DISCOVERY_HINT)
-        sections.append("\n\n".join(parts))
-        spent = count_tokens("\n\n".join(sections))
+        sections.append(_section(lines, with_hint))
 
-    block = _unverified_block(data, BRIEF_TOKEN_BUDGET - spent)
+    block = _unverified_block(data, "\n\n".join(sections))
     if block:
         sections.append(block)
 
     return "\n\n".join(sections)
 
 
-def _unverified_block(data: dict, room: int) -> str:
-    """The Unverified section, after everything trusted, in whatever room is left.
+def _unverified_block(data: dict, before: str) -> str:
+    """The Unverified section, after everything trusted, in whatever room is left
+    once ``before`` (the brief so far, which it follows after a blank line) is counted.
 
     It never displaces a trusted line: it is built from what the budget has
-    left, and drops whole lines (never the header's warning) to fit.
+    left, and drops whole lines (never the header's warning) to fit, the line
+    that counts the notes it leaves out included.
     """
     items = data.get("unverified") or []
     if not items:
         return ""
     head = f"{UNVERIFIED_HEADER}\n\n{UNVERIFIED_NOTE}"
-    spent = count_tokens(head)
-    lines = []
+
+    def block(lines: list[str]) -> str:
+        more = data.get("unverified_more", 0) + len(items) - len(lines)
+        tail = [f"- \u2026 {more} more awaiting review"] if more else []
+        return head + "\n\n" + "\n".join([*lines, *tail])
+
+    lines: list[str] = []
     for note in items:
         # Unreviewed text: one line each, so a title or URL can't open a section of its own.
         title, url, kind, path = (_one_line(note.get(k)) for k in ("title", "source_url", "type", "path"))
@@ -389,13 +405,7 @@ def _unverified_block(data: dict, room: int) -> str:
         maturity = vocab_value(note.get("maturity"))
         rung = maturity if maturity in MATURITY_VALUES else "unrated"
         line = f"- {title} ({kind or 'note'}, {rung}) `{path}`{source}"
-        if spent + count_tokens(line) > room:
+        if count_tokens("\n\n".join(p for p in (before, block([*lines, line])) if p)) > BRIEF_TOKEN_BUDGET:
             break
         lines.append(line)
-        spent += count_tokens(line)
-    if not lines:
-        return ""
-    more = data.get("unverified_more", 0) + len(items) - len(lines)
-    if more:
-        lines.append(f"- … {more} more awaiting review")
-    return head + "\n\n" + "\n".join(lines)
+    return block(lines) if lines else ""

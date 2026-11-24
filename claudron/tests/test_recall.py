@@ -11,6 +11,7 @@ import pytest
 from claudron.cli import main
 from claudron.schema import count_tokens
 from claudron.session import BRIEF_TOKEN_BUDGET, derive_project, recall
+from claudron.vault import detect
 
 
 def _widget_notes(vault: Path, count: int = 40) -> None:
@@ -124,7 +125,21 @@ class TestBrief:
                    "--limit", "40"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert len(out.split()) <= BRIEF_TOKEN_BUDGET
+        assert count_tokens(out) <= BRIEF_TOKEN_BUDGET
+
+    def test_a_saturated_brief_holds_the_bytes_its_tokens_allow(self, vault_dir: Path, capsys):
+        """The cap is in tokens, and a token is about 2.5 bytes of brief text: a saturated brief
+        holds no more bytes than its budget allows (#172). A whitespace word count let it fill
+        several times that, each vault path in backticks counted as one token."""
+        from claudron.schema import BYTES_PER_TOKEN
+
+        _widget_notes(vault_dir)
+        rc = main(["--vault", str(vault_dir), "recall", "--query", "widget",
+                   "--limit", "40"])
+        assert rc == 0
+        brief = capsys.readouterr().out.removesuffix("\n")
+        assert "Widget Pattern" in brief
+        assert len(brief.encode("utf-8")) <= BRIEF_TOKEN_BUDGET * BYTES_PER_TOKEN
 
     def test_brief_carries_the_discovery_hint(self, vault_dir: Path, capsys):
         """§10.5.2: for any host running the engine's hooks, the recall brief
@@ -174,7 +189,7 @@ class TestBrief:
         assert rc == 0
         out = capsys.readouterr().out
         assert BRIEF_DISCOVERY_HINT in out
-        assert len(out.split()) <= BRIEF_TOKEN_BUDGET  # counted, not exempt
+        assert count_tokens(out) <= BRIEF_TOKEN_BUDGET  # counted, not exempt
 
     def test_default_recall_is_index_only(self, vault_dir: Path, capsys):
         """The implicit default (bare project name, every SessionStart) must
@@ -311,10 +326,13 @@ class TestBriefBudgetEdges:
 
     @staticmethod
     def _data(conventions_tokens: int, notes: int = 3):
+        from claudron.schema import BYTES_PER_TOKEN
+
         return {
             "project": None,
             "query": "q",
-            "conventions": "# C\n\n" + " ".join(["word"] * conventions_tokens),
+            # A conventions body that count_tokens reads as exactly that many tokens.
+            "conventions": "# C\n\n" + "w" * int(conventions_tokens * BYTES_PER_TOKEN),
             "notes": [
                 {"title": f"N{i}", "type": "knowledge", "maturity": None,
                  "summary": "s", "path": f"p{i}.md"}
@@ -328,19 +346,46 @@ class TestBriefBudgetEdges:
         turn that into no recalled context at all."""
         from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
 
-        hint_cost = count_tokens(BRIEF_DISCOVERY_HINT)
-        one_note = count_tokens(
-            "- **N0** (knowledge) — s `p0.md`"
-        )
-        header = count_tokens("## Recalled context")
-        # Leave room for the header + exactly one note, but not the hint.
-        conv = BRIEF_TOKEN_BUDGET - header - one_note - 3 - (hint_cost // 2)
-        out = render_brief(self._data(conv))
+        # The largest conventions block beside which one note still renders: a token more and it
+        # would not fit even without the hint, so at this size it fits only without it.
+        conv = max(c for c in range(BRIEF_TOKEN_BUDGET) if "N0" in render_brief(self._data(c, notes=1)))
+        out = render_brief(self._data(conv, notes=1))
 
         assert "Recalled context" in out, "the section must not vanish"
         assert "N0" in out, "the note that fits must render"
         assert BRIEF_DISCOVERY_HINT not in out, "the hint yields, not the notes"
-        assert len(out.split()) <= BRIEF_TOKEN_BUDGET
+        assert count_tokens(out) <= BRIEF_TOKEN_BUDGET
+
+    @pytest.mark.parametrize("pad", range(5))
+    def test_the_cap_holds_on_the_brief_as_joined(self, pad: int):
+        """count_tokens counts bytes, so the line breaks between note lines cost too: the cap is
+        checked on the brief as it is injected, never on its pieces summed (#172). Each pad gives
+        the note lines another length, so one of them leaves no rounding slack for the breaks."""
+        from claudron.session import render_brief
+
+        data = self._data(0, notes=0)
+        data["notes"] = [
+            {"title": f"N{i:03d}", "type": "knowledge", "maturity": None,
+             "summary": "s" * (10 + pad), "path": f"p{i:03d}.md"}
+            for i in range(200)
+        ]
+        out = render_brief(data)
+        assert "N000" in out and "N199" not in out  # saturated
+        assert count_tokens(out) <= BRIEF_TOKEN_BUDGET
+
+    def test_the_cap_holds_with_the_unverified_block(self):
+        """The Unverified block fills what the budget has left, the line that counts the notes it
+        leaves out included: whatever size comes before it, the cap holds (#172)."""
+        from claudron.session import render_brief
+
+        for conv in range(600, 890):  # past 890 the conventions block alone is over (the stated exception)
+            data = self._data(conv, notes=0)
+            data["unverified"] = [
+                {"title": f"U{i}", "type": "knowledge", "maturity": "draft", "path": f"u{i}.md", "source_url": ""}
+                for i in range(3)
+            ]
+            data["unverified_more"] = 40
+            assert count_tokens(render_brief(data)) <= BRIEF_TOKEN_BUDGET, conv
 
     def test_hint_present_when_there_is_room(self):
         from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
@@ -348,7 +393,7 @@ class TestBriefBudgetEdges:
         out = render_brief(self._data(20))
         assert "Recalled context" in out
         assert BRIEF_DISCOVERY_HINT in out
-        assert len(out.split()) <= BRIEF_TOKEN_BUDGET
+        assert count_tokens(out) <= BRIEF_TOKEN_BUDGET
 
     def test_hint_never_renders_without_notes(self):
         """A lone hint is context spend with no recall behind it."""
@@ -368,7 +413,7 @@ class TestBriefBudgetEdges:
         from claudron.session import render_brief
 
         out = render_brief(self._data(conv, notes=10))
-        assert len(out.split()) <= BRIEF_TOKEN_BUDGET, conv
+        assert count_tokens(out) <= BRIEF_TOKEN_BUDGET, conv
 
     def test_oversized_conventions_is_the_stated_exception(self):
         """The one documented way the brief exceeds its cap, enforced.
@@ -392,6 +437,72 @@ class TestBriefBudgetEdges:
         from claudron.session import BRIEF_DISCOVERY_HINT, render_brief
 
         out = render_brief(self._data(BRIEF_TOKEN_BUDGET + 300, notes=10))
-        assert len(out.split()) > BRIEF_TOKEN_BUDGET  # the gap, stated
+        assert count_tokens(out) > BRIEF_TOKEN_BUDGET  # the gap, stated
         assert "Recalled context" not in out  # but notes degrade to nothing
         assert BRIEF_DISCOVERY_HINT not in out
+
+
+def _note(path: Path, title: str, updated: str = "2026-09-01") -> None:
+    """A reviewed knowledge note."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\ntitle: {title}\ntype: knowledge\nstatus: current\nowner: t\n"
+                    f"created: 2026-09-01\nupdated: {updated}\nmaturity: verified\n---\n\n"
+                    f"# {title}\n\nWhat {title.lower()} says.\n")
+
+
+class TestPerTierLimit:
+    """`recall --limit N` is N notes per tier (#172): the project's own notes come through the
+    project tier, and past its limit the shared pass never picks them up again."""
+
+    def test_the_shared_pass_never_re_selects_the_projects_own_notes(self, vault_dir: Path):
+        for n in range(8):
+            _note(vault_dir / "projects" / "webapp" / f"w{n}.md", f"Webapp note {n}", f"2026-09-0{n + 1}")
+        _note(vault_dir / "_shared" / "knowledge" / "webapp-guide.md", "Webapp guide")
+        notes = recall(detect(vault_dir), project="webapp", limit=5)["notes"]
+        own = [n["title"] for n in notes if n["tier"] == "project:webapp"]
+        assert own == [f"Webapp note {n}" for n in (7, 6, 5, 4, 3)]  # the newest five, once
+        assert "Webapp guide" in [n["title"] for n in notes]  # the shared pass still runs
+
+    def test_a_shared_match_ranked_below_the_projects_notes_still_comes(self, vault_dir: Path):
+        """The overfetch makes room for the project's notes it now skips."""
+        for n in range(9):
+            _note(vault_dir / "projects" / "webapp" / f"w{n}.md", f"Webapp note {n}", f"2026-09-0{n + 1}")
+        _note(vault_dir / "_shared" / "knowledge" / "webapp-guide.md", "Webapp guide")
+        notes = recall(detect(vault_dir), project="webapp", limit=2)["notes"]
+        assert [n["tier"] for n in notes].count("project:webapp") == 2
+        assert "Webapp guide" in [n["title"] for n in notes]
+
+
+class TestSummary:
+    """A note's one-line summary (#172): at most 140 characters, cut after a whole word, marked."""
+
+    def test_a_long_line_is_cut_after_a_whole_word_and_marked(self):
+        from claudron.session import SUMMARY_CUT_MARK, _summary
+
+        line = " ".join(f"word{i:02d}" for i in range(40))
+        out = _summary(line)
+        assert out.endswith(SUMMARY_CUT_MARK) and len(out) <= 140
+        kept = out[: -len(SUMMARY_CUT_MARK)]
+        assert line.startswith(kept) and line[len(kept)] == " ", "it ends at a word's end"
+        assert len(kept) + len(" word00") + len(SUMMARY_CUT_MARK) > 140, "no word that fit was dropped"
+
+    def test_a_line_that_fits_is_whole_and_unmarked(self):
+        from claudron.session import _summary
+
+        assert _summary("a" * 140) == "a" * 140
+        assert _summary("# Heading\n\n  Short line.  \n") == "Short line."
+
+    def test_one_word_longer_than_the_limit_is_cut_inside_it_and_marked(self):
+        from claudron.session import SUMMARY_CUT_MARK, _summary
+
+        assert _summary("z" * 200) == "z" * 139 + SUMMARY_CUT_MARK
+
+    def test_the_brief_line_carries_the_mark(self, vault_dir: Path):
+        from claudron.session import SUMMARY_CUT_MARK, render_brief
+
+        path = vault_dir / "projects" / "webapp" / "long.md"
+        _note(path, "Long note")
+        path.write_text(path.read_text().replace("What long note says.", "Words on the topic. " * 20))
+        brief = render_brief(recall(detect(vault_dir), project="webapp"))
+        (line,) = [ln for ln in brief.splitlines() if "**Long note**" in ln]
+        assert SUMMARY_CUT_MARK + " `projects/webapp/long.md`" in line
